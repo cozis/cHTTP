@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <limits.h>
 
-#ifdef TINYHTTP_SERVER_ENABLE
+#if TINYHTTP_SERVER_ENABLE
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -33,6 +33,14 @@
 #define COUNTOF(X) (sizeof(X)/sizeof((X)[0]))
 
 #define DUMP_IO 0
+
+#if TINYHTTP_ROUTER_ENABLE
+#error "The router interface isn't ready yet"
+#endif
+
+#if TINYHTTP_HTTPS_ENABLE
+#error "HTTPS is not available yet"
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////////
 // DEBUG UTILITIES                                                                //
@@ -1849,7 +1857,8 @@ static int server_init_platform(TinyHTTPServer *server,
 	if (server->plain_accept_target == INVALID_SOCKET)
 		return -1;
 
-	if (config.secure) {
+#if TINYHTTP_HTTPS_ENABLE
+	if (server->secure_listen_socket) {
 
 		if (CreateIoCompletionPort((HANDLE) server->secure_listen_socket, server->iocp, 0, 0) == NULL) {
 			CLOSESOCKET(server->plain_accept_target);
@@ -1869,6 +1878,7 @@ static int server_init_platform(TinyHTTPServer *server,
 			return -1;
 		}
 	}
+#endif // TINYHTTP_HTTPS_ENABLE
 
 	return 0;
 }
@@ -2128,6 +2138,11 @@ process_network_events(TinyHTTPServer *server, int timeout)
 TinyHTTPServer* tinyhttp_server_init(TinyHTTPServerConfig config,
 	TinyHTTPMemoryFunc memfunc, void *memfuncdata)
 {
+#if !TINYHTTP_HTTPS_ENABLE
+	if (config.secure)
+		return NULL;
+#endif
+
 	TinyHTTPServer *server = memfunc(TINYHTTP_MEM_MALLOC, NULL, sizeof(TinyHTTPServer), memfuncdata);
 	if (server == NULL)
 		return NULL;
@@ -2165,6 +2180,8 @@ TinyHTTPServer* tinyhttp_server_init(TinyHTTPServerConfig config,
 	}
 
 	server->secure_listen_socket = INVALID_SOCKET;
+
+#if TINYHTTP_HTTPS_ENABLE
 	if (config.secure) {
 		server->secure_listen_socket = socket_listen(config.secure_addr,
 			config.secure_port, config.secure_backlog, config.reuse);
@@ -2176,6 +2193,7 @@ TinyHTTPServer* tinyhttp_server_init(TinyHTTPServerConfig config,
 			return NULL;
 		}
 	}
+#endif // TINYHTTP_HTTPS_ENABLE
 
 	if (server_init_platform(server, config) < 0) {
 
@@ -2369,7 +2387,7 @@ void tinyhttp_response_undo(TinyHTTPResponse res)
 ////////////////////////////////////////////////////////////////////////////////////
 // HTTP ROUTER                                                                    //
 ////////////////////////////////////////////////////////////////////////////////////
-#ifdef TINYHTTP_ROUTER_ENABLE
+#if TINYHTTP_ROUTER_ENABLE
 
 #include <fcntl.h>
 #include <dirent.h>

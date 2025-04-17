@@ -173,8 +173,9 @@
 // CONFIGURATION                                                          //
 ////////////////////////////////////////////////////////////////////////////
 
-#define TINYHTTP_SERVER_ENABLE
-//#define TINYHTTP_ROUTER_ENABLE
+#define TINYHTTP_SERVER_ENABLE 1
+#define TINYHTTP_ROUTER_ENABLE 0
+#define TINYHTTP_HTTPS_ENABLE  0
 
 #define TINYHTTP_ROUTER_MAX_PATH_COMPONENTS 32
 
