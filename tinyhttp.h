@@ -179,7 +179,7 @@
 #define TINYHTTP_ROUTER_MAX_PATH_COMPONENTS 32
 
 #define TINYHTTP_HEADER_LIMIT 32
-#define TINYHTTP_SERVER_CONN_LIMIT (1<<10)
+#define TINYHTTP_SERVER_CONN_LIMIT 3 // (1<<10)
 #define TINYHTTP_SERVER_EPOLL_BATCH_SIZE (1<<10)
 
 ////////////////////////////////////////////////////////////////////////////
@@ -450,23 +450,23 @@ int tinyhttp_stream_state(TinyHTTPStream *stream);
 //     the null pointer and a capacity of 0. The caller
 //     must not write to the pointer but act as if
 //     everything went okay.
-char *tinyhttp_stream_recv_buf(TinyHTTPStream *stream, int *cap);
+char *tinyhttp_stream_recv_buf(TinyHTTPStream *stream, ptrdiff_t *cap);
 
 // Acknowledge the bytes written from the network
 //
 // The write must have been initiated by calling
 // [tinyhttp_stream_net_recv_buf].
-void tinyhttp_stream_recv_ack(TinyHTTPStream *stream, int num);
+void tinyhttp_stream_recv_ack(TinyHTTPStream *stream, ptrdiff_t num);
 
 // Returns the pointer and capacity of a memory region
 // where data should be written to the network.
 //
 // When the write is complete, [tinyhttp_stream_net_send_ack]
 // should be called with the number of consumed bytes.
-char *tinyhttp_stream_send_buf(TinyHTTPStream *stream, int *len);
+char *tinyhttp_stream_send_buf(TinyHTTPStream *stream, ptrdiff_t *len);
 
 // See [tinyhttp_stream_net_send_buf]
-void tinyhttp_stream_send_ack(TinyHTTPStream *stream, int num);
+void tinyhttp_stream_send_ack(TinyHTTPStream *stream, ptrdiff_t num);
 
 // Enable/disable connection reuse for this HTTP
 // connection. This change takes effect at the start

@@ -58,8 +58,9 @@ int main(void)
 	while (!should_exit) {
 		TinyHTTPRequest *req;
 		TinyHTTPResponse res;
-		if (tinyhttp_server_wait(server, &req, &res, 1000))
-			continue; // Timeout or error
+		int ret = tinyhttp_server_wait(server, &req, &res, 1000);
+		if (ret < 0) return -1; // Error
+		if (ret > 0) continue; // Timeout
 		tinyhttp_response_status(res, 200);
 		tinyhttp_response_send(res);
 	}
