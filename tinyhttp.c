@@ -32,7 +32,7 @@
 #define ASSERT(X) {if (!(X)) __builtin_trap();}
 #define COUNTOF(X) (sizeof(X)/sizeof((X)[0]))
 
-#define DUMP_IO 1
+#define DUMP_IO 0
 
 ////////////////////////////////////////////////////////////////////////////////////
 // DEBUG UTILITIES                                                                //
@@ -72,6 +72,42 @@ print_bytes(char *prefix, char *src, int len)
 	if (cur > 0 && src[cur-1] != '\n')
 		printf("\n");
 }
+#endif
+
+#if DUMP_IO
+static void
+dump_state(int state, const char *file, int line)
+{
+	printf("state = ");
+	if (state == TINYHTTP_STREAM_FREE)
+		printf("FREE ");
+
+	if (state & TINYHTTP_STREAM_SEND)
+		printf("SEND ");
+
+	if (state & TINYHTTP_STREAM_RECV)
+		printf("RECV ");
+
+	if (state & TINYHTTP_STREAM_READY)
+		printf("READY ");
+
+	if (state & TINYHTTP_STREAM_CLOSE)
+		printf("CLOSE ");
+
+	if (state & TINYHTTP_STREAM_REUSE)
+		printf("REUSE ");
+
+	if (state & TINYHTTP_STREAM_SEND_STARTED)
+		printf("SEND_STARTED ");
+
+	if (state & TINYHTTP_STREAM_RECV_STARTED)
+		printf("RECV_STARTED ");
+	
+	printf(" (in %s:%d)\n", file, line);
+}
+#define DUMP_STATE(state) dump_state(state, __FILE__, __LINE__);
+#else
+#define DUMP_STATE(...)
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -808,7 +844,7 @@ byte_queue_read_unlock(TinyHTTPByteQueue *queue)
 ////////////////////////////////////////////////////////////////////////////////////
 
 #define EIGHT_ZEROS "00000000"
-#define NINE_SPACES "         "
+#define TEN_SPACES "          "
 
 static const char*
 get_status_text(int code)
@@ -923,6 +959,9 @@ int tinyhttp_stream_state(TinyHTTPStream *stream)
 	if (byte_queue_read_size(&stream->out))
 		state |= TINYHTTP_STREAM_SEND;
 
+	if (stream->reqsize > 0)
+		state |= TINYHTTP_STREAM_READY;
+
 	// If we don't have a buffered request and the
 	// connection is not closing, we are interested
 	// in receiving data.
@@ -934,9 +973,6 @@ int tinyhttp_stream_state(TinyHTTPStream *stream)
 
 	if (byte_queue_read_started(&stream->out))
 		state |= TINYHTTP_STREAM_SEND_STARTED;
-
-	if (stream->reqsize > 0)
-		state |= TINYHTTP_STREAM_READY;
 
 	return state;
 }
@@ -1189,7 +1225,7 @@ append_special_headers(TinyHTTPStream *stream)
 	else {
 		byte_queue_write(&stream->out, "Content-Length: ");
 		stream->content_length_value_offset = byte_queue_offset(&stream->out);
-		byte_queue_write(&stream->out, NINE_SPACES "\r\n");
+		byte_queue_write(&stream->out, TEN_SPACES "\r\n");
 	}
 
 	byte_queue_write(&stream->out, "\r\n");
@@ -1285,7 +1321,9 @@ void tinyhttp_stream_response_body_ack(TinyHTTPStream *stream, ptrdiff_t num)
 	}
 
 	byte_queue_write_ack(&stream->out, num);
-	byte_queue_write(&stream->out, "\r\n");
+
+	if (stream->chunked)
+		byte_queue_write(&stream->out, "\r\n");
 }
 
 // See tinyhttp.h
@@ -1303,6 +1341,8 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 		stream->output_state = TINYHTTP_OUTPUT_STATE_BODY;
 	}
 
+	DUMP_STATE(tinyhttp_stream_state(stream));
+
 	if (stream->output_state == TINYHTTP_OUTPUT_STATE_BODY) {
 		if (stream->chunked)
 			byte_queue_write(&stream->out, "0\r\n\r\n");
@@ -1315,21 +1355,28 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 				// TODO
 			}
 
-			char tmp[9];
-			unsigned int magn = 1000000000;
-			for (int i = 0; i < 9; i++) {
-				tmp[i] = '0' + content_length / magn;
-				content_length %= magn;
-				magn /= 10;
-			}
+			char tmp[10];
+
+			tmp[0] = '0' + content_length / 1000000000; content_length %= 1000000000;
+			tmp[1] = '0' + content_length / 100000000;  content_length %= 100000000;
+			tmp[2] = '0' + content_length / 10000000;   content_length %= 10000000;
+			tmp[3] = '0' + content_length / 1000000;    content_length %= 1000000;
+			tmp[4] = '0' + content_length / 100000;     content_length %= 100000;
+			tmp[5] = '0' + content_length / 10000;      content_length %= 10000;
+			tmp[6] = '0' + content_length / 1000;       content_length %= 1000;
+			tmp[7] = '0' + content_length / 100;        content_length %= 100;
+			tmp[8] = '0' + content_length / 10;         content_length %= 10;
+			tmp[9] = '0' + content_length;
 
 			int i = 0;
 			while (i < 8 && tmp[i] == '0')
 				i++;
 
-			byte_queue_patch(&stream->out, stream->content_length_value_offset, tmp + i, 9 - i);
+			byte_queue_patch(&stream->out, stream->content_length_value_offset, tmp + i, 10 - i);
 		}
 	}
+
+	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	if (stream->output_state == TINYHTTP_OUTPUT_STATE_ERROR) {
 		byte_queue_remove_after_lock(&stream->out);
@@ -1341,10 +1388,14 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 		);
 	}
 
+	DUMP_STATE(tinyhttp_stream_state(stream));
+
 	if (byte_queue_error(&stream->out)) {
 		tinyhttp_stream_free(stream);
 		return;
 	}
+
+	DUMP_STATE(tinyhttp_stream_state(stream));
 
 #if DUMP_IO
 	ptrdiff_t ressize = (byte_queue_offset(&stream->out) - stream->out.lock);
@@ -1355,7 +1406,11 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 	byte_queue_read_unlock(&stream->out);
 	stream->reqsize = 0;
 
+	DUMP_STATE(tinyhttp_stream_state(stream));
+
 	process_next_request(stream);
+
+	DUMP_STATE(tinyhttp_stream_state(stream));
 }
 
 // See tinyhttp.h
@@ -1754,14 +1809,16 @@ start_accept_operation(LPFN_ACCEPTEX *accept_func,
 	if (target_socket == INVALID_SOCKET)
 		return INVALID_SOCKET;
 
-	unsigned long num;
-	int ok = (*accept_func)((SOCKET) listen_socket,
-		target_socket, buf,
-		buflen - ((sizeof(struct sockaddr_in) + 16) * 2),
+	memset(overlapped, 0, sizeof(OVERLAPPED));
+
+	DWORD num;
+	int ok = (*accept_func)(
+		(SOCKET) listen_socket, target_socket,
+		buf, buflen - ((sizeof(struct sockaddr_in) + 16) * 2),
 		sizeof(struct sockaddr_in) + 16,
 		sizeof(struct sockaddr_in) + 16,
 		&num, overlapped);
-	if (!ok && GetLastError() != ERROR_IO_PENDING) {
+	if (!ok && WSAGetLastError() != ERROR_IO_PENDING) {
 		CLOSESOCKET(target_socket);
 		return INVALID_SOCKET;
 	}
@@ -1780,6 +1837,8 @@ static int server_init_platform(TinyHTTPServer *server,
 		CloseHandle(server->iocp);
 		return -1;
 	}
+
+	server->accept_func = NULL;
 
 	server->plain_accept_target = start_accept_operation(
 		&server->accept_func,
@@ -1836,6 +1895,8 @@ start_stream_operations(TinyHTTPStream *stream, SOCKET sock,
 {
 	int state = tinyhttp_stream_state(stream);
 
+	DUMP_STATE(tinyhttp_stream_state(stream));
+
 	if ((state & TINYHTTP_STREAM_RECV) && !(state & TINYHTTP_STREAM_RECV_STARTED)) {
 		ptrdiff_t cap;
 		char *dst = tinyhttp_stream_recv_buf(stream, &cap);
@@ -1843,7 +1904,12 @@ start_stream_operations(TinyHTTPStream *stream, SOCKET sock,
 		int ok = ReadFile((HANDLE) sock, dst, cap, NULL, recv_overlapped);
 		if (!ok && GetLastError() != ERROR_IO_PENDING)
 			return -1;
+#if DUMP_IO
+			printf("RECV STARTED (cap=%lld)\n", cap);
+#endif
 	}
+
+	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	if (state & TINYHTTP_STREAM_SEND && !(state & TINYHTTP_STREAM_SEND_STARTED)) {
 		ptrdiff_t len;
@@ -1852,7 +1918,12 @@ start_stream_operations(TinyHTTPStream *stream, SOCKET sock,
 		int ok = WriteFile((HANDLE) sock, src, len, NULL, send_overlapped);
 		if (!ok && GetLastError() != ERROR_IO_PENDING)
 			return -1;
+#if DUMP_IO
+			printf("SEND STARTED (len=%lld)\n", len);
+#endif
 	}
+
+	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	return 0;
 }
@@ -1880,6 +1951,8 @@ intern_accepted_socket(TinyHTTPServer *server, SOCKET accepted_socket, int secur
 	tinyhttp_stream_init(stream, server->memfunc, server->memfuncdata);
 	int state = tinyhttp_stream_state(stream);
 
+	DUMP_STATE(tinyhttp_stream_state(stream));
+
 	if (CreateIoCompletionPort((HANDLE) accepted_socket, server->iocp, 0, 0) == NULL) {
 		tinyhttp_stream_free(stream);
 		server->stream_sockets[idx] = INVALID_SOCKET;
@@ -1896,6 +1969,8 @@ intern_accepted_socket(TinyHTTPServer *server, SOCKET accepted_socket, int secur
 		return;
 	}
 
+	DUMP_STATE(tinyhttp_stream_state(stream));
+
 	if (secure) {
 		// TODO
 	}
@@ -1908,11 +1983,17 @@ process_network_events(TinyHTTPServer *server, int timeout)
 {
 	// TODO: timeouts
 
+	DWORD timeout2;
+	if (timeout < 0)
+		timeout2 = INFINITE;
+	else
+		timeout2 = timeout;
+
 	DWORD transferred;
 	ULONG_PTR key; 
 	OVERLAPPED *overlapped;
 	BOOL result = GetQueuedCompletionStatus(server->iocp,
-		&transferred, &key, &overlapped, INFINITE);
+		&transferred, &key, &overlapped, timeout2);
 
 	// Handle timeouts and error on the completion function itself
 	if (!result && overlapped == NULL) {
@@ -1927,7 +2008,9 @@ process_network_events(TinyHTTPServer *server, int timeout)
 		if (result) {
 
 			// New plain connection
-
+#if DUMP_IO
+			printf("ACCEPT COMPLETED (plain)\n");
+#endif
 			SOCKET accepted_socket = server->plain_accept_target;
 			server->plain_accept_target = INVALID_SOCKET;
 
@@ -1955,7 +2038,9 @@ process_network_events(TinyHTTPServer *server, int timeout)
 		if (result) {
 
 			// New secure connection
-
+#if DUMP_IO
+			printf("ACCEPT COMPLETED (secure)\n");
+#endif
 			SOCKET accepted_socket = server->plain_accept_target;
 			server->plain_accept_target = INVALID_SOCKET;
 
@@ -1986,49 +2071,55 @@ process_network_events(TinyHTTPServer *server, int timeout)
 	OVERLAPPED *recv_overlapped = &server->recv_overlapped[idx];
 	OVERLAPPED *send_overlapped = &server->send_overlapped[idx];
 
-	int state;
+	DUMP_STATE(tinyhttp_stream_state(stream));
+
 	if (!result) {
 		// A read or write operation failed
 		tinyhttp_stream_free(stream);
-		state = tinyhttp_stream_state(stream);
 	} else {
 
 		if (recv_overlapped == overlapped) {
 #if DUMP_IO
+			printf("RECV COMPLETED (num=%ld)\n", transferred);
 			print_bytes("N >> ", stream->in.data + stream->in.head, transferred);
 #endif
 			tinyhttp_stream_recv_ack(stream, transferred);
+			if (transferred == 0)
+				tinyhttp_stream_free(stream);
 		} else {
 			ASSERT(send_overlapped == overlapped);
 #if DUMP_IO
+			printf("SEND COMPLETED (num=%ld)\n", transferred);
 			print_bytes("N << ", stream->out.data + stream->out.head, transferred);
 #endif
 			tinyhttp_stream_send_ack(stream, transferred);
 		}
 
-		if (start_stream_operations(stream, sock, recv_overlapped, send_overlapped) < 0) {
+		if (start_stream_operations(stream, sock, recv_overlapped, send_overlapped) < 0)
 			tinyhttp_stream_free(stream);
-			state = tinyhttp_stream_state(stream);
-		}
 	}
 
-	printf("state = %d\n", state);
+	DUMP_STATE(tinyhttp_stream_state(stream));
+
+	int state = tinyhttp_stream_state(stream);
 
 	if (state & TINYHTTP_STREAM_READY) {
-		printf("READY\n"); // TODO: remove me
 		int ready_idx = (server->ready_head + server->ready_count) % TINYHTTP_SERVER_CONN_LIMIT;
 		server->ready_queue[ready_idx] = idx;
 		server->ready_count++;
 	}
 
+	DUMP_STATE(tinyhttp_stream_state(stream));
+
 	if (state == TINYHTTP_STREAM_FREE) {
-		printf("FREE\n"); // TODO: remove me
 		// TODO: Remove from the ready list
 		CLOSESOCKET(sock);
 		invalidate_handles_to_stream(server, stream);
 		server->stream_sockets[idx] = INVALID_SOCKET;
 		server->num_conns--;
 	}
+
+	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	return 0;
 }
@@ -2222,7 +2313,7 @@ void tinyhttp_response_body_ack(TinyHTTPResponse res, ptrdiff_t num)
 	if (stream == NULL)
 		return; // Invalid handle
 
-	return tinyhttp_stream_response_body_ack(stream, num);
+	tinyhttp_stream_response_body_ack(stream, num);
 }
 
 void tinyhttp_response_send(TinyHTTPResponse res)

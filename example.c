@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <signal.h>
 #include <stdlib.h>
 #include "tinyhttp.h"
@@ -62,6 +63,12 @@ int main(void)
 		if (ret < 0) return -1; // Error
 		if (ret > 0) continue; // Timeout
 		tinyhttp_response_status(res, 200);
+		tinyhttp_response_body_setmincap(res, 1<<10);
+		ptrdiff_t cap;
+		char *buf = tinyhttp_response_body_buf(res, &cap);
+		int len = snprintf(buf, cap, "Hello, world!");
+		if (len < 0 || len > cap) abort();
+		tinyhttp_response_body_ack(res, len);
 		tinyhttp_response_send(res);
 	}
 
