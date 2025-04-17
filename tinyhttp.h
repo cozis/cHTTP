@@ -179,7 +179,7 @@
 #define TINYHTTP_ROUTER_MAX_PATH_COMPONENTS 32
 
 #define TINYHTTP_HEADER_LIMIT 32
-#define TINYHTTP_SERVER_CONN_LIMIT 3 // (1<<10)
+#define TINYHTTP_SERVER_CONN_LIMIT (1<<10)
 #define TINYHTTP_SERVER_EPOLL_BATCH_SIZE (1<<10)
 
 ////////////////////////////////////////////////////////////////////////////
