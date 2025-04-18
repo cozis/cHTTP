@@ -2,7 +2,7 @@
 
 TinyHTTP is an HTTP server library. It's small, robust, and fast.
 
-**NOTE**: This is still a prototype! I'm currently working on making the current code more robust. After that, I will add chunked encoding, HTTPS support, and work on compliancy to RFC 9112.
+**NOTE**: This is still a prototype! I got the basic version working and am spending some time making it more robust. After that, I will add chunked encoding, HTTPS support, and work on compliancy to RFC 9112.
 
 ## Features
 * Self-contained
@@ -24,7 +24,7 @@ The server interface is a complete server implementation designed to easily set 
 
 The stream interface is more involved but completely stand-alone, doesn't performs I/O directly, and is easily embeddable in custom event loops. You can think of this as the core of the library where HTTP is implemented. It's designed to work well with readiness-based (select, poll, epoll) and completion-based event loops (iocp, io_uring).
 
-To use it, be sure to enable the modules you are interested and tweak the configurations in from `tinyhttp.h`
+To use TinyHTTP, be sure to enable the modules you are interested and tweak the configurations in from `tinyhttp.h`
 
 ```c
 #define TINYHTTP_SERVER_ENABLE 1
