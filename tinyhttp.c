@@ -45,6 +45,7 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 #define SOCKET int
 #define CLOSESOCKET close
 #define INVALID_SOCKET -1
@@ -473,12 +474,6 @@ static void*
 callback_malloc(TinyHTTPByteQueue *queue, ptrdiff_t len)
 {
 	return queue->memfunc(TINYHTTP_MEM_MALLOC, NULL, len, queue->memfuncdata);
-}
-
-static void*
-callback_realloc(TinyHTTPByteQueue *queue, void *ptr, ptrdiff_t len)
-{
-	return queue->memfunc(TINYHTTP_MEM_REALLOC, ptr, len, queue->memfuncdata);
 }
 
 static void
@@ -961,6 +956,9 @@ void tinyhttp_stream_init(TinyHTTPStream *stream, TinyHTTPMemoryFunc memfunc, vo
 	// Set the maximum content length
 	stream->bodylimit = 1<<29; // 500MB
 
+	stream->reqsize = 0;
+	stream->numexch = 0;
+
 	byte_queue_init(&stream->in, 1<<29, memfunc, memfuncdata);
 	byte_queue_init(&stream->out, 1<<29, memfunc, memfuncdata);
 }
@@ -968,11 +966,15 @@ void tinyhttp_stream_init(TinyHTTPStream *stream, TinyHTTPMemoryFunc memfunc, vo
 // See tinyhttp.h
 void tinyhttp_stream_free(TinyHTTPStream *stream)
 {
-	if (stream->state == TINYHTTP_STREAM_FREE)
-		return;
 	byte_queue_free(&stream->out);
 	byte_queue_free(&stream->in);
-	stream->state = TINYHTTP_STREAM_FREE;
+	stream->state = 0;
+}
+
+// See tinyhttp.h
+void tinyhttp_stream_kill(TinyHTTPStream *stream)
+{
+	stream->state |= TINYHTTP_STREAM_DIED;
 }
 
 // See tinyhttp.h
@@ -984,23 +986,22 @@ int tinyhttp_stream_state(TinyHTTPStream *stream)
 
 	int state = stream->state;
 
-	// The TINYHTTP_STREAM_FREE state is exclusive
-	if (state == TINYHTTP_STREAM_FREE)
-		return state;
+	if ((state & TINYHTTP_STREAM_DIED) == 0) {
 
-	// If there is data to read in the output buffer,
-	// we are interested in sending data.
-	if (byte_queue_read_size(&stream->out))
-		state |= TINYHTTP_STREAM_SEND;
+		if (stream->reqsize > 0)
+			state |= TINYHTTP_STREAM_READY;
 
-	if (stream->reqsize > 0)
-		state |= TINYHTTP_STREAM_READY;
+		// If there is data to read in the output buffer,
+		// we are interested in sending data.
+		if (byte_queue_read_size(&stream->out))
+			state |= TINYHTTP_STREAM_SEND;
 
-	// If we don't have a buffered request and the
-	// connection is not closing, we are interested
-	// in receiving data.
-	if ((state & (TINYHTTP_STREAM_READY | TINYHTTP_STREAM_CLOSE)) == 0)
-		state |= TINYHTTP_STREAM_RECV;
+		// If we don't have a buffered request and the
+		// connection is not closing, we are interested
+		// in receiving data.
+		if ((state & (TINYHTTP_STREAM_READY | TINYHTTP_STREAM_CLOSE)) == 0)
+			state |= TINYHTTP_STREAM_RECV;
+	}
 
 	if (byte_queue_write_started(&stream->in))
 		state |= TINYHTTP_STREAM_RECV_STARTED;
@@ -1015,7 +1016,7 @@ int tinyhttp_stream_state(TinyHTTPStream *stream)
 char *tinyhttp_stream_recv_buf(TinyHTTPStream *stream, ptrdiff_t *cap)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE) {
+	if (stream->state & TINYHTTP_STREAM_DIED) {
 		*cap = 0;
 		return NULL;
 	}
@@ -1059,6 +1060,9 @@ should_keep_alive(TinyHTTPStream *stream)
 	if (stream->req.minor == 0)
 		return 0;
 
+	if (stream->numexch >= 100) // TODO: Make this a parameter
+		return 0;
+
 	return 1;
 }
 
@@ -1085,7 +1089,7 @@ process_next_request(TinyHTTPStream *stream)
 		int status = -ret;
 		byte_queue_write_fmt(&stream->out, "HTTP/1.1 %d %s\r\n", status, get_status_text(status));
 		if (byte_queue_error(&stream->out)) {
-			tinyhttp_stream_free(stream);
+			stream->state |= TINYHTTP_STREAM_DIED;
 			return;
 		}
 		stream->state |= TINYHTTP_STREAM_CLOSE;
@@ -1121,7 +1125,7 @@ process_next_request(TinyHTTPStream *stream)
 void tinyhttp_stream_recv_ack(TinyHTTPStream *stream, ptrdiff_t num)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state & TINYHTTP_STREAM_DIED)
 		return;
 
 	byte_queue_write_ack(&stream->in, num);
@@ -1141,7 +1145,7 @@ void tinyhttp_stream_recv_ack(TinyHTTPStream *stream, ptrdiff_t num)
 char *tinyhttp_stream_send_buf(TinyHTTPStream *stream, ptrdiff_t *len)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state & TINYHTTP_STREAM_DIED)
 		return NULL;
 
 	return byte_queue_read_buf(&stream->out, len);
@@ -1151,13 +1155,13 @@ char *tinyhttp_stream_send_buf(TinyHTTPStream *stream, ptrdiff_t *len)
 void tinyhttp_stream_send_ack(TinyHTTPStream *stream, ptrdiff_t num)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state & TINYHTTP_STREAM_DIED)
 		return;
 
 	byte_queue_read_ack(&stream->out, num);
 
 	if (byte_queue_read_size(&stream->out) == 0 && (stream->state & TINYHTTP_STREAM_CLOSE)) {
-		tinyhttp_stream_free(stream);
+		stream->state |= TINYHTTP_STREAM_DIED;
 		return;
 	}
 }
@@ -1166,7 +1170,7 @@ void tinyhttp_stream_send_ack(TinyHTTPStream *stream, ptrdiff_t num)
 void tinyhttp_stream_setreuse(TinyHTTPStream *stream, int value)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state & TINYHTTP_STREAM_DIED)
 		return;
 
 	if (value)
@@ -1205,7 +1209,7 @@ TinyHTTPRequest *tinyhttp_stream_request(TinyHTTPStream *stream)
 void tinyhttp_stream_response_status(TinyHTTPStream *stream, int status)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state & TINYHTTP_STREAM_DIED)
 		return;
 
 	if (stream->output_state != TINYHTTP_OUTPUT_STATE_STATUS) {
@@ -1232,7 +1236,7 @@ void tinyhttp_stream_response_header(TinyHTTPStream *stream, const char *fmt, ..
 void tinyhttp_stream_response_header_fmt(TinyHTTPStream *stream, const char *fmt, va_list args)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state & TINYHTTP_STREAM_DIED)
 		return;
 
 	if (stream->output_state != TINYHTTP_OUTPUT_STATE_HEADER) {
@@ -1270,7 +1274,7 @@ append_special_headers(TinyHTTPStream *stream)
 void tinyhttp_stream_response_body_setmincap(TinyHTTPStream *stream, ptrdiff_t mincap)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state & TINYHTTP_STREAM_DIED)
 		return;
 
 	if (stream->output_state == TINYHTTP_OUTPUT_STATE_HEADER) {
@@ -1293,7 +1297,7 @@ void tinyhttp_stream_response_body_setmincap(TinyHTTPStream *stream, ptrdiff_t m
 char *tinyhttp_stream_response_body_buf(TinyHTTPStream *stream, ptrdiff_t *cap)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state == TINYHTTP_STREAM_DIED)
 		return NULL;
 
 	if (stream->output_state == TINYHTTP_OUTPUT_STATE_HEADER) {
@@ -1318,7 +1322,7 @@ char *tinyhttp_stream_response_body_buf(TinyHTTPStream *stream, ptrdiff_t *cap)
 void tinyhttp_stream_response_body_ack(TinyHTTPStream *stream, ptrdiff_t num)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state & TINYHTTP_STREAM_DIED)
 		return;
 
 	if (stream->output_state != TINYHTTP_OUTPUT_STATE_BODY) {
@@ -1364,7 +1368,7 @@ void tinyhttp_stream_response_body_ack(TinyHTTPStream *stream, ptrdiff_t num)
 void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state & TINYHTTP_STREAM_DIED)
 		return;
 
 	if (stream->output_state == TINYHTTP_OUTPUT_STATE_NONE)
@@ -1425,7 +1429,7 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	if (byte_queue_error(&stream->out)) {
-		tinyhttp_stream_free(stream);
+		stream->state |= TINYHTTP_STREAM_DIED;
 		return;
 	}
 
@@ -1451,7 +1455,7 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 void tinyhttp_stream_response_undo(TinyHTTPStream *stream)
 {
 	// Sticky error
-	if (stream->state == TINYHTTP_STREAM_FREE)
+	if (stream->state & TINYHTTP_STREAM_DIED)
 		return;
 
 	byte_queue_remove_after_lock(&stream->out);
@@ -1594,6 +1598,26 @@ invalidate_handles_to_stream(TinyHTTPServer *server, TinyHTTPStream *stream)
 		*gen = 1;
 }
 
+static void
+remove_from_ready_queue(TinyHTTPServer *server, int idx)
+{
+	#define QUEUE_AT_INDEX(I) server->ready_queue[(server->ready_head + (I)) % TINYHTTP_SERVER_CONN_LIMIT]
+
+	int i = 0;
+	while (i < server->ready_count && QUEUE_AT_INDEX(i) != idx)
+		i++;
+
+	if (i == server->ready_count)
+		return;
+
+	while (i < server->ready_count-1) {
+		QUEUE_AT_INDEX(i) = QUEUE_AT_INDEX(i+1);
+		i++;
+	}
+
+	server->ready_count--;
+}
+
 #if defined(__linux__)
 
 static void
@@ -1657,6 +1681,12 @@ accept_from_listen_socket(TinyHTTPServer *server, SOCKET listen_socket, int secu
 		}
 		errors = 0;
 
+		int one = 1;
+		if (setsockopt(accepted_socket, IPPROTO_TCP, TCP_NODELAY, (char*) &one, sizeof(one)) < 0) {
+			CLOSESOCKET(accepted_socket);
+			continue;
+		}
+
 		if (socket_set_block(accepted_socket, 0)) {
 			CLOSESOCKET(accepted_socket);
 			continue;
@@ -1670,6 +1700,10 @@ accept_from_listen_socket(TinyHTTPServer *server, SOCKET listen_socket, int secu
 		TinyHTTPStream *stream = &server->stream_state[idx];
 
 		tinyhttp_stream_init(stream, server->memfunc, server->memfuncdata);
+
+		if (server->num_conns < TINYHTTP_SERVER_CONN_LIMIT * 0.7)
+			tinyhttp_stream_setreuse(stream, 1);
+
 		int state = tinyhttp_stream_state(stream);
 
 		struct epoll_event epoll_buf;
@@ -1723,7 +1757,7 @@ process_network_events(TinyHTTPServer *server, int timeout)
 			TinyHTTPStream *stream = &server->stream_state[idx];
 
 			if (flags & (EPOLLERR | EPOLLHUP))
-				tinyhttp_stream_free(stream);
+				tinyhttp_stream_kill(stream);
 
 			int state = tinyhttp_stream_state(stream);
 			if (flags & EPOLLIN) {
@@ -1736,11 +1770,11 @@ process_network_events(TinyHTTPServer *server, int timeout)
 					if (ret < 0) {
 						if (errno == EAGAIN || errno == EWOULDBLOCK)
 							break;
-						tinyhttp_stream_free(stream);
+						tinyhttp_stream_kill(stream);
 						break;
 					}
 					if (ret == 0) {
-						tinyhttp_stream_free(stream);
+						tinyhttp_stream_kill(stream);
 						break;
 					}
 #if DUMP_IO
@@ -1762,11 +1796,11 @@ process_network_events(TinyHTTPServer *server, int timeout)
 					if (ret < 0) {
 						if (errno == EAGAIN || errno == EWOULDBLOCK)
 							break;
-						tinyhttp_stream_free(stream);
+						tinyhttp_stream_kill(stream);
 						break;
 					}
 					if (ret == 0) {
-						tinyhttp_stream_free(stream);
+						tinyhttp_stream_kill(stream);
 						break;
 					}
 #if DUMP_IO
@@ -1784,22 +1818,23 @@ process_network_events(TinyHTTPServer *server, int timeout)
 				tmp.data.fd = idx;
 				tmp.events = 0;
 				if (new_state & TINYHTTP_STREAM_RECV) tmp.events |= EPOLLIN;
-				if (new_state & TINYHTTP_STREAM_RECV) tmp.events |= EPOLLOUT;
+				if (new_state & TINYHTTP_STREAM_SEND) tmp.events |= EPOLLOUT;
 				if (epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, sock, &tmp) < 0) {
-					tinyhttp_stream_free(stream);
+					tinyhttp_stream_kill(stream);
 					new_state = tinyhttp_stream_state(stream);
 				}
 			}
 
-			if (state & TINYHTTP_STREAM_READY) {
+			if ((new_state & TINYHTTP_STREAM_READY) && !(state & TINYHTTP_STREAM_READY)) {
 				int ready_idx = (server->ready_head + server->ready_count) % TINYHTTP_SERVER_CONN_LIMIT;
 				server->ready_queue[ready_idx] = idx;
 				server->ready_count++;
 			}
 
-			if (new_state == TINYHTTP_STREAM_FREE) {
-				// TODO: Remove from the ready list
+			if (new_state & TINYHTTP_STREAM_DIED) {
+				remove_from_ready_queue(server, idx);
 				CLOSESOCKET(sock);
+				tinyhttp_stream_free(stream);
 				invalidate_handles_to_stream(server, stream);
 				server->stream_sockets[idx] = INVALID_SOCKET;
 				server->num_conns--;
@@ -1972,6 +2007,12 @@ intern_accepted_socket(TinyHTTPServer *server, SOCKET accepted_socket, int secur
 		return;
 	}
 
+	int one = 1;
+	if (setsockopt(accepted_socket, IPPROTO_TCP, TCP_NODELAY, (char*) &one, sizeof(one)) < 0) {
+		CLOSESOCKET(accepted_socket);
+		return;
+	}
+
 	if (socket_set_block(accepted_socket, 0) < 0) {
 		CLOSESOCKET(accepted_socket);
 		return;
@@ -1985,6 +2026,10 @@ intern_accepted_socket(TinyHTTPServer *server, SOCKET accepted_socket, int secur
 	TinyHTTPStream *stream = &server->stream_state[idx];
 
 	tinyhttp_stream_init(stream, server->memfunc, server->memfuncdata);
+
+	if (server->num_conns < TINYHTTP_SERVER_CONN_LIMIT * 0.7)
+		tinyhttp_stream_setreuse(stream, 1);
+
 	int state = tinyhttp_stream_state(stream);
 
 	DUMP_STATE(tinyhttp_stream_state(stream));
@@ -2107,11 +2152,13 @@ process_network_events(TinyHTTPServer *server, int timeout)
 	OVERLAPPED *recv_overlapped = &server->recv_overlapped[idx];
 	OVERLAPPED *send_overlapped = &server->send_overlapped[idx];
 
+	int old_state = tinyhttp_stream_state(stream);
+
 	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	if (!result) {
 		// A read or write operation failed
-		tinyhttp_stream_free(stream);
+		tinyhttp_stream_kill(stream);
 	} else {
 
 		if (recv_overlapped == overlapped) {
@@ -2121,7 +2168,7 @@ process_network_events(TinyHTTPServer *server, int timeout)
 #endif
 			tinyhttp_stream_recv_ack(stream, transferred);
 			if (transferred == 0)
-				tinyhttp_stream_free(stream);
+				tinyhttp_stream_kill(stream);
 		} else {
 			ASSERT(send_overlapped == overlapped);
 #if DUMP_IO
@@ -2132,14 +2179,14 @@ process_network_events(TinyHTTPServer *server, int timeout)
 		}
 
 		if (start_stream_operations(stream, sock, recv_overlapped, send_overlapped) < 0)
-			tinyhttp_stream_free(stream);
+			tinyhttp_stream_kill(stream);
 	}
 
 	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	int state = tinyhttp_stream_state(stream);
 
-	if (state & TINYHTTP_STREAM_READY) {
+	if ((state & TINYHTTP_STREAM_READY) && (old_state & TINYHTTP_STREAM_READY) == 0) {
 		int ready_idx = (server->ready_head + server->ready_count) % TINYHTTP_SERVER_CONN_LIMIT;
 		server->ready_queue[ready_idx] = idx;
 		server->ready_count++;
@@ -2147,8 +2194,9 @@ process_network_events(TinyHTTPServer *server, int timeout)
 
 	DUMP_STATE(tinyhttp_stream_state(stream));
 
-	if (state == TINYHTTP_STREAM_FREE) {
-		// TODO: Remove from the ready list
+	if (state & TINYHTTP_STREAM_DIED) {
+		tinyhttp_stream_free(stream);
+		remove_from_ready_queue(server, idx);
 		CLOSESOCKET(sock);
 		invalidate_handles_to_stream(server, stream);
 		server->stream_sockets[idx] = INVALID_SOCKET;
@@ -2379,9 +2427,8 @@ void tinyhttp_response_send(TinyHTTPResponse res)
 		server->ready_count++;
 	}
 
-	int state = tinyhttp_stream_state(stream);
-
 #if defined(__linux__)
+	int state = tinyhttp_stream_state(stream);
 	SOCKET sock = server->stream_sockets[idx];
 	struct epoll_event epoll_buf;
 	epoll_buf.data.fd = idx;
