@@ -59,7 +59,7 @@
 #define ASSERT(X) {if (!(X)) __builtin_trap();}
 #define COUNTOF(X) (sizeof(X)/sizeof((X)[0]))
 
-#define DUMP_IO 0
+#define DUMP_IO 1
 
 #if TINYHTTP_ROUTER_ENABLE
 #error "The router interface isn't ready yet"
@@ -172,8 +172,26 @@ void tinyhttp_printstate_(int state, const char *file, const char *line)
 	print(")\n", -1);
 }
 
-static char
-to_lower(char c)
+static int is_digit(char c)
+{
+	return c >= '0' && c <= '9';
+}
+
+static int is_hex_digit(char c)
+{
+	return (c >= '0' && c <= '9')
+		|| (c >= 'a' && c <= 'f')
+		|| (c >= 'A' && c <= 'F');
+}
+
+static int hex_digit_to_int(char c)
+{
+	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+	return c - '0';
+}
+
+static char to_lower(char c)
 {
 	if (c >= 'A' && c <= 'Z')
 		return c - 'A' + 'a';
@@ -369,47 +387,47 @@ parse_transfer_encoding(const char *src, ptrdiff_t len, int *items, int max)
 			cur++;
 
 		if (6 < len - cur
-			&& src[cur+0] == 'c'
-			&& src[cur+1] == 'h'
-			&& src[cur+2] == 'u'
-			&& src[cur+3] == 'n'
-			&& src[cur+4] == 'k'
-			&& src[cur+5] == 'e'
-			&& src[cur+6] == 'd') {
+			&& to_lower(src[cur+0]) == 'c'
+			&& to_lower(src[cur+1]) == 'h'
+			&& to_lower(src[cur+2]) == 'u'
+			&& to_lower(src[cur+3]) == 'n'
+			&& to_lower(src[cur+4]) == 'k'
+			&& to_lower(src[cur+5]) == 'e'
+			&& to_lower(src[cur+6]) == 'd') {
 			if (num == max)
 				return -1;
 			items[num++] = TRANSFER_ENCODING_CHUNKED;
 			cur += 7;
 		} else if (7 < len - cur
-			&& src[cur+0] == 'c'
-			&& src[cur+1] == 'o'
-			&& src[cur+2] == 'm'
-			&& src[cur+3] == 'p'
-			&& src[cur+4] == 'r'
-			&& src[cur+5] == 'e'
-			&& src[cur+6] == 's'
-			&& src[cur+7] == 's') {
+			&& to_lower(src[cur+0]) == 'c'
+			&& to_lower(src[cur+1]) == 'o'
+			&& to_lower(src[cur+2]) == 'm'
+			&& to_lower(src[cur+3]) == 'p'
+			&& to_lower(src[cur+4]) == 'r'
+			&& to_lower(src[cur+5]) == 'e'
+			&& to_lower(src[cur+6]) == 's'
+			&& to_lower(src[cur+7]) == 's') {
 			if (num == max)
 				return -1;
 			items[num++] = TRANSFER_ENCODING_COMPRESS;
 			cur += 8;
 		} else if (6 < len - cur
-			&& src[cur+0] == 'd'
-			&& src[cur+1] == 'e'
-			&& src[cur+2] == 'f'
-			&& src[cur+3] == 'l'
-			&& src[cur+4] == 'a'
-			&& src[cur+5] == 't'
-			&& src[cur+6] == 'e') {
+			&& to_lower(src[cur+0]) == 'd'
+			&& to_lower(src[cur+1]) == 'e'
+			&& to_lower(src[cur+2]) == 'f'
+			&& to_lower(src[cur+3]) == 'l'
+			&& to_lower(src[cur+4]) == 'a'
+			&& to_lower(src[cur+5]) == 't'
+			&& to_lower(src[cur+6]) == 'e') {
 			if (num == max)
 				return -1;
 			items[num++] = TRANSFER_ENCODING_DEFLATE;
 			cur += 7;
 		} else if (3 < len - cur
-			&& src[cur+0] == 'g'
-			&& src[cur+1] == 'z'
-			&& src[cur+2] == 'i'
-			&& src[cur+3] == 'p') {
+			&& to_lower(src[cur+0]) == 'g'
+			&& to_lower(src[cur+1]) == 'z'
+			&& to_lower(src[cur+2]) == 'i'
+			&& to_lower(src[cur+3]) == 'p') {
 			if (num == max)
 				return -1;
 			items[num++] = TRANSFER_ENCODING_GZIP;
@@ -430,11 +448,6 @@ parse_transfer_encoding(const char *src, ptrdiff_t len, int *items, int max)
 	}
 
 	return num;
-}
-
-static int is_digit(char c)
-{
-	return c >= '0' && c <= '9';
 }
 
 static int
@@ -460,7 +473,8 @@ parse_content_length(const char *src, ptrdiff_t len, unsigned long long *out)
 }
 
 static int
-parse_request(char *src, ptrdiff_t len, unsigned long long body_limit, TinyHTTPRequest *req)
+parse_request(char *src, ptrdiff_t len,
+	unsigned long long body_limit, TinyHTTPRequest *req)
 {
 	ptrdiff_t ret = parse_request_head(src, len, req);
 	if (ret <= 0)
@@ -477,12 +491,82 @@ parse_request(char *src, ptrdiff_t len, unsigned long long body_limit, TinyHTTPR
 		if (num < 0)
 			return -400;
 
+		typedef struct {
+			ptrdiff_t offset;
+			ptrdiff_t length;
+		} Chunk;
+
+		ptrdiff_t body_length = 0;
+		Chunk chunks[TINYHTTP_CHUNK_LIMIT];
+		int num_chunks = 0;
+
+		ptrdiff_t cur = head_len;
 		for (;;) {
 
-			return -501; // TODO: Parse chunks
+			if (cur == len)
+				return 0;
+
+			if (!is_hex_digit(src[cur]))
+				return -400;
+
+			unsigned long long chunk_length = 0;
+			do {
+				int d = hex_digit_to_int(src[cur++]);
+				if (chunk_length > (MAX_U64 - d) / 16)
+					return -400;
+				chunk_length = chunk_length * 16 + d;
+			} while (cur < len && is_hex_digit(src[cur]));
+
+			if (chunk_length > body_limit - body_length) {
+				// TODO
+			}
+			body_length += chunk_length;
+
+			if (cur == len)
+				return 0;
+			if (src[cur] != '\r')
+				return -400;
+			cur++;
+
+			if (cur == len)
+				return 0;
+			if (src[cur] != '\n')
+				return -400;
+			cur++;
+
+			ptrdiff_t chunk_offset = cur;
+			cur += chunk_length; // TODO: Check overflow
+
+			if (cur >= len)
+				return 0;
+			if (src[cur] != '\r')
+				return -400;
+			cur++;
+
+			if (cur == len)
+				return 0;
+			if (src[cur] != '\n')
+				return -400;
+			cur++;
+
+			if (chunk_length == 0)
+				break;
+
+			if (num_chunks == TINYHTTP_CHUNK_LIMIT)
+				return -500;
+			chunks[num_chunks++] = (Chunk) { chunk_offset, chunk_length };
 		}
 
-		return 1;
+		// Pack all of the chunks tightly after the head
+		ptrdiff_t next = head_len;
+		for (int i = 0; i < num_chunks; i++) {
+			memmove(src + next, src + chunks[i].offset, chunks[i].length);
+			next += chunks[i].length;
+		}
+
+		req->body = src + head_len;
+		req->body_len = body_length;
+		return cur;
 	}
 
 	int content_length_index = find_header(req, TINYHTTP_STRING("Content-Length"));
@@ -1502,7 +1586,7 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 
 #if DUMP_IO
 	ptrdiff_t ressize = (byte_queue_offset(&stream->out) - stream->out.lock);
-	print_bytes("R << ", stream->out.data + stream->out.head, ressize);
+	tinyhttp_printbytes("R << ", stream->out.data + stream->out.head, ressize);
 #endif
 
 	byte_queue_read_ack(&stream->in, stream->reqsize);
@@ -1837,7 +1921,9 @@ process_network_events(TinyHTTPServer *server, int timeout)
 			if (flags & (EPOLLERR | EPOLLHUP))
 				tinyhttp_stream_kill(stream);
 
-			int state = tinyhttp_stream_state(stream);
+			int old_state = tinyhttp_stream_state(stream);
+			int state = old_state;
+
 			if (flags & EPOLLIN) {
 				while (state & TINYHTTP_STREAM_RECV) {
 					ptrdiff_t cap;
@@ -1856,7 +1942,7 @@ process_network_events(TinyHTTPServer *server, int timeout)
 						break;
 					}
 #if DUMP_IO
-					print_bytes("N >> ", dst, ret);
+					tinyhttp_printbytes("N >> ", dst, ret);
 #endif
 					tinyhttp_stream_recv_ack(stream, ret);
 					state = tinyhttp_stream_state(stream);
@@ -1882,7 +1968,7 @@ process_network_events(TinyHTTPServer *server, int timeout)
 						break;
 					}
 #if DUMP_IO
-					print_bytes("N << ", src, ret);
+					tinyhttp_printbytes("N << ", src, ret);
 #endif
 					tinyhttp_stream_send_ack(stream, ret);
 					state = tinyhttp_stream_state(stream);
@@ -1891,7 +1977,7 @@ process_network_events(TinyHTTPServer *server, int timeout)
 			}
 
 			int new_state = tinyhttp_stream_state(&server->stream_state[idx]);
-			if ((state & (TINYHTTP_STREAM_RECV | TINYHTTP_STREAM_SEND)) != (new_state & (TINYHTTP_STREAM_RECV | TINYHTTP_STREAM_SEND))) {
+			if ((old_state & (TINYHTTP_STREAM_RECV | TINYHTTP_STREAM_SEND)) != (new_state & (TINYHTTP_STREAM_RECV | TINYHTTP_STREAM_SEND))) {
 				struct epoll_event tmp;
 				tmp.data.fd = idx;
 				tmp.events = 0;
@@ -1903,7 +1989,7 @@ process_network_events(TinyHTTPServer *server, int timeout)
 				}
 			}
 
-			if ((new_state & TINYHTTP_STREAM_READY) && !(state & TINYHTTP_STREAM_READY)) {
+			if ((new_state & TINYHTTP_STREAM_READY) && !(old_state & TINYHTTP_STREAM_READY)) {
 				int ready_idx = (server->ready_head + server->ready_count) % TINYHTTP_SERVER_CONN_LIMIT;
 				server->ready_queue[ready_idx] = idx;
 				server->ready_count++;
@@ -2228,7 +2314,7 @@ process_network_events(TinyHTTPServer *server, int timeout)
 		if (recv_overlapped == overlapped) {
 #if DUMP_IO
 			printf("RECV COMPLETED (num=%ld)\n", transferred);
-			print_bytes("N >> ", stream->in.data + stream->in.head, transferred);
+			tinyhttp_printbytes("N >> ", stream->in.data + stream->in.head, transferred);
 #endif
 			tinyhttp_stream_recv_ack(stream, transferred);
 			if (transferred == 0)
@@ -2237,7 +2323,7 @@ process_network_events(TinyHTTPServer *server, int timeout)
 			ASSERT(send_overlapped == overlapped);
 #if DUMP_IO
 			printf("SEND COMPLETED (num=%ld)\n", transferred);
-			print_bytes("N << ", stream->out.data + stream->out.head, transferred);
+			tinyhttp_printbytes("N << ", stream->out.data + stream->out.head, transferred);
 #endif
 			tinyhttp_stream_send_ack(stream, transferred);
 		}

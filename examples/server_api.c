@@ -18,7 +18,7 @@ int main(void)
 
 	TinyHTTPServerConfig config = {
 		.reuse = 1,
-		.plain_addr = NULL,
+		.plain_addr = "127.0.0.1",
 		.plain_port = 8080,
 		.plain_backlog = 32,
 	};

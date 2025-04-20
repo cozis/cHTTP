@@ -9,7 +9,6 @@
 // TEST CASES
 //////////////////////////////////////////////////////////////////////////////////////
 
-// Plain HTTP 1.1 request string with no Connection header
 #define BASIC_REQUEST_STRING		\
 	"GET / HTTP/1.1\r\n"			\
 	"Host: 127.0.0.1:8080\r\n"		\
@@ -35,31 +34,6 @@ static void test_init(void)
 	TEST(!(state & TINYHTTP_STREAM_REUSE));
 	TEST(!(state & TINYHTTP_STREAM_RECV_STARTED));
 	TEST(!(state & TINYHTTP_STREAM_SEND_STARTED));
-
-	tinyhttp_stream_free(&stream);
-	TEST_END
-}
-
-static void test_setreuse(void)
-{
-	TinyHTTPStream stream;
-	
-	TEST_START
-	tinyhttp_stream_init(&stream, memfunc, NULL);
-
-	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE));
-
-	tinyhttp_stream_setreuse(&stream, 1);
-
-	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE);
-
-	tinyhttp_stream_setreuse(&stream, 0);
-
-	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE));
-
-	tinyhttp_stream_setreuse(&stream, 5847295);
-
-	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE);
 
 	tinyhttp_stream_free(&stream);
 	TEST_END
@@ -128,14 +102,12 @@ test_send_started_flag(void)
 	TEST_END
 }
 
-static void test_exchange(int reuse)
+static void test_basic_exchange()
 {
 	TinyHTTPStream stream;
 
 	TEST_START
 	tinyhttp_stream_init(&stream, memfunc, NULL);
-
-	tinyhttp_stream_setreuse(&stream, reuse);
 
 	// Send request
 	send_request(&stream, BASIC_REQUEST_STRING);
@@ -155,32 +127,9 @@ static void test_exchange(int reuse)
 	TEST(res.status_code == 200);
 	TEST(tinyhttp_streq(res.status_text, TINYHTTP_STRING("OK")));
 
-	if (reuse) {
-		// If we allowed connection reuse on this stream, we expect
-		// the connection to be kept alive. The response must therefore
-		// contain the "Connection: Keep-Alive" header or no "Connection"
-		// header at all since "Keep-Alive" is the default.
-		TEST(!header_exists(&res, TINYHTTP_STRING("Connection")) ||
-			header_exists_with_value(&res, TINYHTTP_STRING("Connection"), TINYHTTP_STRING("Keep-Alive")));
-	} else {
-		// If we didn't allow connection reuse, then the response must
-		// contain the "Connection: Close" header
-		TEST(header_exists_with_value(&res, TINYHTTP_STRING("Connection"), TINYHTTP_STRING("Close")));
-	}
-
 	tinyhttp_stream_free(&stream);
 	TEST_END
 }
-
-/*
-KEEP ALIVE TESTS
-	no connection header in request
-	invalid connection header in request
-	keep-alive value in request
-	close value in request
-
-	
-*/
 
 //////////////////////////////////////////////////////////////////////////////////////
 // ENTRY POINT
@@ -189,13 +138,12 @@ KEEP ALIVE TESTS
 int main(void)
 {
 	test_init();
-	test_setreuse();
 	test_kill();
 	test_recv_started_flag();
 	test_send_started_flag();
-	test_exchange(0);
-	test_exchange(1);
+	test_basic_exchange();
 	test_reuse();
+	test_chunking();
 	printf("OK\n");
 	return 0;
 }

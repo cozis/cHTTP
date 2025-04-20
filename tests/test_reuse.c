@@ -52,6 +52,32 @@
 	"Connection: Close\r\n"					\
 	"\r\n"
 
+static void test_setreuse(void)
+{
+	TinyHTTPStream stream;
+	
+	TEST_START
+	tinyhttp_stream_init(&stream, memfunc, NULL);
+
+	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE));
+
+	tinyhttp_stream_setreuse(&stream, 1);
+
+	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE);
+
+	tinyhttp_stream_setreuse(&stream, 0);
+
+	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE));
+	
+	tinyhttp_stream_setreuse(&stream, 5847295);
+
+	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE);
+	
+	tinyhttp_stream_free(&stream);
+	TEST_END
+}
+	
+
 typedef enum {
 	DONT_REUSE,
 	ALLOW_REUSE,
@@ -139,6 +165,7 @@ void test_reuse(void)
 	//   RFC 9112, Section 9.6. (Tear-down)
 	//   RFC 9110, Section 7.6.1. (Connection)
 
+	test_setreuse();
 	test_reuse_helper(DONT_REUSE,  INCONNHDR_NONE,      1, OUTCONNHDR_CLOSE,                1, __FILE__, __LINE__);
 	test_reuse_helper(DONT_REUSE,  INCONNHDR_KEEPALIVE, 1, OUTCONNHDR_CLOSE,                1, __FILE__, __LINE__);
 	test_reuse_helper(DONT_REUSE,  INCONNHDR_CLOSE,     1, OUTCONNHDR_CLOSE,                1, __FILE__, __LINE__);

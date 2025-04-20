@@ -39,3 +39,4 @@ int header_exists_with_value(Response *res, TinyHTTPString name, TinyHTTPString 
 #define TEST_END
 
 void test_reuse(void);
+void test_chunking(void);
