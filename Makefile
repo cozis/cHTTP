@@ -1,74 +1,119 @@
-# Makefile for tinyhttp with cross-platform support
-# Supports Windows and Linux with various build configurations
+CC = gcc
+RM = rm
+MKDIR = mkdir
 
-# Detect operating system
+EXT_WINDOWS = exe
+EXT_LINUX   = out
+
+# Can be either RELEASE or DEBUG
+BUILD = RELEASE
+
+SUFFIX_RELEASE =
+SUFFIX_DEBUG   = _debug
+
+# ------------------------------------------------------ #
+
+TEST_CFILES        = tinyhttp.c tests/picohttpparser.c tests/main.c
+TEST_HFILES        = tinyhttp.h tests/picohttpparser.h
+
+TEST_FLAGS         = -Wall -Wextra
+TEST_FLAGS_DEBUG   = -ggdb
+TEST_FLAGS_RELEASE = -O2 -DNDEBUG
+
+TEST_FLAGS_WINDOWS         = -lws2_32
+TEST_FLAGS_WINDOWS_DEBUG   =
+TEST_FLAGS_WINDOWS_RELEASE =
+
+TEST_FLAGS_LINUX           =
+TEST_FLAGS_LINUX_DEBUG     =
+TEST_FLAGS_LINUX_RELEASE   =
+
+# ------------------------------------------------------ #
+
+DEMO0_CFILES            = tinyhttp.c examples/server_api.c
+DEMO0_HFILES            = tinyhttp.h
+
+DEMO0_FLAGS         =
+DEMO0_FLAGS_DEBUG   = -ggdb
+DEMO0_FLAGS_RELEASE = -O2 -DNDEBUG
+
+DEMO0_FLAGS_WINDOWS         = -lws2_32
+DEMO0_FLAGS_WINDOWS_DEBUG   =
+DEMO0_FLAGS_WINDOWS_RELEASE =
+
+DEMO0_FLAGS_LINUX           =
+DEMO0_FLAGS_LINUX_DEBUG     =
+DEMO0_FLAGS_LINUX_RELEASE   =
+
+# ------------------------------------------------------ #
+
+DEMO1_CFILES        = tinyhttp.c examples/stream_api_with_select.c
+DEMO1_HFILES        = tinyhttp.h
+DEMO1_FLAGS         =
+
+DEMO1_FLAGS         =
+DEMO1_FLAGS_DEBUG   = -ggdb
+DEMO1_FLAGS_RELEASE = -O2 -DNDEBUG
+
+DEMO1_FLAGS_WINDOWS         = -lws2_32
+DEMO1_FLAGS_WINDOWS_DEBUG   =
+DEMO1_FLAGS_WINDOWS_RELEASE =
+
+DEMO1_FLAGS_LINUX           =
+DEMO1_FLAGS_LINUX_DEBUG     =
+DEMO1_FLAGS_LINUX_RELEASE   =
+
+# ------------------------------------------------------ #
+# ------------------------------------------------------ #
+# ------------------------------------------------------ #
+
 ifeq ($(OS),Windows_NT)
-    DETECTED_OS := Windows
-    # On Windows, we need to link with winsock library
-    LIBS := -lws2_32
-    RM := del /Q
-    # Windows executable extension
-    EXE := .exe
+    OSTAG = WINDOWS
 else
-    DETECTED_OS := $(shell uname -s)
-    LIBS :=
-    RM := rm -f
-    EXE :=
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Linux)
+        OSTAG = LINUX
+    endif
+    ifeq ($(UNAME_S),Darwin)
+        OSTAG = OSX
+    endif
 endif
 
-# Compiler and flags
-CC := gcc
-CFLAGS := -Wall -Wextra -I.
-LDFLAGS :=
+EXT = ${EXT_$(OSTAG)}
 
-# Project files
-SRC := tinyhttp.c example.c
-HEADERS := tinyhttp.h
-TARGET := example$(EXE)
+TEST_FLAGS += ${TEST_FLAGS_$(BUILD)}
+TEST_FLAGS += ${TEST_FLAGS_$(OSTAG)}
+TEST_FLAGS += ${TEST_FLAGS_$(OSTAG)_$(BUILD)}
 
-# Default target
-.PHONY: all clean release debug asan coverage
+DEMO0_FLAGS += ${DEMO0_FLAGS_$(BUILD)}
+DEMO0_FLAGS += ${DEMO0_FLAGS_$(OSTAG)}
+DEMO0_FLAGS += ${DEMO0_FLAGS_$(OSTAG)_$(BUILD)}
 
-# Default is release build
-all: release
+DEMO1_FLAGS += ${DEMO1_FLAGS_$(BUILD)}
+DEMO1_FLAGS += ${DEMO1_FLAGS_$(OSTAG)}
+DEMO1_FLAGS += ${DEMO1_FLAGS_$(OSTAG)_$(BUILD)}
 
-# Release build
-release: CFLAGS += -O2 -DNDEBUG
-release: $(TARGET)
+SUFFIX = ${SUFFIX_$(BUILD)}
 
-# Debug build
-debug: CFLAGS += -ggdb -DDEBUG
-debug: $(TARGET)
+# ------------------------------------------------------ #
+# ------------------------------------------------------ #
+# ------------------------------------------------------ #
 
-# Address Sanitizer build
-asan: CFLAGS += -fsanitize=address -fno-omit-frame-pointer -O1
-asan: LDFLAGS += -fsanitize=address
-asan: $(TARGET)
+.PHONY: all clean
 
-# Coverage build
-coverage: CFLAGS += -fprofile-arcs -ftest-coverage -O0
-coverage: LDFLAGS += -fprofile-arcs -ftest-coverage
-coverage: $(TARGET)
+all: out/test$(SUFFIX).$(EXT) out/demo0$(SUFFIX).$(EXT) out/demo1$(SUFFIX).$(EXT)
 
-# Compile and link
-$(TARGET): $(SRC) $(HEADERS)
-	$(CC) $(CFLAGS) $(SRC) -o $@ $(LDFLAGS) $(LIBS)
+out:
+	$(MKDIR) out
 
-# Clean build artifacts
+out/test$(SUFFIX).$(EXT): out $(TEST_CFILES) $(TEST_HFILES)
+	$(CC) -o $@ $(TEST_CFILES) $(TEST_FLAGS)
+
+out/demo0$(SUFFIX).$(EXT): out $(DEMO0_CFILES) $(DEMO0_HFILES)
+	$(CC) -o $@ $(DEMO0_CFILES) $(DEMO0_FLAGS)
+
+out/demo1$(SUFFIX).$(EXT): out $(DEMO1_CFILES) $(DEMO1_HFILES)
+	$(CC) -o $@ $(DEMO1_CFILES) $(DEMO1_FLAGS)
+
 clean:
-ifeq ($(DETECTED_OS),Windows)
-	$(RM) $(TARGET) *.gcda *.gcno *.gcov
-else
-	$(RM) $(TARGET) *.o *.gcda *.gcno *.gcov
-endif
-
-# Show help
-help:
-	@echo "Available targets:"
-	@echo "  all      - Same as 'release'"
-	@echo "  release  - Optimized build (-O2, NDEBUG)"
-	@echo "  debug    - Debug build with symbols (-ggdb)"
-	@echo "  asan     - Address Sanitizer build"
-	@echo "  coverage - Code coverage build"
-	@echo "  clean    - Remove build artifacts"
-	@echo "  help     - Show this help"
+	$(RM) -fr out

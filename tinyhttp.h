@@ -43,23 +43,27 @@
 typedef struct TinyHTTPServer TinyHTTPServer;
 typedef struct TinyHTTPRouter TinyHTTPRouter;
 
+typedef struct {
+	const char *ptr;
+	ptrdiff_t   len;
+} TinyHTTPString;
+
+#define TINYHTTP_STRING(X) ((TinyHTTPString) {(X), sizeof(X)-1})
+
 typedef enum {
 	TINYHTTP_METHOD_GET,
 	TINYHTTP_METHOD_POST,
 } TinyHTTPMethod;
 
 typedef struct {
-	char     *name;
-	ptrdiff_t name_len;
-	char     *value;
-	ptrdiff_t value_len;
+	TinyHTTPString name;
+	TinyHTTPString value;
 } TinyHTTPHeader;
 
 typedef struct {
 	TinyHTTPMethod method;
 	int            minor;
-	char*          path;
-	ptrdiff_t      path_len;
+	TinyHTTPString path;
 	int            num_headers;
 	TinyHTTPHeader headers[TINYHTTP_HEADER_LIMIT];
 	char*          body;
@@ -167,6 +171,9 @@ typedef struct {
 	TinyHTTPRequest req;
 } TinyHTTPStream;
 
+int tinyhttp_streq(TinyHTTPString s1, TinyHTTPString s2);
+int tinyhttp_streqcase(TinyHTTPString s1, TinyHTTPString s2);
+
 // Initializes an HTTP stream
 //
 // TODO: Comment on memfunc
@@ -262,8 +269,7 @@ void tinyhttp_stream_response_header(TinyHTTPStream *stream, const char *fmt, ..
 void tinyhttp_stream_response_header_fmt(TinyHTTPStream *stream, const char *fmt, va_list args);
 
 // TODO: Comment
-// TODO: Implement
-void tinyhttp_stream_response_body(TinyHTTPStream *stream, char *src, int len);
+void tinyhttp_stream_response_body(TinyHTTPStream *stream, const char *src, int len);
 
 // TODO: Comment
 void tinyhttp_stream_response_body_setmincap(TinyHTTPStream *stream, ptrdiff_t mincap);
@@ -281,8 +287,7 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream);
 void tinyhttp_stream_response_undo(TinyHTTPStream *stream);
 
 // TODO: Comment
-TinyHTTPServer *tinyhttp_server_init(TinyHTTPServerConfig config,
-	TinyHTTPMemoryFunc memfunc, void *memfuncdata);
+TinyHTTPServer *tinyhttp_server_init(TinyHTTPServerConfig config);
 
 // TODO: Comment
 void tinyhttp_server_free(TinyHTTPServer *server);
@@ -311,6 +316,9 @@ char *tinyhttp_response_body_buf(TinyHTTPResponse res, ptrdiff_t *cap);
 
 // TODO: Comment
 void tinyhttp_response_body_ack(TinyHTTPResponse res, ptrdiff_t num);
+
+// TODO: Comment
+void tinyhttp_response_body(TinyHTTPResponse res, char *src, int len);
 
 // TODO: Comment
 void tinyhttp_response_send(TinyHTTPResponse res);

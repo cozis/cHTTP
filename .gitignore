@@ -1,4 +1,2 @@
-blog
-blog.exe
-example
-example.exe
+*.out
+*.exe

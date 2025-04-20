@@ -114,8 +114,8 @@ static void
 dump_state(int state, const char *file, int line)
 {
 	printf("state = ");
-	if (state == TINYHTTP_STREAM_FREE)
-		printf("FREE ");
+	if (state & TINYHTTP_STREAM_DIED)
+		printf("DIED ");
 
 	if (state & TINYHTTP_STREAM_SEND)
 		printf("SEND ");
@@ -144,6 +144,38 @@ dump_state(int state, const char *file, int line)
 #else
 #define DUMP_STATE(...)
 #endif
+
+////////////////////////////////////////////////////////////////////////////////////
+// UTILITIES                                                                      //
+////////////////////////////////////////////////////////////////////////////////////
+
+static char
+to_lower(char c)
+{
+	if (c >= 'A' && c <= 'Z')
+		return c - 'A' + 'a';
+	return c;
+}
+
+int tinyhttp_streq(TinyHTTPString s1, TinyHTTPString s2)
+{
+	if (s1.len != s2.len)
+		return 0;
+	for (int i = 0; i < s1.len; i++)
+		if (s1.ptr[i] != s2.ptr[i])
+			return 0;
+	return 1;
+}
+
+int tinyhttp_streqcase(TinyHTTPString s1, TinyHTTPString s2)
+{
+	if (s1.len != s2.len)
+		return 0;
+	for (int i = 0; i < s1.len; i++)
+		if (to_lower(s1.ptr[i]) != to_lower(s2.ptr[i]))
+			return 0;
+	return 1;
+}
 
 ////////////////////////////////////////////////////////////////////////////////////
 // HTTP REQUEST PARSER                                                            //
@@ -189,8 +221,7 @@ parse_request_head(char *src, ptrdiff_t len, TinyHTTPRequest *req)
 	off = cur;
 	while (cur < len && src[cur] != ' ') // TODO: More robust
 		cur++;
-	req->path     = src + off;
-	req->path_len = cur - off;
+	req->path = (TinyHTTPString) { src + off, cur - off };
 
 	if (len - cur <= 5
 		|| src[cur+0] != ' '
@@ -234,7 +265,7 @@ parse_request_head(char *src, ptrdiff_t len, TinyHTTPRequest *req)
 		ptrdiff_t name_off = cur;
 		while (cur < len && src[cur] != ':') // TODO: robust
 			cur++;
-		ptrdiff_t name_len = cur - name_off;
+		TinyHTTPString name = { src + name_off, cur - name_off };
 
 		if (cur == len)
 			return -400;
@@ -243,7 +274,7 @@ parse_request_head(char *src, ptrdiff_t len, TinyHTTPRequest *req)
 		ptrdiff_t value_off = cur;
 		while (cur < len && src[cur] != '\r')
 			cur++;
-		ptrdiff_t value_len = cur - value_off;
+		TinyHTTPString value = { src + value_off, cur - value_off };
 
 		if (cur == len)
 			return -400;
@@ -257,44 +288,20 @@ parse_request_head(char *src, ptrdiff_t len, TinyHTTPRequest *req)
 		//   1) No spaces are allowed after the name
 		//   2) Spaces should be trimmed from the value
 
-		if (req->num_headers < TINYHTTP_HEADER_LIMIT) {
-			TinyHTTPHeader *header = &req->headers[req->num_headers++];
-			header->name      = src + name_off;
-			header->name_len  = name_len;
-			header->value     = src + value_off;
-			header->value_len = value_len;
-		}
+		if (req->num_headers < TINYHTTP_HEADER_LIMIT)
+			req->headers[req->num_headers++] = (TinyHTTPHeader) { name, value };
 	}
 	cur += 2;
 
 	return cur;
 }
 
-static char
-to_lower(char c)
-{
-	if (c >= 'A' && c <= 'Z')
-		return c - 'A' + 'a';
-	return c;
-}
-
 static int
-eqstrnocase(const char *s1, ptrdiff_t len1, const char *s2, ptrdiff_t len2)
-{
-	if (len1 != len2)
-		return 0;
-	for (int i = 0; i < len1; i++)
-		if (to_lower(s1[i]) != to_lower(s2[i]))
-			return 0;
-	return 1;
-}
-
-static int
-find_header(TinyHTTPRequest *req, const char *name)
+find_header(TinyHTTPRequest *req, TinyHTTPString name)
 {
 	for (int i = 0; i < req->num_headers; i++) {
 		TinyHTTPHeader *header = &req->headers[i];
-		if (eqstrnocase(header->name, header->name_len, name, strlen(name)))
+		if (tinyhttp_streqcase(header->name, name))
 			return i;
 	}
 	return -1;
@@ -308,7 +315,7 @@ enum {
 };
 
 static int
-parse_transfer_encoding(char *src, ptrdiff_t len, int *items, int max)
+parse_transfer_encoding(const char *src, ptrdiff_t len, int *items, int max)
 {
 	int num = 0;
 	ptrdiff_t cur = 0;
@@ -387,7 +394,7 @@ static int is_digit(char c)
 }
 
 static int
-parse_content_length(char *src, ptrdiff_t len, unsigned long long *out)
+parse_content_length(const char *src, ptrdiff_t len, unsigned long long *out)
 {
 	ptrdiff_t cur = 0;
 	while (cur < len && (src[cur] == ' ' || src[cur] == '\t'))
@@ -416,13 +423,13 @@ parse_request(char *src, ptrdiff_t len, unsigned long long body_limit, TinyHTTPR
 		return ret;
 	ptrdiff_t head_len = ret;
 
-	int transfer_encoding_index = find_header(req, "Transfer-Encoding");
+	int transfer_encoding_index = find_header(req, TINYHTTP_STRING("Transfer-Encoding"));
 	if (transfer_encoding_index >= 0) {
 
 		TinyHTTPHeader *header = &req->headers[transfer_encoding_index];
 
 		int items[8];
-		int num = parse_transfer_encoding(header->value, header->value_len, items, COUNTOF(items));
+		int num = parse_transfer_encoding(header->value.ptr, header->value.len, items, COUNTOF(items));
 		if (num < 0)
 			return -400;
 
@@ -434,13 +441,13 @@ parse_request(char *src, ptrdiff_t len, unsigned long long body_limit, TinyHTTPR
 		return 1;
 	}
 
-	int content_length_index = find_header(req, "Content-Length");
+	int content_length_index = find_header(req, TINYHTTP_STRING("Content-Length"));
 	if (content_length_index >= 0) {
 
 		TinyHTTPHeader *header = &req->headers[content_length_index];
 
 		unsigned long long content_length;
-		if (parse_content_length(header->value, header->value_len, &content_length) < 0)
+		if (parse_content_length(header->value.ptr, header->value.len, &content_length) < 0)
 			return -400;
 		if (content_length > body_limit || content_length > MAX_U32)
 			return -413;
@@ -1072,7 +1079,7 @@ process_next_request(TinyHTTPStream *stream)
 	// Try parsing the request from the buffered bytes.
 
 	ptrdiff_t len;
-	char *src = byte_queue_read_buf(&stream->in, &len);
+	char *src = byte_queue_read_buf(&stream->in, &len); // TODO: What if this returns NULL?
 	int ret = parse_request(src, len, stream->bodylimit, &stream->req);
 
 	// Request is incomplete
@@ -1268,6 +1275,19 @@ append_special_headers(TinyHTTPStream *stream)
 
 	byte_queue_write(&stream->out, "\r\n");
 	stream->content_length_offset = byte_queue_offset(&stream->out);
+}
+
+void tinyhttp_stream_response_body(TinyHTTPStream *stream, const char *src, int len)
+{
+	if (len < 0) len = strlen(src);
+
+	tinyhttp_stream_response_body_setmincap(stream, len);
+
+	ptrdiff_t cap;
+	char *dst = tinyhttp_stream_response_body_buf(stream, &cap);
+	if (dst)
+		memcpy(dst, src, len);
+	tinyhttp_stream_response_body_ack(stream, len);
 }
 
 // See tinyhttp.h
@@ -1482,8 +1502,6 @@ struct TinyHTTPServer {
 #elif defined(__linux__)
 	int epoll_fd;
 #endif
-	TinyHTTPMemoryFunc memfunc;
-	void *memfuncdata;
 	SOCKET plain_listen_socket;
 	SOCKET secure_listen_socket;
 	int num_conns;
@@ -1618,6 +1636,22 @@ remove_from_ready_queue(TinyHTTPServer *server, int idx)
 	server->ready_count--;
 }
 
+static void*
+default_memfunc(TinyHTTPMemoryFuncTag tag, void *ptr, int len, void *data)
+{
+	(void) data;
+	switch (tag) {
+
+		case TINYHTTP_MEM_MALLOC:
+		return malloc(len);
+
+		case TINYHTTP_MEM_FREE:
+		free(ptr);
+		return NULL;
+	}
+	return NULL;
+}
+
 #if defined(__linux__)
 
 static void
@@ -1699,7 +1733,7 @@ accept_from_listen_socket(TinyHTTPServer *server, SOCKET listen_socket, int secu
 		server->stream_sockets[idx] = accepted_socket;
 		TinyHTTPStream *stream = &server->stream_state[idx];
 
-		tinyhttp_stream_init(stream, server->memfunc, server->memfuncdata);
+		tinyhttp_stream_init(stream, default_memfunc, NULL);
 
 		if (server->num_conns < TINYHTTP_SERVER_CONN_LIMIT * 0.7)
 			tinyhttp_stream_setreuse(stream, 1);
@@ -2025,12 +2059,10 @@ intern_accepted_socket(TinyHTTPServer *server, SOCKET accepted_socket, int secur
 	server->stream_sockets[idx] = accepted_socket;
 	TinyHTTPStream *stream = &server->stream_state[idx];
 
-	tinyhttp_stream_init(stream, server->memfunc, server->memfuncdata);
+	tinyhttp_stream_init(stream, default_memfunc, NULL);
 
 	if (server->num_conns < TINYHTTP_SERVER_CONN_LIMIT * 0.7)
 		tinyhttp_stream_setreuse(stream, 1);
-
-	int state = tinyhttp_stream_state(stream);
 
 	DUMP_STATE(tinyhttp_stream_state(stream));
 
@@ -2209,20 +2241,16 @@ process_network_events(TinyHTTPServer *server, int timeout)
 }
 #endif
 
-TinyHTTPServer* tinyhttp_server_init(TinyHTTPServerConfig config,
-	TinyHTTPMemoryFunc memfunc, void *memfuncdata)
+TinyHTTPServer* tinyhttp_server_init(TinyHTTPServerConfig config)
 {
 #if !TINYHTTP_HTTPS_ENABLE
 	if (config.secure)
 		return NULL;
 #endif
 
-	TinyHTTPServer *server = memfunc(TINYHTTP_MEM_MALLOC, NULL, sizeof(TinyHTTPServer), memfuncdata);
+	TinyHTTPServer *server = malloc(sizeof(TinyHTTPServer));
 	if (server == NULL)
 		return NULL;
-
-	server->memfunc = memfunc;
-	server->memfuncdata = memfuncdata;
 
 	server->num_conns = 0;
 	server->ready_head = 0;
@@ -2249,7 +2277,7 @@ TinyHTTPServer* tinyhttp_server_init(TinyHTTPServerConfig config,
 #endif
 
 	if (server->plain_listen_socket == INVALID_SOCKET) {
-		memfunc(TINYHTTP_MEM_FREE, server, sizeof(TinyHTTPServer), NULL);
+		free(server);
 		return NULL;
 	}
 
@@ -2263,7 +2291,7 @@ TinyHTTPServer* tinyhttp_server_init(TinyHTTPServerConfig config,
 
 			CLOSESOCKET(server->plain_listen_socket);
 
-			memfunc(TINYHTTP_MEM_FREE, server, sizeof(TinyHTTPServer), NULL);
+			free(server);
 			return NULL;
 		}
 	}
@@ -2276,7 +2304,7 @@ TinyHTTPServer* tinyhttp_server_init(TinyHTTPServerConfig config,
 		if (server->secure_listen_socket != INVALID_SOCKET)
 			CLOSESOCKET(server->secure_listen_socket);
 
-		memfunc(TINYHTTP_MEM_FREE, server, sizeof(TinyHTTPServer), NULL);
+		free(server);
 		return NULL;
 	}
 
@@ -2298,10 +2326,7 @@ void tinyhttp_server_free(TinyHTTPServer *server)
 		CLOSESOCKET(server->secure_listen_socket);
 
 	server_free_platform(server);
-
-	TinyHTTPMemoryFunc memfunc = server->memfunc;
-	void *memfuncdata = server->memfuncdata;
-	memfunc(TINYHTTP_MEM_FREE, server, sizeof(TinyHTTPServer), memfuncdata);
+	free(server);
 }
 
 int tinyhttp_server_wait(TinyHTTPServer *server, TinyHTTPRequest **req,
@@ -2406,6 +2431,18 @@ void tinyhttp_response_body_ack(TinyHTTPResponse res, ptrdiff_t num)
 		return; // Invalid handle
 
 	tinyhttp_stream_response_body_ack(stream, num);
+}
+
+void tinyhttp_response_body(TinyHTTPResponse res, char *src, int len)
+{
+	if (len < 0) len = strlen(src);
+
+	tinyhttp_response_body_setmincap(res, len);
+	ptrdiff_t cap;
+	char *dst = tinyhttp_response_body_buf(res, &cap);
+	if (dst)
+		memcpy(dst, src, len);
+	tinyhttp_response_body_ack(res, len);
 }
 
 void tinyhttp_response_send(TinyHTTPResponse res)
