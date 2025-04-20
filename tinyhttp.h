@@ -39,6 +39,10 @@
 #define TINYHTTP_SERVER_EPOLL_BATCH_SIZE (1<<10)
 #endif
 
+#define TINYHTTP_LINESTR_HELPER1(X) #X
+#define TINYHTTP_LINESTR_HELPER2(X) TINYHTTP_LINESTR_HELPER1(X)
+#define TINYHTTP_LINESTR TINYHTTP_LINESTR_HELPER2(__LINE__)
+
 // Opaque types
 typedef struct TinyHTTPServer TinyHTTPServer;
 typedef struct TinyHTTPRouter TinyHTTPRouter;
@@ -171,8 +175,20 @@ typedef struct {
 	TinyHTTPRequest req;
 } TinyHTTPStream;
 
+// TODO: Comment
 int tinyhttp_streq(TinyHTTPString s1, TinyHTTPString s2);
+
+// TODO: Comment
 int tinyhttp_streqcase(TinyHTTPString s1, TinyHTTPString s2);
+
+// TODO: Comment
+void tinyhttp_printbytes(char *prefix, const char *src, int len);
+
+// TODO: Comment
+void tinyhttp_printstate_(int state, const char *file, const char *line);
+
+// TODO: Comment
+#define tinyhttp_printstate(state) tinyhttp_printstate_(state, __FILE__, TINYHTTP_LINESTR)
 
 // Initializes an HTTP stream
 //
@@ -245,6 +261,8 @@ void tinyhttp_stream_send_ack(TinyHTTPStream *stream, ptrdiff_t num);
 //
 // On the other hand, if this option is set the next
 // request will definitely be the last.
+//
+// NOTE: This is turned off by default
 void tinyhttp_stream_setreuse(TinyHTTPStream *stream, int value);
 
 // TODO: Comment

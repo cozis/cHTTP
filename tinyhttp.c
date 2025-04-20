@@ -70,16 +70,46 @@
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////////
-// DEBUG UTILITIES                                                                //
+// UTILITIES                                                                      //
 ////////////////////////////////////////////////////////////////////////////////////
 
-#if DUMP_IO
-#include <stdio.h>
-static void
-print_bytes(char *prefix, char *src, int len)
+// TODO: Only allow this when not compiled in stand-alone mode
+static int print(const char *src, int len)
+{
+	if (len < 0)
+		len = strlen(src);
+
+#if defined(_WIN32)
+	HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+	int num = 0;
+	while (num < len) {
+		DWORD cpy;
+		if (!WriteFile(handle, src + num, len - num, &cpy, NULL))
+			return -1;
+		num += cpy;
+	}
+	return 0;
+#elif defined(__linux__)
+	int fd = STDOUT_FILENO;
+	int num = 0;
+	while (num < len) {
+		int ret = write(fd, src + num, len - num);
+		if (ret < 0) {
+			if (ret == EINTR)
+				continue;
+			return -1;
+		}
+		num += ret;
+	}
+	return 0;
+#endif
+}
+
+void tinyhttp_printbytes(char *prefix, const char *src, int len)
 {
 	if (src == NULL) {
-		printf("%s (null)\n", prefix);
+		print(prefix, -1);
+		print(" (null)\n", -1);
 		return;
 	}
 
@@ -90,64 +120,57 @@ print_bytes(char *prefix, char *src, int len)
 		while (cur < len && src[cur] != '\n' && src[cur] != '\r')
 			cur++;
 		if (newline) {
-			printf("%s", prefix);
+			print(prefix, -1);
 			newline = 0;
 		}
-		printf("%.*s", cur - start, src + start);
+		print(src + start, cur - start);
 		if (cur < len) {
 			if (src[cur] == '\r')
-				printf("\\r");
+				print("\\r", -1);
 			else {
-				printf("\\n\n");
+				print("\\n\n", -1);
 				newline = 1;
 			}
 			cur++;
 		}
 	}
 	if (cur > 0 && src[cur-1] != '\n')
-		printf("\n");
+		print("\n", -1);
 }
-#endif
 
-#if DUMP_IO
-static void
-dump_state(int state, const char *file, int line)
+void tinyhttp_printstate_(int state, const char *file, const char *line)
 {
-	printf("state = ");
+	print("state = ", -1);
 	if (state & TINYHTTP_STREAM_DIED)
-		printf("DIED ");
+		print("DIED ", -1);
 
 	if (state & TINYHTTP_STREAM_SEND)
-		printf("SEND ");
+		print("SEND ", -1);
 
 	if (state & TINYHTTP_STREAM_RECV)
-		printf("RECV ");
+		print("RECV ", -1);
 
 	if (state & TINYHTTP_STREAM_READY)
-		printf("READY ");
+		print("READY ", -1);
 
 	if (state & TINYHTTP_STREAM_CLOSE)
-		printf("CLOSE ");
+		print("CLOSE ", -1);
 
 	if (state & TINYHTTP_STREAM_REUSE)
-		printf("REUSE ");
+		print("REUSE ", -1);
 
 	if (state & TINYHTTP_STREAM_SEND_STARTED)
-		printf("SEND_STARTED ");
+		print("SEND_STARTED ", -1);
 
 	if (state & TINYHTTP_STREAM_RECV_STARTED)
-		printf("RECV_STARTED ");
+		print("RECV_STARTED ", -1);
 	
-	printf(" (in %s:%d)\n", file, line);
+	print(" (in ", -1);
+	print(file, -1);
+	print(":", -1);
+	print(line, -1);
+	print(")\n", -1);
 }
-#define DUMP_STATE(state) dump_state(state, __FILE__, __LINE__);
-#else
-#define DUMP_STATE(...)
-#endif
-
-////////////////////////////////////////////////////////////////////////////////////
-// UTILITIES                                                                      //
-////////////////////////////////////////////////////////////////////////////////////
 
 static char
 to_lower(char c)
@@ -175,6 +198,25 @@ int tinyhttp_streqcase(TinyHTTPString s1, TinyHTTPString s2)
 		if (to_lower(s1.ptr[i]) != to_lower(s2.ptr[i]))
 			return 0;
 	return 1;
+}
+
+static TinyHTTPString trim(TinyHTTPString s)
+{
+	int i = 0;
+	while (i < s.len && (s.ptr[i] == ' ' || s.ptr[i] == '\t'))
+		i++;
+
+	if (i == s.len) {
+		s.ptr = NULL;
+		s.len = 0;
+	} else {
+		s.ptr += i;
+		s.len -= i;
+		while (s.ptr[s.len-1] == ' ' || s.ptr[s.len-1] == '\n')
+			s.len--;
+	}
+
+	return s;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -266,6 +308,7 @@ parse_request_head(char *src, ptrdiff_t len, TinyHTTPRequest *req)
 		while (cur < len && src[cur] != ':') // TODO: robust
 			cur++;
 		TinyHTTPString name = { src + name_off, cur - name_off };
+		name = trim(name);
 
 		if (cur == len)
 			return -400;
@@ -275,6 +318,7 @@ parse_request_head(char *src, ptrdiff_t len, TinyHTTPRequest *req)
 		while (cur < len && src[cur] != '\r')
 			cur++;
 		TinyHTTPString value = { src + value_off, cur - value_off };
+		value = trim(value);
 
 		if (cur == len)
 			return -400;
@@ -557,7 +601,7 @@ byte_queue_peek(TinyHTTPByteQueue *queue, ptrdiff_t *len)
 static char*
 byte_queue_read_buf(TinyHTTPByteQueue *queue, ptrdiff_t *len)
 {
-	if ((queue->flags & (BYTE_QUEUE_ERROR)) || queue->data == NULL) {
+	if (queue->flags & BYTE_QUEUE_ERROR) {
 		*len = 0;
 		return NULL;
 	}
@@ -568,6 +612,8 @@ byte_queue_read_buf(TinyHTTPByteQueue *queue, ptrdiff_t *len)
 	queue->read_target_size = queue->size;
 
 	*len = queue->used;
+	if (queue->data == NULL)
+		return NULL;
 	return queue->data + queue->head;
 }
 
@@ -1399,8 +1445,6 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 		stream->output_state = TINYHTTP_OUTPUT_STATE_BODY;
 	}
 
-	DUMP_STATE(tinyhttp_stream_state(stream));
-
 	if (stream->output_state == TINYHTTP_OUTPUT_STATE_BODY) {
 		if (stream->chunked)
 			byte_queue_write(&stream->out, "0\r\n\r\n");
@@ -1427,14 +1471,12 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 			tmp[9] = '0' + content_length;
 
 			int i = 0;
-			while (i < 8 && tmp[i] == '0')
+			while (i < 9 && tmp[i] == '0')
 				i++;
 
 			byte_queue_patch(&stream->out, stream->content_length_value_offset, tmp + i, 10 - i);
 		}
 	}
-
-	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	if (stream->output_state == TINYHTTP_OUTPUT_STATE_ERROR) {
 		byte_queue_remove_after_lock(&stream->out);
@@ -1446,14 +1488,10 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 		);
 	}
 
-	DUMP_STATE(tinyhttp_stream_state(stream));
-
 	if (byte_queue_error(&stream->out)) {
 		stream->state |= TINYHTTP_STREAM_DIED;
 		return;
 	}
-
-	DUMP_STATE(tinyhttp_stream_state(stream));
 
 #if DUMP_IO
 	ptrdiff_t ressize = (byte_queue_offset(&stream->out) - stream->out.lock);
@@ -1464,11 +1502,7 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 	byte_queue_read_unlock(&stream->out);
 	stream->reqsize = 0;
 
-	DUMP_STATE(tinyhttp_stream_state(stream));
-
 	process_next_request(stream);
-
-	DUMP_STATE(tinyhttp_stream_state(stream));
 }
 
 // See tinyhttp.h
@@ -2000,8 +2034,6 @@ start_stream_operations(TinyHTTPStream *stream, SOCKET sock,
 {
 	int state = tinyhttp_stream_state(stream);
 
-	DUMP_STATE(tinyhttp_stream_state(stream));
-
 	if ((state & TINYHTTP_STREAM_RECV) && !(state & TINYHTTP_STREAM_RECV_STARTED)) {
 		ptrdiff_t cap;
 		char *dst = tinyhttp_stream_recv_buf(stream, &cap);
@@ -2014,8 +2046,6 @@ start_stream_operations(TinyHTTPStream *stream, SOCKET sock,
 #endif
 	}
 
-	DUMP_STATE(tinyhttp_stream_state(stream));
-
 	if (state & TINYHTTP_STREAM_SEND && !(state & TINYHTTP_STREAM_SEND_STARTED)) {
 		ptrdiff_t len;
 		char *src = tinyhttp_stream_send_buf(stream, &len);
@@ -2027,8 +2057,6 @@ start_stream_operations(TinyHTTPStream *stream, SOCKET sock,
 			printf("SEND STARTED (len=%lld)\n", len);
 #endif
 	}
-
-	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	return 0;
 }
@@ -2064,8 +2092,6 @@ intern_accepted_socket(TinyHTTPServer *server, SOCKET accepted_socket, int secur
 	if (server->num_conns < TINYHTTP_SERVER_CONN_LIMIT * 0.7)
 		tinyhttp_stream_setreuse(stream, 1);
 
-	DUMP_STATE(tinyhttp_stream_state(stream));
-
 	if (CreateIoCompletionPort((HANDLE) accepted_socket, server->iocp, 0, 0) == NULL) {
 		tinyhttp_stream_free(stream);
 		server->stream_sockets[idx] = INVALID_SOCKET;
@@ -2081,8 +2107,6 @@ intern_accepted_socket(TinyHTTPServer *server, SOCKET accepted_socket, int secur
 		CLOSESOCKET(accepted_socket);
 		return;
 	}
-
-	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	if (secure) {
 		// TODO
@@ -2186,8 +2210,6 @@ process_network_events(TinyHTTPServer *server, int timeout)
 
 	int old_state = tinyhttp_stream_state(stream);
 
-	DUMP_STATE(tinyhttp_stream_state(stream));
-
 	if (!result) {
 		// A read or write operation failed
 		tinyhttp_stream_kill(stream);
@@ -2214,8 +2236,6 @@ process_network_events(TinyHTTPServer *server, int timeout)
 			tinyhttp_stream_kill(stream);
 	}
 
-	DUMP_STATE(tinyhttp_stream_state(stream));
-
 	int state = tinyhttp_stream_state(stream);
 
 	if ((state & TINYHTTP_STREAM_READY) && (old_state & TINYHTTP_STREAM_READY) == 0) {
@@ -2223,8 +2243,6 @@ process_network_events(TinyHTTPServer *server, int timeout)
 		server->ready_queue[ready_idx] = idx;
 		server->ready_count++;
 	}
-
-	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	if (state & TINYHTTP_STREAM_DIED) {
 		tinyhttp_stream_free(stream);
@@ -2234,8 +2252,6 @@ process_network_events(TinyHTTPServer *server, int timeout)
 		server->stream_sockets[idx] = INVALID_SOCKET;
 		server->num_conns--;
 	}
-
-	DUMP_STATE(tinyhttp_stream_state(stream));
 
 	return 0;
 }

@@ -23,28 +23,161 @@ typedef struct {
 	int   body_len;
 } Response;
 
+// Memory function used to initialize TinyHTTPStream
 static void *memfunc(TinyHTTPMemoryFuncTag tag, void *ptr, int len, void *data);
+
+// Moves the request "str" into the stream, checks that the stream
+// became ready and that it parsed the request correctly. When this
+// functions returns the stream is ready for a response.
 static void send_request(TinyHTTPStream *stream, const char *str);
+
+// Copies into the "dst" buffer the output bytes from the stream
+// (up to "cap" bytes) and parses them as an HTTP response into
+// "res".
 static void recv_response(TinyHTTPStream *stream, Response *res, char *dst, int cap);
 
+static int header_exists(Response *res, TinyHTTPString name);
+static int header_exists_with_value(Response *res, TinyHTTPString name, TinyHTTPString value);
+
 #define TEST(X) {if (!(X)) { printf("Test failed at %s:%d\n", __FILE__, __LINE__); fflush(stdout); __builtin_trap(); }}
+
+#define TEST_START printf("Test %s:%d\n", __FILE__, __LINE__);
+#define TEST_END
 
 //////////////////////////////////////////////////////////////////////////////////////
 // TEST CASES
 //////////////////////////////////////////////////////////////////////////////////////
 
-static void basic_request(void)
+// Plain HTTP 1.1 request string with no Connection header
+#define BASIC_REQUEST_STRING		\
+	"GET / HTTP/1.1\r\n"			\
+	"Host: 127.0.0.1:8080\r\n"		\
+	"User-Agent: curl/7.81.0\r\n"	\
+	"Accept: */*\r\n"				\
+	"\r\n"
+
+static void test_init(void)
 {
 	TinyHTTPStream stream;
+
+	TEST_START
 	tinyhttp_stream_init(&stream, memfunc, NULL);
 
+	int state = tinyhttp_stream_state(&stream);
+
+	// These flags must be set on init
+	TEST(state & TINYHTTP_STREAM_RECV);
+
+	// These must be unset
+	TEST(!(state & TINYHTTP_STREAM_DIED));
+	TEST(!(state & TINYHTTP_STREAM_READY));
+	TEST(!(state & TINYHTTP_STREAM_REUSE));
+	TEST(!(state & TINYHTTP_STREAM_RECV_STARTED));
+	TEST(!(state & TINYHTTP_STREAM_SEND_STARTED));
+
+	tinyhttp_stream_free(&stream);
+	TEST_END
+}
+
+static void test_setreuse(void)
+{
+	TinyHTTPStream stream;
+	
+	TEST_START
+	tinyhttp_stream_init(&stream, memfunc, NULL);
+
+	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE));
+
+	tinyhttp_stream_setreuse(&stream, 1);
+
+	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE);
+
+	tinyhttp_stream_setreuse(&stream, 0);
+
+	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE));
+
+	tinyhttp_stream_setreuse(&stream, 5847295);
+
+	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_REUSE);
+
+	tinyhttp_stream_free(&stream);
+	TEST_END
+}
+
+static void
+test_recv_started_flag(void)
+{
+	ptrdiff_t cap;
+	TinyHTTPStream stream;
+
+	TEST_START
+	tinyhttp_stream_init(&stream, memfunc, NULL);
+
+	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_RECV_STARTED));
+
+	tinyhttp_stream_recv_buf(&stream, &cap);
+
+	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_RECV_STARTED);
+
+	tinyhttp_stream_recv_ack(&stream, 0);
+
+	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_RECV_STARTED));
+
+	tinyhttp_stream_free(&stream);
+	TEST_END
+}
+
+static void test_kill(void)
+{
+	TinyHTTPStream stream;
+
+	TEST_START
+	tinyhttp_stream_init(&stream, memfunc, NULL);
+
+	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_DIED));
+
+	tinyhttp_stream_kill(&stream);
+
+	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_DIED);
+
+	tinyhttp_stream_free(&stream);
+	TEST_END
+}
+
+static void
+test_send_started_flag(void)
+{
+	ptrdiff_t cap;
+	TinyHTTPStream stream;
+
+	TEST_START
+	tinyhttp_stream_init(&stream, memfunc, NULL);
+
+	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_SEND_STARTED));
+
+	tinyhttp_stream_send_buf(&stream, &cap);
+
+	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_SEND_STARTED);
+
+	tinyhttp_stream_send_ack(&stream, 0);
+
+	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_SEND_STARTED));
+
+	tinyhttp_stream_free(&stream);
+	TEST_END
+}
+
+static void test_exchange(int reuse)
+{
+	TinyHTTPStream stream;
+
+	TEST_START
+	tinyhttp_stream_init(&stream, memfunc, NULL);
+
+	tinyhttp_stream_setreuse(&stream, reuse);
+
 	// Send request
-	send_request(&stream,
-		"GET / HTTP/1.1\r\n"
-		"Host: 127.0.0.1:8080\r\n"
-		"User-Agent: curl/7.81.0\r\n"
-		"Accept: */*\r\n"
-		"\r\n");
+	send_request(&stream, BASIC_REQUEST_STRING);
 
 	// Build response
 	tinyhttp_stream_response_status(&stream, 200);
@@ -55,9 +188,27 @@ static void basic_request(void)
 	Response res;
 	recv_response(&stream, &res, buf, sizeof(buf));
 
-	// TODO
+	// We expect the status line:
+	//   HTTP/1.1 200 OK
+	TEST(res.minor == 1);
+	TEST(res.status_code == 200);
+	TEST(tinyhttp_streq(res.status_text, TINYHTTP_STRING("OK")));
+
+	if (reuse) {
+		// If we allowed connection reuse on this stream, we expect
+		// the connection to be kept alive. The response must therefore
+		// contain the "Connection: Keep-Alive" header or no "Connection"
+		// header at all since "Keep-Alive" is the default.
+		TEST(!header_exists(&res, TINYHTTP_STRING("Connection")) ||
+			header_exists_with_value(&res, TINYHTTP_STRING("Connection"), TINYHTTP_STRING("Keep-Alive")));
+	} else {
+		// If we didn't allow connection reuse, then the response must
+		// contain the "Connection: Close" header
+		TEST(header_exists_with_value(&res, TINYHTTP_STRING("Connection"), TINYHTTP_STRING("Close")));
+	}
 
 	tinyhttp_stream_free(&stream);
+	TEST_END
 }
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -66,7 +217,14 @@ static void basic_request(void)
 
 int main(void)
 {
-	basic_request();
+	test_init();
+	test_setreuse();
+	test_kill();
+	test_recv_started_flag();
+	test_send_started_flag();
+	test_exchange(0);
+	test_exchange(1);
+	printf("OK\n");
 	return 0;
 }
 
@@ -109,11 +267,14 @@ buffer_into_stream(TinyHTTPStream *stream, const char *src, int len)
 
 		memcpy(dst, src + copied, cpy);
 
+		tinyhttp_printbytes("  >> ", src + copied, cpy);
+
 		copied += cpy;
 		tinyhttp_stream_recv_ack(stream, cpy);
 		state = tinyhttp_stream_state(stream);
 	}
 
+	printf("\n");
 	return copied;
 }
 
@@ -136,11 +297,14 @@ stream_into_buffer(TinyHTTPStream *stream, char *dst, int cap)
 
 		memcpy(dst + copied, src, cpy);
 
+		tinyhttp_printbytes("  << ", src, cpy);
+
 		copied += cpy;
 		tinyhttp_stream_send_ack(stream, cpy);
 		state = tinyhttp_stream_state(stream);
 	}
 
+	printf("\n");
 	return copied;
 }
 
@@ -283,6 +447,24 @@ recv_response(TinyHTTPStream *stream, Response *res, char *dst, int cap)
 	TEST((state & TINYHTTP_STREAM_SEND) == 0);
 
 	parse_response((TinyHTTPString) { dst, len }, res);
+}
+
+static int
+header_exists(Response *res, TinyHTTPString name)
+{
+	for (int i = 0; i < res->num_headers; i++)
+		if (tinyhttp_streqcase(res->headers[i].name, name))
+			return 1;
+	return 0;
+}
+
+static int
+header_exists_with_value(Response *res, TinyHTTPString name, TinyHTTPString value)
+{
+	for (int i = 0; i < res->num_headers; i++)
+		if (tinyhttp_streqcase(res->headers[i].name, name))
+			return tinyhttp_streqcase(res->headers[i].value, value);
+	return 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////
