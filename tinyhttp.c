@@ -358,8 +358,7 @@ parse_request_head(char *src, ptrdiff_t len, TinyHTTPRequest *req)
 	return cur;
 }
 
-static int
-find_header(TinyHTTPRequest *req, TinyHTTPString name)
+int tinyhttp_findheader(TinyHTTPRequest *req, TinyHTTPString name)
 {
 	for (int i = 0; i < req->num_headers; i++) {
 		TinyHTTPHeader *header = &req->headers[i];
@@ -481,7 +480,7 @@ parse_request(char *src, ptrdiff_t len,
 		return ret;
 	ptrdiff_t head_len = ret;
 
-	int transfer_encoding_index = find_header(req, TINYHTTP_STRING("Transfer-Encoding"));
+	int transfer_encoding_index = tinyhttp_findheader(req, TINYHTTP_STRING("Transfer-Encoding"));
 	if (transfer_encoding_index >= 0) {
 
 		TinyHTTPHeader *header = &req->headers[transfer_encoding_index];
@@ -569,7 +568,7 @@ parse_request(char *src, ptrdiff_t len,
 		return cur;
 	}
 
-	int content_length_index = find_header(req, TINYHTTP_STRING("Content-Length"));
+	int content_length_index = tinyhttp_findheader(req, TINYHTTP_STRING("Content-Length"));
 	if (content_length_index >= 0) {
 
 		TinyHTTPHeader *header = &req->headers[content_length_index];
@@ -1204,7 +1203,7 @@ should_keep_alive(TinyHTTPStream *stream)
 
 	// TODO: This assumes "Connection" can only hold a single token,
 	//       but this is not true.
-	int i = find_header(req, TINYHTTP_STRING("Connection"));
+	int i = tinyhttp_findheader(req, TINYHTTP_STRING("Connection"));
 	if (i >= 0 && tinyhttp_streqcase(req->headers[i].value, TINYHTTP_STRING("Close")))
 		return 0;
 

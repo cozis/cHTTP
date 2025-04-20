@@ -191,6 +191,8 @@ void tinyhttp_printstate_(int state, const char *file, const char *line);
 // TODO: Comment
 #define tinyhttp_printstate(state) tinyhttp_printstate_(state, __FILE__, TINYHTTP_LINESTR)
 
+int tinyhttp_findheader(TinyHTTPRequest *req, TinyHTTPString name);
+
 // Initializes an HTTP stream
 //
 // TODO: Comment on memfunc

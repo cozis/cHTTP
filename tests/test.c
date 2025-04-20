@@ -254,7 +254,7 @@ expect_request(TinyHTTPStream *stream, TinyHTTPRequest expreq)
 }
 
 static int
-parse_request(TinyHTTPString txt, TinyHTTPRequest *req)
+parse_request(TinyHTTPString txt, TinyHTTPRequest *req, char *buf, int max)
 {
 	const char *method;
 	size_t method_len;
@@ -274,7 +274,7 @@ parse_request(TinyHTTPString txt, TinyHTTPRequest *req)
 		&minor,
 		headers, &num_headers,
 		0);
-	TEST(ret == txt.len);
+	ptrdiff_t head_len = ret;
 
 	if (method_len == 3 && !memcmp("GET", method, 3)) {
 		req->method = TINYHTTP_METHOD_GET;
@@ -299,9 +299,39 @@ parse_request(TinyHTTPString txt, TinyHTTPRequest *req)
 		};
 	}
 
-	req->body = NULL; // TODO
-	req->body_len = 0; // TODO
+	int transfer_encoding_index = tinyhttp_findheader(req, TINYHTTP_STRING("Transfer-Encoding"));
+	if (transfer_encoding_index != -1) {
+		// TODO: For now, we consider request as chunked just for having the Transfer-Encoding header
 
+		if (txt.len - head_len > max)
+			return -1;
+		memcpy(buf, txt.ptr + head_len, txt.len - head_len);
+
+		struct phr_chunked_decoder decoder;
+		memset(&decoder, 0, sizeof(decoder));
+		decoder.consume_trailer = 1;  // Process any trailing headers
+
+		// Decode the chunked body
+		size_t decoded_size = txt.len - head_len;
+		ssize_t ret = phr_decode_chunked(&decoder, buf, &decoded_size);
+		if (ret < 0)
+			return -1;
+
+		req->body = buf;
+		req->body_len = decoded_size;
+		return 0;
+	}
+
+	int content_length_index = tinyhttp_findheader(req, TINYHTTP_STRING("Content-Length"));
+	if (content_length_index != -1) {
+
+		__builtin_trap(); // TODO
+
+		return 0;
+	}
+
+	req->body = NULL;
+	req->body_len = 0;
 	return 0;
 }
 
@@ -351,7 +381,8 @@ void send_request(TinyHTTPStream *stream, const char *str)
 	TEST(received == (int) strlen(str));
 
 	TinyHTTPRequest req;
-	TEST(parse_request((TinyHTTPString) {str, strlen(str)}, &req) == 0);
+	char buf[1<<12];
+	TEST(parse_request((TinyHTTPString) {str, strlen(str)}, &req, buf, sizeof(buf)) == 0);
 
 	expect_request(stream, req);
 }
