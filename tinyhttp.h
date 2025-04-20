@@ -31,9 +31,7 @@
 #include "tinyhttp_config.h"
 #else
 #define TINYHTTP_SERVER_ENABLE 1
-#define TINYHTTP_ROUTER_ENABLE 0
 #define TINYHTTP_HTTPS_ENABLE  0
-#define TINYHTTP_ROUTER_MAX_PATH_COMPONENTS 32
 #define TINYHTTP_HEADER_LIMIT 32
 #define TINYHTTP_SERVER_CONN_LIMIT (1<<10)
 #define TINYHTTP_SERVER_EPOLL_BATCH_SIZE (1<<10)
@@ -46,7 +44,6 @@
 
 // Opaque types
 typedef struct TinyHTTPServer TinyHTTPServer;
-typedef struct TinyHTTPRouter TinyHTTPRouter;
 
 typedef struct {
 	const char *ptr;
@@ -346,15 +343,3 @@ void tinyhttp_response_send(TinyHTTPResponse res);
 
 // TODO: Comment
 void tinyhttp_response_undo(TinyHTTPResponse res);
-
-// TODO: Comment
-TinyHTTPRouter *tinyhttp_router_init(void);
-
-// TODO: Comment
-void tinyhttp_router_free(TinyHTTPRouter *router);
-
-// TODO: Comment
-void tinyhttp_router_resolve(TinyHTTPRouter *router, TinyHTTPServer *server, TinyHTTPRequest *request, TinyHTTPResponse response);
-
-// TODO: Comment
-void tinyhttp_router_dir(TinyHTTPRouter *router, const char *endpoint, const char *path, int dir_listing);
