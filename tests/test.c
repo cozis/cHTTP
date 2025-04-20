@@ -2,47 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "test.h"
 #include "picohttpparser.h"
-#include "../tinyhttp.h"
-
-//////////////////////////////////////////////////////////////////////////////////////
-// TYPES, MACROS, PROTOTYPES
-//////////////////////////////////////////////////////////////////////////////////////
-
-typedef struct {
-
-	int minor;
-
-	int status_code;
-	TinyHTTPString status_text;
-
-	int num_headers;
-	TinyHTTPHeader headers[TINYHTTP_HEADER_LIMIT];
-
-	char *body;
-	int   body_len;
-} Response;
-
-// Memory function used to initialize TinyHTTPStream
-static void *memfunc(TinyHTTPMemoryFuncTag tag, void *ptr, int len, void *data);
-
-// Moves the request "str" into the stream, checks that the stream
-// became ready and that it parsed the request correctly. When this
-// functions returns the stream is ready for a response.
-static void send_request(TinyHTTPStream *stream, const char *str);
-
-// Copies into the "dst" buffer the output bytes from the stream
-// (up to "cap" bytes) and parses them as an HTTP response into
-// "res".
-static void recv_response(TinyHTTPStream *stream, Response *res, char *dst, int cap);
-
-static int header_exists(Response *res, TinyHTTPString name);
-static int header_exists_with_value(Response *res, TinyHTTPString name, TinyHTTPString value);
-
-#define TEST(X) {if (!(X)) { printf("Test failed at %s:%d\n", __FILE__, __LINE__); fflush(stdout); __builtin_trap(); }}
-
-#define TEST_START printf("Test %s:%d\n", __FILE__, __LINE__);
-#define TEST_END
 
 //////////////////////////////////////////////////////////////////////////////////////
 // TEST CASES
@@ -104,6 +65,23 @@ static void test_setreuse(void)
 	TEST_END
 }
 
+static void test_kill(void)
+{
+	TinyHTTPStream stream;
+
+	TEST_START
+	tinyhttp_stream_init(&stream, memfunc, NULL);
+
+	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_DIED));
+
+	tinyhttp_stream_kill(&stream);
+
+	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_DIED);
+
+	tinyhttp_stream_free(&stream);
+	TEST_END
+}
+
 static void
 test_recv_started_flag(void)
 {
@@ -122,23 +100,6 @@ test_recv_started_flag(void)
 	tinyhttp_stream_recv_ack(&stream, 0);
 
 	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_RECV_STARTED));
-
-	tinyhttp_stream_free(&stream);
-	TEST_END
-}
-
-static void test_kill(void)
-{
-	TinyHTTPStream stream;
-
-	TEST_START
-	tinyhttp_stream_init(&stream, memfunc, NULL);
-
-	TEST(!(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_DIED));
-
-	tinyhttp_stream_kill(&stream);
-
-	TEST(tinyhttp_stream_state(&stream) & TINYHTTP_STREAM_DIED);
 
 	tinyhttp_stream_free(&stream);
 	TEST_END
@@ -211,6 +172,16 @@ static void test_exchange(int reuse)
 	TEST_END
 }
 
+/*
+KEEP ALIVE TESTS
+	no connection header in request
+	invalid connection header in request
+	keep-alive value in request
+	close value in request
+
+	
+*/
+
 //////////////////////////////////////////////////////////////////////////////////////
 // ENTRY POINT
 //////////////////////////////////////////////////////////////////////////////////////
@@ -224,6 +195,7 @@ int main(void)
 	test_send_started_flag();
 	test_exchange(0);
 	test_exchange(1);
+	test_reuse();
 	printf("OK\n");
 	return 0;
 }
@@ -232,8 +204,7 @@ int main(void)
 // Helper Functions
 //////////////////////////////////////////////////////////////////////////////////////
 
-static void*
-memfunc(TinyHTTPMemoryFuncTag tag, void *ptr, int len, void *data)
+void *memfunc(TinyHTTPMemoryFuncTag tag, void *ptr, int len, void *data)
 {
 	(void) data;
 	switch (tag) {
@@ -426,8 +397,7 @@ parse_response(TinyHTTPString txt, Response *res)
 	res->body_len = 0; // TODO
 }
 
-static void
-send_request(TinyHTTPStream *stream, const char *str)
+void send_request(TinyHTTPStream *stream, const char *str)
 {
 	int received = buffer_into_stream(stream, str, strlen(str));
 	TEST(received == (int) strlen(str));
@@ -438,8 +408,7 @@ send_request(TinyHTTPStream *stream, const char *str)
 	expect_request(stream, req);
 }
 
-static void
-recv_response(TinyHTTPStream *stream, Response *res, char *dst, int cap)
+void recv_response(TinyHTTPStream *stream, Response *res, char *dst, int cap)
 {
 	int len = stream_into_buffer(stream, dst, cap);
 
@@ -449,8 +418,7 @@ recv_response(TinyHTTPStream *stream, Response *res, char *dst, int cap)
 	parse_response((TinyHTTPString) { dst, len }, res);
 }
 
-static int
-header_exists(Response *res, TinyHTTPString name)
+int header_exists(Response *res, TinyHTTPString name)
 {
 	for (int i = 0; i < res->num_headers; i++)
 		if (tinyhttp_streqcase(res->headers[i].name, name))
@@ -458,8 +426,7 @@ header_exists(Response *res, TinyHTTPString name)
 	return 0;
 }
 
-static int
-header_exists_with_value(Response *res, TinyHTTPString name, TinyHTTPString value)
+int header_exists_with_value(Response *res, TinyHTTPString name, TinyHTTPString value)
 {
 	for (int i = 0; i < res->num_headers; i++)
 		if (tinyhttp_streqcase(res->headers[i].name, name))

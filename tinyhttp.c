@@ -1108,12 +1108,20 @@ should_keep_alive(TinyHTTPStream *stream)
 	if ((stream->state & TINYHTTP_STREAM_REUSE) == 0)
 		return 0;
 
-	// If the client is using HTTP/1.0, we can't
-	// keep alive.
-	if (stream->req.minor == 0)
+	if (stream->numexch >= 100) // TODO: Make this a parameter
 		return 0;
 
-	if (stream->numexch >= 100) // TODO: Make this a parameter
+	TinyHTTPRequest *req = &stream->req;
+
+	// If the client is using HTTP/1.0, we can't
+	// keep alive.
+	if (req->minor == 0)
+		return 0;
+
+	// TODO: This assumes "Connection" can only hold a single token,
+	//       but this is not true.
+	int i = find_header(req, TINYHTTP_STRING("Connection"));
+	if (i >= 0 && tinyhttp_streqcase(req->headers[i].value, TINYHTTP_STRING("Close")))
 		return 0;
 
 	return 1;
@@ -1271,7 +1279,8 @@ void tinyhttp_stream_response_status(TinyHTTPStream *stream, int status)
 		return;
 	}
 
-	byte_queue_write_fmt(&stream->out, "HTTP/1.1 %d %s\r\n", status, get_status_text(status));
+	byte_queue_write_fmt(&stream->out, "HTTP/1.%d %d %s\r\n",
+		stream->req.minor, status, get_status_text(status));
 
 	stream->output_state = TINYHTTP_OUTPUT_STATE_HEADER;
 }
@@ -1306,10 +1315,8 @@ append_special_headers(TinyHTTPStream *stream)
 {
 	if (stream->keepalive)
 		byte_queue_write(&stream->out, "Connection: Keep-Alive\r\n");
-	else {
-		if (stream->req.minor > 0)
-			byte_queue_write(&stream->out, "Connection: Close\r\n");
-	}
+	else
+		byte_queue_write(&stream->out, "Connection: Close\r\n");
 
 	if (stream->chunked)
 		byte_queue_write(&stream->out, "Transfer-Encoding: Chunked\r\n");
@@ -1502,7 +1509,10 @@ void tinyhttp_stream_response_send(TinyHTTPStream *stream)
 	byte_queue_read_unlock(&stream->out);
 	stream->reqsize = 0;
 
-	process_next_request(stream);
+	if (stream->keepalive)
+		process_next_request(stream);
+	else
+		stream->state |= TINYHTTP_STREAM_CLOSE;
 }
 
 // See tinyhttp.h
