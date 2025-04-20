@@ -59,7 +59,7 @@
 #define ASSERT(X) {if (!(X)) __builtin_trap();}
 #define COUNTOF(X) (sizeof(X)/sizeof((X)[0]))
 
-#define DUMP_IO 1
+#define DUMP_IO 0
 
 #if TINYHTTP_ROUTER_ENABLE
 #error "The router interface isn't ready yet"

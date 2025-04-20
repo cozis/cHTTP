@@ -2,12 +2,12 @@
 
 TinyHTTP is an HTTP server library. It's small, robust, and fast.
 
-**NOTE**: This is still a prototype! I got the basic version working and am spending some time making it more robust. After that, I will add chunked encoding, HTTPS support, and work on compliancy to RFC 9112.
+**NOTE**: This is still a prototype! I got the basic version working and am spending some time making it more robust. After that, I will add HTTPS support, and work on compliancy to RFC 9112.
 
 ## Features
 * Self-contained
 * Cross-Platform (Windows, Linux)
-* HTTP/1.1 fully compliant to RFC 9112 with pipelining, chunked encoding, connection reuse (in progress)
+* HTTP/1.1 fully compliant to RFC 9112 with pipelining, chunked encoding, connection reuse
 * Fully non-blocking (epoll on Linux, iocp on Windows)
 * HTTPS (OpenSSL on Linux, Schannel on Windows) (in progress)
 * Zero-copy interface
