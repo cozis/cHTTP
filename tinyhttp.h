@@ -190,6 +190,9 @@ void tinyhttp_printstate_(int state, const char *file, const char *line);
 
 int tinyhttp_findheader(TinyHTTPRequest *req, TinyHTTPString name);
 
+int tinyhttp_parserequest(char *src, ptrdiff_t len,
+	unsigned long long body_limit, TinyHTTPRequest *req);
+
 // Initializes an HTTP stream
 //
 // TODO: Comment on memfunc

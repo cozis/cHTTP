@@ -29,6 +29,10 @@ void send_request(TinyHTTPStream *stream, const char *str);
 // "res".
 void recv_response(TinyHTTPStream *stream, Response *res, char *dst, int cap);
 
+int parse_request(TinyHTTPString txt, TinyHTTPRequest *req, char *buf, int max);
+
+int match_request(TinyHTTPRequest *r1, TinyHTTPRequest *r2);
+
 int header_exists(Response *res, TinyHTTPString name);
 int header_exists_with_value(Response *res, TinyHTTPString name, TinyHTTPString value);
 
@@ -40,3 +44,4 @@ int header_exists_with_value(Response *res, TinyHTTPString name, TinyHTTPString 
 
 void test_reuse(void);
 void test_chunking(void);
+void test_parse_request(void);

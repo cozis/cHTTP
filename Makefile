@@ -13,7 +13,7 @@ SUFFIX_DEBUG   = _debug
 
 # ------------------------------------------------------ #
 
-TEST_CFILES        = tinyhttp.c tests/picohttpparser.c tests/test.c tests/test_reuse.c tests/test_chunking.c
+TEST_CFILES        = tinyhttp.c tests/picohttpparser.c tests/test.c tests/test_reuse.c tests/test_chunking.c tests/test_parse_request.c
 TEST_HFILES        = tinyhttp.h tests/picohttpparser.h
 
 TEST_FLAGS         = -Wall -Wextra

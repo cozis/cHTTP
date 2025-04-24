@@ -4,9 +4,9 @@ TinyHTTP is a C library for implementing web servers. It offers two interfaces:
 1. stream interface
 1. server interface
 
-The stream interface is a lower level interface to TinyHTTP's HTTP state machine. It's completely stand-alone and performs no internal I/O, making it ideal for embedding in applications with custom constraints.
+The stream interface is a lower level interface to TinyHTTP's HTTP state machine. It's completely stand-alone and performs no internal I/O, making it ideal for embedding in applications with custom constraints. The only dependency are freestanding libc headers.
 
-The server interface is based on the stream interface and adds to it a platform-dependant I/O system. It uses the most performant I/O model the platform it's compiled for, but is single-threaded. The design goal of the server interface is ease of use and reasonable performance.
+The server interface is based on the stream interface and adds to it a platform-dependant I/O system. It uses the most performant I/O model available on the platform it's compiled for, but is single-threaded. The design goal of the server interface is ease of use and reasonable performance. It does also depend on libc.
 
 ## Table of Contents
 

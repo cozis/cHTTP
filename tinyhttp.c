@@ -471,8 +471,7 @@ parse_content_length(const char *src, ptrdiff_t len, unsigned long long *out)
 	return 0;
 }
 
-static int
-parse_request(char *src, ptrdiff_t len,
+int tinyhttp_parserequest(char *src, ptrdiff_t len,
 	unsigned long long body_limit, TinyHTTPRequest *req)
 {
 	ptrdiff_t ret = parse_request_head(src, len, req);
@@ -1174,7 +1173,7 @@ char *tinyhttp_stream_recv_buf(TinyHTTPStream *stream, ptrdiff_t *cap)
 
 		// Parse again. We assume everything will go
 		// well as it did the first time.
-		parse_request(src, len, stream->bodylimit, &stream->req);
+		tinyhttp_parserequest(src, len, stream->bodylimit, &stream->req);
 	}
 
 	// Forward the write region from the input buffer
@@ -1217,7 +1216,7 @@ process_next_request(TinyHTTPStream *stream)
 
 	ptrdiff_t len;
 	char *src = byte_queue_read_buf(&stream->in, &len); // TODO: What if this returns NULL?
-	int ret = parse_request(src, len, stream->bodylimit, &stream->req);
+	int ret = tinyhttp_parserequest(src, len, stream->bodylimit, &stream->req);
 
 	// Request is incomplete
 	if (ret == 0) {

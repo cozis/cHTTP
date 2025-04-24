@@ -144,6 +144,7 @@ int main(void)
 	test_basic_exchange();
 	test_reuse();
 	test_chunking();
+	test_parse_request();
 	printf("OK\n");
 	return 0;
 }
@@ -227,6 +228,41 @@ stream_into_buffer(TinyHTTPStream *stream, char *dst, int cap)
 	return copied;
 }
 
+int match_request(TinyHTTPRequest *r1, TinyHTTPRequest *r2)
+{
+	if (r1->method != r2->method)
+		return 0;
+
+	if (r1->minor != r2->minor)
+		return 0;
+
+	if (!tinyhttp_streq(r1->path, r2->path))
+		return 0;
+
+	if (r1->num_headers != r2->num_headers)
+		return 0;
+
+	for (int i = 0; i < r2->num_headers; i++) {
+		if (!tinyhttp_streq(r1->headers[i].name, r2->headers[i].name))
+			return 0;
+		if (!tinyhttp_streq(r1->headers[i].value, r2->headers[i].value))
+			return 0;
+	}
+
+	if (r1->body_len != r2->body_len)
+		return 0;
+
+	if (r2->body_len == 0) {
+		if (r1->body != NULL)
+			return 0;
+	} else {
+		if (memcmp(r1->body, r2->body, r2->body_len))
+			return 0;
+	}
+
+	return 1;
+}
+
 static void
 expect_request(TinyHTTPStream *stream, TinyHTTPRequest expreq)
 {
@@ -235,26 +271,10 @@ expect_request(TinyHTTPStream *stream, TinyHTTPRequest expreq)
 
 	TinyHTTPRequest *req = tinyhttp_stream_request(stream);
 	TEST(req);
-
-	TEST(req->method == expreq.method);
-	TEST(req->minor == expreq.minor);
-	TEST(tinyhttp_streq(req->path, expreq.path));
-	TEST(req->num_headers == expreq.num_headers);
-	for (int i = 0; i < expreq.num_headers; i++) {
-		TEST(tinyhttp_streq(req->headers[i].name, expreq.headers[i].name));
-		TEST(tinyhttp_streq(req->headers[i].value, expreq.headers[i].value));
-	}
-
-	TEST(req->body_len == expreq.body_len);
-	if (expreq.body_len == 0) {
-		TEST(req->body == NULL);
-	} else {
-		TEST(!memcmp(req->body, expreq.body, expreq.body_len));
-	}
+	TEST(match_request(req, &expreq));
 }
 
-static int
-parse_request(TinyHTTPString txt, TinyHTTPRequest *req, char *buf, int max)
+int parse_request(TinyHTTPString txt, TinyHTTPRequest *req, char *buf, int max)
 {
 	const char *method;
 	size_t method_len;
