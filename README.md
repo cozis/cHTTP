@@ -22,7 +22,7 @@ The architecture looks like this:
 +-----------------+
 ```
 
-At the lowest level there are HTTP request, HTTP respons, and URI parser. Then comes the HTTP "engine", which contains the HTTP 1.1 state machine. These two layers don't depend on basically anything. Probably only freestanding libc headers. The engine is designed in such a way that it does not perform I/O. Instead, applications feed it bytes from the network and eventually get a request or response object from it. When data needs to be output, the engine lets that know to the application. An HTTP engine represents the communication between one server and one client, so a non-blocking server would typically use an array of engines.
+At the lowest level there are HTTP request, HTTP response, and URI parser. Then comes the HTTP "engine", which contains the HTTP 1.1 state machine. These two layers don't depend on basically anything. Probably only freestanding libc headers. The engine is designed in such a way that it does not perform I/O. Instead, applications feed it bytes from the network and eventually get a request or response object from it. When data needs to be output, the engine lets that know to the application. An HTTP engine represents the communication between one server and one client, so a non-blocking server would typically use an array of engines.
 
 To give you the general idea, a simple blocking server using the engine would look somewhat like this:
 ```c
@@ -152,23 +152,23 @@ int main(void)
 	http_tls_init(&tls);
 
 	// Initialize the client context
-	http_client_init(&clients[0]);
+	http_client_init(&client);
 
 	// Start the request
-	http_client_startreq(&clients[0], HTTP_METHOD_GET, "https://coz.is/hello.html", NULL, 0, NULL, 0, &tls);
+	http_client_startreq(&client, HTTP_METHOD_GET, "https://coz.is/hello.html", NULL, 0, NULL, 0, &tls);
 
 	// Wait for the request to complete
 	// (you could wait for more multiple request at once)
 	HTTP_Client *wait_list[] = { &client };
-	http_client_waitall(waitlist, 1, -1);
+	http_client_waitall(wait_list, 1, -1);
 
 	// Read the response
 	HTTP_Response *res;
-	http_client_result(&clients[0], &res);
+	http_client_result(&client, &res);
 	fwrite(res->body.ptr, 1, res->body.len, stdout);
 
 	// Free the client context
-	http_client_free(&clients);
+	http_client_free(&client);
 
 	// Free the TLS stuff
 	http_tls_free(&tls);
@@ -184,7 +184,7 @@ The last layer is the router, which sits on top of the HTTP server. This simplif
 ```c
 #include "http.h"
 
-void endpoint_login(HTTP_Request *req, HTTP_ResponseHandle res, void *ctx)
+void callback(HTTP_Request *req, HTTP_ResponseHandle res, void *ctx)
 {
 	http_response_status(res, 200);
 	http_response_body(res, "Hello!", -1);
