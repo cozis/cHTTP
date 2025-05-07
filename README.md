@@ -105,7 +105,7 @@ This interface allows TinyHTTP to decouple the HTTP logic from the I/O. This has
 On top of the engine, TinyHTTP implements a fully functional and easy to use client and server. Both use `poll()` to handle non-blocking operations. The server API looks like this:
 
 ```c
-#include "http.h"
+#include "tinyhttp.h"
 
 int main(void)
 {
@@ -140,7 +140,7 @@ while the client interface looks like this (note that I omitted error checking f
 
 ```c
 #include <stdio.h>
-#include "http.h"
+#include "tinyhttp.h"
 
 int main(void)
 {
@@ -182,7 +182,7 @@ The client supports HTTPS by using OpenSSL, but the implementation is incomplete
 The last layer is the router, which sits on top of the HTTP server. This simplifies the work of serving files from disk or setting up routes with dynamic content in an easy and safe way. Here's an example:
 
 ```c
-#include "http.h"
+#include "tinyhttp.h"
 
 void callback(HTTP_Request *req, HTTP_ResponseHandle res, void *ctx)
 {
