@@ -1,199 +1,206 @@
 # TinyHTTP
 
-TinyHTTP is an HTTP server library. It's small, robust, and fast.
+TinyHTTP is a library for building cross-platform and fully non-blocking HTTP 1.1 clients and servers in C.
 
-**NOTE**: This is still a prototype! I got the basic version working and am spending some time making it more robust. After that, I will add HTTPS support, and work on compliancy to RFC 9112.
+## Roadmap and status
 
-## Features
-* Self-contained
-* Cross-Platform (Windows, Linux)
-* HTTP/1.1 fully compliant to RFC 9112 with pipelining, chunked encoding, connection reuse
-* Fully non-blocking (epoll on Linux, iocp on Windows)
-* HTTPS (OpenSSL on Linux, Schannel on Windows) (in progress)
-* Zero-copy interface
+The project is still in the prototyping phase. I'm working on testing for robustness and compliance to RFC 9110, 9111, 9112, and 3986. The server is missing timers and HTTPS. The client is just a proof of concept at this point.
 
-## Limitations
-* Single-threaded
-* IPv4 only
+## Overview
 
-## How it works / Getting Started
+The architecture looks like this:
 
-There are two ways to use TinyHTTP: the server interface and the stream interface.
-
-The server interface is a complete server implementation designed to easily set up a new server.
-
-The stream interface is more involved but completely stand-alone, doesn't performs I/O directly, and is easily embeddable in custom event loops. You can think of this as the core of the library where HTTP is implemented. It's designed to work well with readiness-based (select, poll, epoll) and completion-based event loops (iocp, io_uring).
-
-To use TinyHTTP, be sure to enable the modules you are interested and tweak the configurations in from `tinyhttp.h`
-
-```c
-#define TINYHTTP_SERVER_ENABLE 1
-#define TINYHTTP_ROUTER_ENABLE 0
-#define TINYHTTP_HTTPS_ENABLE  0
-
-#define TINYHTTP_ROUTER_MAX_PATH_COMPONENTS 32
-
-#define TINYHTTP_HEADER_LIMIT 32
-#define TINYHTTP_SERVER_CONN_LIMIT (1<<10)
-#define TINYHTTP_SERVER_EPOLL_BATCH_SIZE (1<<10)
+```
+         +--------+
+         | ROUTER |
++--------+--------+
+| CLIENT | SERVER |
++--------+--------+
+|      ENGINE     |
++-----------------+
+|      PARSER     |
++-----------------+
 ```
 
-then, drop the `tinyhttp.c` and `tinyhttp.h` in your project as they were your files.
+At the lowest level there are HTTP request, HTTP respons, and URI parser. Then comes the HTTP "engine", which contains the HTTP 1.1 state machine. These two layers don't depend on basically anything. Probably only freestanding libc headers. The engine is designed in such a way that it does not perform I/O. Instead, applications feed it bytes from the network and eventually get a request or response object from it. When data needs to be output, the engine lets that know to the application. An HTTP engine represents the communication between one server and one client, so a non-blocking server would typically use an array of engines.
 
-## Example
+To give you the general idea, a simple blocking server using the engine would look somewhat like this:
+```c
+int main(void)
+{
+	SOCKET listen_fd = start_server("127.0.0.1", 8080);
 
-This is the code needed to create an HTTP/HTTPS server using the server API:
+	for (;;) {
+
+		SOCKET client_fd = accept(listen_fd, NULL, NULL);
+
+		int is_client = 0; // If this were true, the engine would behave as the client instead
+
+		HTTP_Engine eng;
+		http_engine_init(&eng, is_client, memfunc, NULL);
+
+		// Loop until the engine is in the CLOSED state
+		for (int closed = 0; !closed; ) {
+
+			// The engine may be in one of 4 states:
+			//   RECV_BUF    -> Bytes are expected from the network
+			//   SEND_BUF    -> Bytes need to be sent on the network
+			//   PREP_STATUS -> A request is available
+			//   CLOSED      -> The connection was shut down at the HTTP level
+			switch (http_engine_state(&eng)) {
+
+				case HTTP_ENGINE_STATE_SERVER_CLOSED:
+				closed = 1;
+				break;
+
+				case HTTP_ENGINE_STATE_SERVER_RECV_BUF:
+				{
+					int cap;
+					char *dst = http_engine_recvbuf(&eng, &cap);
+					int ret = recv(client_fd, dst, cap, 0);
+					if (ret <= 0) {
+						http_engine_close(&eng);
+						break;
+					}
+					http_engine_recvack(&eng, ret);
+				}
+				break;
+
+				case HTTP_ENGINE_STATE_SERVER_SEND_BUF:
+				{
+					int len;
+					char *src = http_engine_sendbuf(&eng, &len);
+					int ret = send(client_fd, src, len, 0);
+					if (ret <= 0) {
+						http_engine_close(&eng);
+						break;
+					}
+					http_engine_sendack(&eng, ret);
+				}
+				break;
+
+				case HTTP_ENGINE_STATE_SERVER_PREP_STATUS:
+				{
+					HTTP_Request *req = http_engine_getreq(&eng);
+
+					http_engine_status(&eng, 200);
+					http_engine_header(&eng, "Server: tinyhttp", 16);
+					http_engine_body(&eng, "Hello, world!", 13);
+					http_engine_done(&eng);
+				}
+				break;
+			}
+		}
+
+		http_engine_free(&eng);
+		close(client_fd);
+	}
+
+	close(listen_fd);
+	return 0;
+}
+```
+This interface allows TinyHTTP to decouple the HTTP logic from the I/O. This has many advantages such as simplifying testing and decoupling TLS from the HTTP logic.
+
+On top of the engine, TinyHTTP implements a fully functional and easy to use client and server. Both use `poll()` to handle non-blocking operations. The server API looks like this:
 
 ```c
-#include <stdio.h>
-#include <stdlib.h>
-#include "tinyhttp.h"
-
-static void *memfunc(TinyHTTPMemoryFuncTag tag,
-	void *ptr, int len, void *data)
-{
-	(void) data;
-	switch (tag) {
-
-		case TINYHTTP_MEM_MALLOC:
-		return malloc(len);
-
-		case TINYHTTP_MEM_REALLOC:
-		return realloc(ptr, len);
-
-		case TINYHTTP_MEM_FREE:
-		free(ptr);
-		return NULL;
-	}
-	return NULL;
-}
+#include "http.h"
 
 int main(void)
 {
-	TinyHTTPServerConfig config = {
+	int ret;
+	HTTP_Server server;
 
-		.reuse = 1,
-
-		.plain_addr = "127.0.0.1",
-		.plain_port = 8080,
-		.plain_backlog = 32,
-
-		.secure = 1,
-		.secure_addr = "127.0.0.1",
-		.secure_port = 8443,
-		.secure_backlog = 32,
-
-		.cert_file = "cert.pem",
-		.private_key_file = "privkey.pem",
-	};
-
-	TinyHTTPServer *server = tinyhttp_server_init(config, memfunc, NULL);
-	if (server == NULL)
-		return -1;
+	ret = http_server_init(&server, "127.0.0.1", 8080);
+	if (ret < 0) return -1;
 
 	for (;;) {
-		TinyHTTPRequest *req;
-		TinyHTTPResponse res;
-		int ret = tinyhttp_server_wait(server, &req, &res, 1000);
-		if (ret < 0) return -1; // Error
-		if (ret > 0) continue; // Timeout
-		tinyhttp_response_status(res, 200);
-		tinyhttp_response_send(res);
+		HTTP_Request *req;
+		HTTP_ResponseHandle res;
+
+		ret = http_server_wait(&server, &req, &res, -1);
+		if (ret < 0)
+			return -1;
+		if (ret == 0)
+			continue;
+
+		http_response_status(res, 200);
+		http_response_header(res, "Server: tinyhttp");
+		http_response_body(res, "Hello, world!", 13);
+		http_response_done(res);
 	}
 
-	tinyhttp_server_free(server);
+	http_server_free(&server);
 	return 0;
 }
 ```
 
-And this is an example of a server using the stream API. It's more verbose but offers a high degree of control.
-
-(NOTE: This code needs to be updated)
+while the client interface looks like this (note that I omitted error checking for making easier to digest)
 
 ```c
-void respond(TinyHTTPStream *stream)
+#include <stdio.h>
+#include "http.h"
+
+int main(void)
 {
-  TinyHTTPRequest *req = tinyhttp_stream_request(stream);
-  if (req->method != TINYHTTP_METHOD_GET)
-    tinyhttp_stream_status(stream, 405);
-  else
-    tinyhttp_stream_status(stream, 200);
-  tinyhttp_stream_send(stream);
+	HTTP_Client client;
+	HTTP_TLSContext tls;
+
+	// Initialize the TLS stuff
+	http_tls_global_init();
+	http_tls_init(&tls);
+
+	// Initialize the client context
+	http_client_init(&clients[0]);
+
+	// Start the request
+	http_client_startreq(&clients[0], HTTP_METHOD_GET, "https://coz.is/hello.html", NULL, 0, NULL, 0, &tls);
+
+	// Wait for the request to complete
+	// (you could wait for more multiple request at once)
+	HTTP_Client *wait_list[] = { &client };
+	http_client_waitall(waitlist, 1, -1);
+
+	// Read the response
+	HTTP_Response *res;
+	http_client_result(&clients[0], &res);
+	fwrite(res->body.ptr, 1, res->body.len, stdout);
+
+	// Free the client context
+	http_client_free(&clients);
+
+	// Free the TLS stuff
+	http_tls_free(&tls);
+	http_tls_global_free();
+	return 0;
+}
+```
+
+The client supports HTTPS by using OpenSSL, but the implementation is incomplete. You can get basic requests going but most things are not working yet. The server only supports plain text HTTP, but the interface is more mature. I think it's a great choice for small to medium websites (up to 500 concurrent users I'd say).
+
+The last layer is the router, which sits on top of the HTTP server. This simplifies the work of serving files from disk or setting up routes with dynamic content in an easy and safe way. Here's an example:
+
+```c
+#include "http.h"
+
+void endpoint_login(HTTP_Request *req, HTTP_ResponseHandle res, void *ctx)
+{
+	http_response_status(res, 200);
+	http_response_body(res, "Hello!", -1);
+	http_response_done(res);
 }
 
 int main(void)
 {
-  int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+	HTTP_Router *router = http_router_init();
 
-  struct sockaddr_in buf;
-  buf.sin_family = AF_INET;
-  buf.sin_port   = htons(port);
-  buf.sin_addr.s_addr = htonl(INADDR_ANY);
-  bind(listen_fd, (struct sockaddr*) &buf, sizeof(buf));
+	// Make /say_hello a dynamic resource
+	http_router_func(router, HTTP_METHOD_POST, HTTP_STR("/say_hello"), callback, NULL);
 
-  listen(listen_fd, 32);
+	// Requests to resources in the root folder are served from the examples folder
+	http_router_dir(router, HTTP_STR("/"), HTTP_STR("/examples"));
 
-  int num_conns = 0;
-  int fds[1000];
-  TinyHTTPStream streams[1000];
-
-  for (int i = 0; i < 1000; i++)
-    fds[i] = -1;
-
-  for (;;) {
-    // TODO: timeouts
-
-    fd_set readset;
-    fd_set writeset;
-    FD_ZERO(&readset);
-    FD_ZERO(&writeset);
-
-    FD_SET(&readset);
-    int max_fd = listen_fd;
-    for (int i = 0; i < 1000; i++) {
-      if (fds[i] == -1) continue;
-      int state = tinyhttp_stream_state(&streams[i]);
-      if (state & TINYHTTP_STREAM_RECV)
-        FD_SET(fds[i], &readset);
-      if (state & TINYHTTP_STREAM_SEND)
-        FD_SET(fds[i], &writeset);
-      if (state & (TINYHTTP_STREAM_RECV | TINYHTTP_STREAM_SEND))
-        if (max_fd < fds[i]) max_fd = fds[i];
-    }
-
-    int num = select(max_fd+1, &readset, &writeset, NULL, NULL);
-
-    if (FD_ISSET(liste_fd, &readset)) {
-      // TODO
-    }
-
-    int ready_queue[1000];
-    int ready_head = 0;
-    int ready_count = 0;
-    for (int i = 0; i < 1000; i++) {
-      // TODO
-    }
-
-    while (ready_count > 0) {
-
-      int idx = ready_queue[ready_head];
-      TinyHTTPStream *stream = &streams[idx];
-
-      TinyHTTPRequest *req = tinyhttp_stream_request(stream);
-      assert(req);
-
-      respond(stream);
-
-      ready_head = (ready_head + 1) % 1000;
-      ready_count--;
-      if (tinyhttp_stream_request(stream)) {
-        ready_queue[(ready_head + ready_count) % 1000] = idx;
-        ready_count++;
-      }
-    }
-  }
-
-  close(listen_fd);
-  return 0;
+	return http_serve("127.0.0.1", 8080, router);
 }
 ```
