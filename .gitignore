@@ -1,2 +1,11 @@
 misc
 coverage_report
+
+# Coverage stuff
+*.info
+*.gcda
+*.gcno
+*.exe
+
+test.out
+test.exe

@@ -1,4 +1,4 @@
-#include "http.h"
+#include "tinyhttp.h"
 
 #include <stdio.h>
 #include <stdarg.h>
@@ -936,6 +936,14 @@ static int parse_request(Scanner *s, HTTP_Request *req)
 	return 1;
 }
 
+static int find_header(HTTP_Header *headers, int num_headers, HTTP_String name)
+{
+	for (int i = 0; i < num_headers; i++)
+		if (http_streqcase(name, headers[i].name))
+			return i;
+	return -1;
+}
+
 static int parse_response(Scanner *s, HTTP_Response *res)
 {
 	if (!contains_head(s->src + s->cur, s->len - s->cur))
@@ -992,14 +1000,16 @@ static int parse_response(Scanner *s, HTTP_Response *res)
 		return num_headers;
 	res->num_headers = num_headers;
 
-	unsigned long long content_length;
-	for (int i = 0; i < num_headers; i++)
-		if (http_streqcase(res->headers[i].name, HTTP_STR("Content-Length"))) {
-			if (parse_content_length(res->headers[i].value.ptr, res->headers[i].value.len, &content_length) < 0)
-				return -1;
-			break;
-		}
+	int content_length_index = find_header(res->headers, res->num_headers, HTTP_STR("Content-Length"));
+	if (content_length_index == -1) {
+		res->body.ptr = NULL;
+		res->body.len = 0;
+		return 1;
+	}
 
+	ASSERT(0);
+	return -1;
+/*
 	if (content_length > 1<<20) {
 		// TODO
 	}
@@ -1010,7 +1020,10 @@ static int parse_response(Scanner *s, HTTP_Response *res)
 	res->body.ptr = s->src + s->cur;
 	res->body.len = content_length;
 
+	}
+
 	return 1;
+*/
 }
 
 int http_parse_ipv4(char *src, int len, HTTP_IPv4 *ipv4)
@@ -1380,6 +1393,9 @@ static void
 byte_queue_patch(HTTP_ByteQueue *queue, HTTP_ByteQueueOffset off,
 	char *src, unsigned int len)
 {
+	if (queue->flags & BYTE_QUEUE_ERROR)
+		return;
+
 	// Check that the offset is in range
 	ASSERT(off >= queue->curs && off - queue->curs < queue->used);
 
@@ -1394,6 +1410,9 @@ byte_queue_patch(HTTP_ByteQueue *queue, HTTP_ByteQueueOffset off,
 static void
 byte_queue_remove_from_offset(HTTP_ByteQueue *queue, HTTP_ByteQueueOffset offset)
 {
+	if (queue->flags & BYTE_QUEUE_ERROR)
+		return;
+
 	unsigned long long num = (queue->curs + queue->used) - offset;
 	ASSERT(num <= queue->used);
 
@@ -1514,19 +1533,14 @@ char *http_engine_recvbuf(HTTP_Engine *eng, int *cap)
 	byte_queue_write_setmincap(&eng->input, 1<<9);
 	if (byte_queue_error(&eng->input)) {
 		*cap = 0;
-		eng->state = HTTP_ENGINE_STATE_SERVER_CLOSED;
+		if (eng->state & HTTP_ENGINE_STATEBIT_CLIENT)
+			eng->state = HTTP_ENGINE_STATE_CLIENT_CLOSED;
+		else
+			eng->state = HTTP_ENGINE_STATE_SERVER_CLOSED;
 		return NULL;
 	}
 
 	return byte_queue_write_buf(&eng->input, cap);
-}
-
-static int find_header(HTTP_Request *req, HTTP_String name)
-{
-	for (int i = 0; i < req->num_headers; i++)
-		if (http_streqcase(name, req->headers[i].name))
-			return i;
-	return -1;
 }
 
 static int
@@ -1553,7 +1567,7 @@ should_keep_alive(HTTP_Engine *eng)
 
 	// TODO: This assumes "Connection" can only hold a single token,
 	//       but this is not true.
-	int i = find_header(req, HTTP_STR("Connection"));
+	int i = find_header(req->headers, req->num_headers, HTTP_STR("Connection"));
 	if (i >= 0 && http_streqcase(req->headers[i].value, HTTP_STR("Close")))
 		return 0;
 
@@ -1564,7 +1578,7 @@ static void process_incoming_request(HTTP_Engine *eng)
 {
 	ASSERT(eng->state == HTTP_ENGINE_STATE_SERVER_RECV_ACK
 		|| eng->state == HTTP_ENGINE_STATE_SERVER_SEND_ACK
-		|| eng->state == HTTP_ENGINE_STATE_SERVER_PREP_BODY
+		|| eng->state == HTTP_ENGINE_STATE_SERVER_PREP_BODY_BUF
 		|| eng->state == HTTP_ENGINE_STATE_SERVER_PREP_ERROR);
 
 	char *src;
@@ -1695,6 +1709,8 @@ void http_engine_url(HTTP_Engine *eng, HTTP_Method method, char *url, int minor)
 	if (eng->state != HTTP_ENGINE_STATE_CLIENT_PREP_URL)
 		return;
 
+	eng->response_offset = byte_queue_offset(&eng->output); // TODO: rename response_offset to something that makes sense for clients
+
 	int len = strlen(url);
 
 	HTTP_URL parsed_url;
@@ -1704,44 +1720,33 @@ void http_engine_url(HTTP_Engine *eng, HTTP_Method method, char *url, int minor)
 		return;
 	}
 
-	char *method_str = "???";
+	HTTP_String method_and_space = HTTP_STR("???");
 	switch (method) {
-		case HTTP_METHOD_GET    : method_str = "GET";     break;
-		case HTTP_METHOD_HEAD   : method_str = "HEAD";    break;
-		case HTTP_METHOD_POST   : method_str = "POST";    break;
-		case HTTP_METHOD_PUT    : method_str = "PUT";     break;
-		case HTTP_METHOD_DELETE : method_str = "DELETE";  break;
-		case HTTP_METHOD_CONNECT: method_str = "CONNECT"; break;
-		case HTTP_METHOD_OPTIONS: method_str = "OPTIONS"; break;
-		case HTTP_METHOD_TRACE  : method_str = "TRACE";   break;
-		case HTTP_METHOD_PATCH  : method_str = "PATCH";   break;
+		case HTTP_METHOD_GET    : method_and_space = HTTP_STR("GET ");     break;
+		case HTTP_METHOD_HEAD   : method_and_space = HTTP_STR("HEAD ");    break;
+		case HTTP_METHOD_POST   : method_and_space = HTTP_STR("POST ");    break;
+		case HTTP_METHOD_PUT    : method_and_space = HTTP_STR("PUT ");     break;
+		case HTTP_METHOD_DELETE : method_and_space = HTTP_STR("DELETE ");  break;
+		case HTTP_METHOD_CONNECT: method_and_space = HTTP_STR("CONNECT "); break;
+		case HTTP_METHOD_OPTIONS: method_and_space = HTTP_STR("OPTIONS "); break;
+		case HTTP_METHOD_TRACE  : method_and_space = HTTP_STR("TRACE ");   break;
+		case HTTP_METHOD_PATCH  : method_and_space = HTTP_STR("PATCH ");   break;
 	}
 
 	HTTP_String path = parsed_url.path;
 	if (path.len == 0)
 		path = HTTP_STR("/");
 
-	byte_queue_write_fmt(&eng->output,
-		"%s %.*s%.*s HTTP/1.%d\r\n",
-		method_str,
-		path.len,
-		path.ptr,
-		parsed_url.query.len,
-		parsed_url.query.ptr,
-		minor
-	);
-
+	byte_queue_write(&eng->output, method_and_space.ptr, method_and_space.len);
+	byte_queue_write(&eng->output, path.ptr, path.len);
+	byte_queue_write(&eng->output, parsed_url.query.ptr, parsed_url.query.len);
+	byte_queue_write(&eng->output, minor ? " HTTP/1.1\r\nHost: " : " HTTP/1.0\r\nHost: ", -1);
+	byte_queue_write(&eng->output, parsed_url.authority.host.text.ptr, parsed_url.authority.host.text.len);
 	if (parsed_url.authority.port > 0)
-		byte_queue_write_fmt(&eng->output,
-			"Host: %.*s:%d\r\n",
-			parsed_url.authority.host.text.len,
-			parsed_url.authority.host.text.ptr,
-			parsed_url.authority.port);
-	else
-		byte_queue_write_fmt(&eng->output,
-			"Host: %.*s\r\n",
-			parsed_url.authority.host.text.len,
-			parsed_url.authority.host.text.ptr);
+		byte_queue_write_fmt(&eng->output, "%d", parsed_url.authority.port);
+	byte_queue_write(&eng->output, "\r\n", 2);
+
+	eng->keepalive = 1; // TODO
 
 	eng->state = HTTP_ENGINE_STATE_CLIENT_PREP_HEADER;
 }
@@ -1831,6 +1836,8 @@ void http_engine_header(HTTP_Engine *eng, const char *src, int len)
 	if ((eng->state & HTTP_ENGINE_STATEBIT_PREP_HEADER) == 0)
 		return;
 
+	if (len < 0) len = strlen(src);
+
 	// TODO: Check that the header is valid
 
 	byte_queue_write(&eng->output, src, len);
@@ -1857,14 +1864,10 @@ void http_engine_header_fmt(HTTP_Engine *eng, const char *fmt, ...)
 }
 
 static void
-append_special_headers(HTTP_Engine *eng)
+complete_message_head(HTTP_Engine *eng)
 {
-	ASSERT((eng->state & HTTP_ENGINE_STATEBIT_CLIENT) == 0);
-
-	if (eng->keepalive)
-		byte_queue_write(&eng->output, "Connection: Keep-Alive\r\n", -1);
-	else
-		byte_queue_write(&eng->output, "Connection: Close\r\n", -1);
+	if (eng->keepalive) byte_queue_write(&eng->output, "Connection: Keep-Alive\r\n", -1);
+	else                byte_queue_write(&eng->output, "Connection: Close\r\n", -1);
 
 	byte_queue_write(&eng->output, "Content-Length: ", -1);
 	eng->content_length_value_offset = byte_queue_offset(&eng->output);
@@ -1874,9 +1877,37 @@ append_special_headers(HTTP_Engine *eng)
 	eng->content_length_offset = byte_queue_offset(&eng->output);
 }
 
+static void complete_message_body(HTTP_Engine *eng)
+{
+	unsigned int content_length = byte_queue_size_from_offset(&eng->output, eng->content_length_offset);
+
+	if (content_length > UINT32_MAX) {
+		// TODO
+	}
+
+	char tmp[10];
+
+	tmp[0] = '0' + content_length / 1000000000; content_length %= 1000000000;
+	tmp[1] = '0' + content_length / 100000000;  content_length %= 100000000;
+	tmp[2] = '0' + content_length / 10000000;   content_length %= 10000000;
+	tmp[3] = '0' + content_length / 1000000;    content_length %= 1000000;
+	tmp[4] = '0' + content_length / 100000;     content_length %= 100000;
+	tmp[5] = '0' + content_length / 10000;      content_length %= 10000;
+	tmp[6] = '0' + content_length / 1000;       content_length %= 1000;
+	tmp[7] = '0' + content_length / 100;        content_length %= 100;
+	tmp[8] = '0' + content_length / 10;         content_length %= 10;
+	tmp[9] = '0' + content_length;
+
+	int i = 0;
+	while (i < 9 && tmp[i] == '0')
+		i++;
+
+	byte_queue_patch(&eng->output, eng->content_length_value_offset, tmp + i, 10 - i);
+}
+
 void http_engine_body(HTTP_Engine *eng, void *src, int len)
 {
-	ASSERT(len >= 0);
+	if (len < 0) len = strlen(src);
 
 	http_engine_bodycap(eng, len);
 	int cap;
@@ -1892,15 +1923,15 @@ static void ensure_body_entered(HTTP_Engine *eng)
 	if (eng->state & HTTP_ENGINE_STATEBIT_CLIENT) {
 
 		if (eng->state == HTTP_ENGINE_STATE_CLIENT_PREP_HEADER) {
-			byte_queue_write(&eng->output, "\r\n", 2);
-			eng->state = HTTP_ENGINE_STATE_CLIENT_PREP_BODY;
+			complete_message_head(eng);
+			eng->state = HTTP_ENGINE_STATE_CLIENT_PREP_BODY_BUF;
 		}
 
 	} else {
 
 		if (eng->state == HTTP_ENGINE_STATE_SERVER_PREP_HEADER) {
-			append_special_headers(eng);
-			eng->state = HTTP_ENGINE_STATE_SERVER_PREP_BODY;
+			complete_message_head(eng);
+			eng->state = HTTP_ENGINE_STATE_SERVER_PREP_BODY_BUF;
 		}
 	}
 }
@@ -1908,8 +1939,8 @@ static void ensure_body_entered(HTTP_Engine *eng)
 void http_engine_bodycap(HTTP_Engine *eng, int mincap)
 {
 	ensure_body_entered(eng);
-	if (eng->state != HTTP_ENGINE_STATE_CLIENT_PREP_BODY &&
-		eng->state != HTTP_ENGINE_STATE_SERVER_PREP_BODY)
+	if (eng->state != HTTP_ENGINE_STATE_CLIENT_PREP_BODY_BUF &&
+		eng->state != HTTP_ENGINE_STATE_SERVER_PREP_BODY_BUF)
 		return;
 
 	byte_queue_write_setmincap(&eng->output, mincap);
@@ -1918,21 +1949,32 @@ void http_engine_bodycap(HTTP_Engine *eng, int mincap)
 char *http_engine_bodybuf(HTTP_Engine *eng, int *cap)
 {
 	ensure_body_entered(eng);
-	if (eng->state != HTTP_ENGINE_STATE_CLIENT_PREP_BODY &&
-		eng->state != HTTP_ENGINE_STATE_SERVER_PREP_BODY) {
+	if (eng->state != HTTP_ENGINE_STATE_CLIENT_PREP_BODY_BUF &&
+		eng->state != HTTP_ENGINE_STATE_SERVER_PREP_BODY_BUF) {
 		*cap = 0;
 		return NULL;
 	}
+
+	if (eng->state & HTTP_ENGINE_STATEBIT_CLIENT)
+		eng->state = HTTP_ENGINE_STATE_CLIENT_PREP_BODY_ACK;
+	else
+		eng->state = HTTP_ENGINE_STATE_SERVER_PREP_BODY_ACK;
 
 	return byte_queue_write_buf(&eng->output, cap);
 }
 
 void http_engine_bodyack(HTTP_Engine *eng, int num)
 {
-	if (eng->state != HTTP_ENGINE_STATE_CLIENT_PREP_BODY &&
-		eng->state != HTTP_ENGINE_STATE_SERVER_PREP_BODY)
+	if (eng->state != HTTP_ENGINE_STATE_CLIENT_PREP_BODY_ACK &&
+		eng->state != HTTP_ENGINE_STATE_SERVER_PREP_BODY_ACK)
 		return;
+
 	byte_queue_write_ack(&eng->output, num);
+
+	if (eng->state & HTTP_ENGINE_STATEBIT_CLIENT)
+		eng->state = HTTP_ENGINE_STATE_CLIENT_PREP_BODY_BUF;
+	else
+		eng->state = HTTP_ENGINE_STATE_SERVER_PREP_BODY_BUF;
 }
 
 void http_engine_done(HTTP_Engine *eng)
@@ -1948,20 +1990,21 @@ void http_engine_done(HTTP_Engine *eng)
 		}
 
 		if (eng->state == HTTP_ENGINE_STATE_CLIENT_PREP_HEADER) {
-			byte_queue_write(&eng->output, "\r\n", 2);
-			eng->state = HTTP_ENGINE_STATE_CLIENT_PREP_BODY;
+			complete_message_head(eng);
+			eng->state = HTTP_ENGINE_STATE_CLIENT_PREP_BODY_BUF;
 		}
 
-		if (eng->state == HTTP_ENGINE_STATE_CLIENT_PREP_BODY) {
-			// TODO
-		}
+		if (eng->state == HTTP_ENGINE_STATE_CLIENT_PREP_BODY_BUF)
+			complete_message_body(eng);
 
 		if (eng->state == HTTP_ENGINE_STATE_CLIENT_PREP_ERROR) {
-			// TODO
+			eng->state = HTTP_ENGINE_STATE_CLIENT_CLOSED;
+			return;
 		}
 
 		if (byte_queue_error(&eng->output)) {
-			// TODO
+			eng->state = HTTP_ENGINE_STATE_CLIENT_CLOSED;
+			return;
 		}
 
 		eng->state = HTTP_ENGINE_STATE_CLIENT_SEND_BUF;
@@ -1969,37 +2012,12 @@ void http_engine_done(HTTP_Engine *eng)
 	} else {
 
 		if (eng->state == HTTP_ENGINE_STATE_SERVER_PREP_HEADER) {
-			append_special_headers(eng);
-			eng->state = HTTP_ENGINE_STATE_SERVER_PREP_BODY;
+			complete_message_head(eng);
+			eng->state = HTTP_ENGINE_STATE_SERVER_PREP_BODY_BUF;
 		}
 
-		if (eng->state == HTTP_ENGINE_STATE_SERVER_PREP_BODY) {
-
-			unsigned int content_length = byte_queue_size_from_offset(&eng->output, eng->content_length_offset);
-
-			if (content_length > UINT32_MAX) {
-				// TODO
-			}
-
-			char tmp[10];
-
-			tmp[0] = '0' + content_length / 1000000000; content_length %= 1000000000;
-			tmp[1] = '0' + content_length / 100000000;  content_length %= 100000000;
-			tmp[2] = '0' + content_length / 10000000;   content_length %= 10000000;
-			tmp[3] = '0' + content_length / 1000000;    content_length %= 1000000;
-			tmp[4] = '0' + content_length / 100000;     content_length %= 100000;
-			tmp[5] = '0' + content_length / 10000;      content_length %= 10000;
-			tmp[6] = '0' + content_length / 1000;       content_length %= 1000;
-			tmp[7] = '0' + content_length / 100;        content_length %= 100;
-			tmp[8] = '0' + content_length / 10;         content_length %= 10;
-			tmp[9] = '0' + content_length;
-
-			int i = 0;
-			while (i < 9 && tmp[i] == '0')
-				i++;
-
-			byte_queue_patch(&eng->output, eng->content_length_value_offset, tmp + i, 10 - i);
-		}
+		if (eng->state == HTTP_ENGINE_STATE_SERVER_PREP_BODY_BUF)
+			complete_message_body(eng);
 
 		if (eng->state == HTTP_ENGINE_STATE_SERVER_PREP_ERROR) {
 			byte_queue_remove_from_offset(&eng->output, eng->response_offset);
@@ -2027,6 +2045,7 @@ void http_engine_undo(HTTP_Engine *eng)
 	if ((eng->state & HTTP_ENGINE_STATEBIT_PREP) == 0)
 		return;
 
+	byte_queue_write_ack(&eng->output, 0);
 	byte_queue_remove_from_offset(&eng->output, eng->response_offset);
 
 	if (eng->state & HTTP_ENGINE_STATEBIT_CLIENT)

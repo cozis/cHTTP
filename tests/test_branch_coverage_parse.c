@@ -1,37 +1,6 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../http.h"
-
-#define COUNT(X) (int) (sizeof(X)/sizeof((X)[0]))
-#define TEST(X) {if (!(X)) { fprintf(stderr, "Failed test at %s:%d\n", __FILE__, __LINE__); __builtin_trap(); }}
-
-#define TEST_EQ(X, Y) _Generic((X), HTTP_String: testeq_str, int: testeq_int)((X), (Y), S(#X), S(#Y), __FILE__, __LINE__)
-
-static void testeq_int(int l, int r, HTTP_String uneval_l, HTTP_String uneval_r, const char *file, int line)
-{
-	if (l != r) {
-		printf("Test failed at %s:%d\n", file, line);
-		printf("  TEST_EQ(%.*s, %.*s) -> TEST_EQ(%d, %d)\n",
-			(int) uneval_l.len, uneval_l.ptr,
-			(int) uneval_r.len, uneval_r.ptr,
-			l, r);
-		abort();
-	}
-}
-
-static void testeq_str(HTTP_String l, HTTP_String r, HTTP_String uneval_l, HTTP_String uneval_r, const char *file, int line)
-{
-	if (!http_streq(l, r)) {
-		printf("Test failed at %s:%d\n", file, line);
-		printf("  TEST_EQ(\"%.*s\", \"%.*s\") -> TEST_EQ(%.*s, %.*s)\n",
-			(int) uneval_l.len, uneval_l.ptr,
-			(int) uneval_r.len, uneval_r.ptr,
-			(int) l.len, l.ptr,
-			(int) r.len, r.ptr);
-		abort();
-	}
-}
+#include "test.h"
 
 static void test_branch_coverage_parse_request(void)
 {
@@ -314,8 +283,6 @@ static void test_branch_coverage_parse_response(void)
 #include <arpa/inet.h>
 #endif
 
-#define S HTTP_STR
-
 typedef struct {
 	char *buf;
 	int   cap;
@@ -510,7 +477,7 @@ static void test_branch_coverage_parse_url(void)
 							}
 }
 
-void test_branch_coverage(void)
+void test_branch_coverage_parse(void)
 {
 	test_branch_coverage_parse_request();
 	test_branch_coverage_parse_response();
