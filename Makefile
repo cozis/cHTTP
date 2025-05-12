@@ -1,7 +1,7 @@
 .PHONY: all report
 
-OSTAG = LINUX
-#OSTAG = WINDOWS
+#OSTAG = LINUX
+OSTAG = WINDOWS
 
 EXT_WINDOWS = .exe
 EXT_LINUX   = .out
@@ -13,6 +13,7 @@ LFLAGS = ${LFLAGS_${OSTAG}}
 EXT = ${EXT_${OSTAG}}
 
 all:
+	gcc -o simple_server$(EXT) examples/simple_server.c tinyhttp.c -Wall -Wextra -DHTTP_CLIENT=0 -DHTTP_ROUTER=0 $(LFLAGS)
 	gcc -o test$(EXT) tests/test.c tests/test_branch_coverage_parse.c tests/test_branch_coverage_engine.c tests/test_fuzz_engine.c tinyhttp.c -fprofile-arcs -ftest-coverage $(LFLAGS)
 
 report:
