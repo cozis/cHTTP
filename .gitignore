@@ -5,7 +5,6 @@ coverage_report
 *.info
 *.gcda
 *.gcno
-*.exe
 
-test.out
-test.exe
+*.out
+*.exe
