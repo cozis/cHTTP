@@ -9,12 +9,20 @@
 #define HTTP_ENGINE 1
 #endif
 
+#ifndef HTTP_PROXY_ENGINE
+#define HTTP_PROXY_ENGINE 1
+#endif
+
 #ifndef HTTP_CLIENT
 #define HTTP_CLIENT 1
 #endif
 
 #ifndef HTTP_SERVER
 #define HTTP_SERVER 1
+#endif
+
+#ifndef HTTP_PROXY
+#define HTTP_PROXY 1
 #endif
 
 #ifndef HTTP_ROUTER
@@ -254,9 +262,46 @@ void             http_engine_undo    (HTTP_Engine *eng);
 
 #endif // HTTP_ENGINE
 /////////////////////////////////////////////////////////////////////
+// HTTP PROXY ENGINE
+/////////////////////////////////////////////////////////////////////
+#if HTTP_PROXY_ENGINE
+
+typedef struct {
+	HTTP_Engine in;
+	HTTP_Engine out;
+} HTTP_ProxyEngine;
+
+typedef enum {
+	HTTP_PROXY_ENGINE_STATE_NONE,
+	HTTP_PROXY_ENGINE_STATE_CLIENT_RECV_BUF,
+	HTTP_PROXY_ENGINE_STATE_CLIENT_RECV_ACK,
+	HTTP_PROXY_ENGINE_STATE_SERVER_SEND_BUF,
+	HTTP_PROXY_ENGINE_STATE_SERVER_SEND_ACK,
+	HTTP_PROXY_ENGINE_STATE_SERVER_RECV_BUF,
+	HTTP_PROXY_ENGINE_STATE_SERVER_RECV_ACK,
+	HTTP_PROXY_ENGINE_STATE_CLIENT_SEND_BUF,
+	HTTP_PROXY_ENGINE_STATE_CLIENT_SEND_ACK,
+	HTTP_PROXY_ENGINE_STATE_CLOSED,
+} HTTP_ProxyEngineState;
+
+void                  http_proxyengine_init(HTTP_ProxyEngine *eng, HTTP_MemoryFunc memfunc, void *memfuncdata);
+void                  http_proxyengine_free(HTTP_ProxyEngine *eng);
+HTTP_ProxyEngineState http_proxyengine_state(HTTP_ProxyEngine *eng);
+void                  http_proxyengine_close(HTTP_ProxyEngine *eng);
+char*                 http_proxyengine_serverrecvbuf(HTTP_ProxyEngine *eng, int *cap);
+void                  http_proxyengine_serverrecvack(HTTP_ProxyEngine *eng, int num);
+char*                 http_proxyengine_serversendbuf(HTTP_ProxyEngine *eng, int *len);
+void                  http_proxyengine_serversendack(HTTP_ProxyEngine *eng, int num);
+char*                 http_proxyengine_clientrecvbuf(HTTP_ProxyEngine *eng, int *cap);
+void                  http_proxyengine_clientrecvack(HTTP_ProxyEngine *eng, int num);
+char*                 http_proxyengine_clientsendbuf(HTTP_ProxyEngine *eng, int *len);
+void                  http_proxyengine_clientsendack(HTTP_ProxyEngine *eng, int num);
+
+#endif // HTTP_PROXY_ENGINE
+/////////////////////////////////////////////////////////////////////
 // HTTP CLIENT AND SERVER
 /////////////////////////////////////////////////////////////////////
-#if HTTP_CLIENT || HTTP_SERVER
+#if HTTP_CLIENT || HTTP_SERVER || HTTP_PROXY
 
 typedef unsigned long long HTTP_Socket;
 
@@ -386,6 +431,30 @@ void http_response_done(HTTP_ResponseHandle res);
 void http_response_undo(HTTP_ResponseHandle res);
 
 #endif // HTTP_SERVER
+/////////////////////////////////////////////////////////////////////
+// HTTP PROXY
+/////////////////////////////////////////////////////////////////////
+#if HTTP_PROXY
+
+#define HTTP_MAX_CONNS_PER_PROXY (1<<10)
+
+typedef struct {
+	HTTP_Socket client_sock;
+	HTTP_Socket server_sock;
+	HTTP_ProxyEngine eng;
+} HTTP_ProxyConnection;
+
+typedef struct {
+	HTTP_Socket listen_sock;
+	int num_conns;
+	HTTP_ProxyConnection conns[HTTP_MAX_CONNS_PER_PROXY];
+} HTTP_Proxy;
+
+int  http_proxy_init(HTTP_Proxy *proxy, const char *addr, int port);
+void http_proxy_free(HTTP_Proxy *proxy);
+int  http_proxy_wait(HTTP_Proxy *proxy, int timeout);
+
+#endif // HTTP_PROXY
 /////////////////////////////////////////////////////////////////////
 // HTTP ROUTER
 /////////////////////////////////////////////////////////////////////

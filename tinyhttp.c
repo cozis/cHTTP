@@ -1000,18 +1000,26 @@ static int parse_response(Scanner *s, HTTP_Response *res)
 		return num_headers;
 	res->num_headers = num_headers;
 
-	int content_length_index = find_header(res->headers, res->num_headers, HTTP_STR("Content-Length"));
+	int content_length_index = find_header(
+		res->headers, res->num_headers,
+		HTTP_STR("Content-Length"));
 	if (content_length_index == -1) {
 		res->body.ptr = NULL;
 		res->body.len = 0;
 		return 1;
 	}
 
-	ASSERT(0);
-	return -1;
-/*
+	// TODO: transfer-encoding
+
+	HTTP_String content_length_str = res->headers[content_length_index].value;
+
+	unsigned long long content_length;
+	if (parse_content_length(content_length_str.ptr, content_length_str.len, &content_length) < 0) {
+		ASSERT(0); // TODO
+	}
+
 	if (content_length > 1<<20) {
-		// TODO
+		ASSERT(0); // TODO
 	}
 
 	if (content_length > (unsigned long long) (s->len - s->cur))
@@ -1019,11 +1027,7 @@ static int parse_response(Scanner *s, HTTP_Response *res)
 
 	res->body.ptr = s->src + s->cur;
 	res->body.len = content_length;
-
-	}
-
 	return 1;
-*/
 }
 
 int http_parse_ipv4(char *src, int len, HTTP_IPv4 *ipv4)
@@ -2055,6 +2059,138 @@ void http_engine_undo(HTTP_Engine *eng)
 }
 
 #endif // HTTP_ENGINE
+/////////////////////////////////////////////////////////////////////
+// HTTP PROXY ENGINE
+/////////////////////////////////////////////////////////////////////
+#if HTTP_PROXY_ENGINE
+
+#if !HTTP_ENGINE
+#error "HTTP_PROXY_ENGINE depends on HTTP_ENGINE"
+#endif
+
+void http_proxyengine_init(HTTP_ProxyEngine *eng, HTTP_MemoryFunc memfunc, void *memfuncdata)
+{
+	http_engine_init(&eng->in,  0, memfunc, memfuncdata);
+	http_engine_init(&eng->out, 1, memfunc, memfuncdata);
+
+	ASSERT(http_engine_state(&eng->in)  == HTTP_ENGINE_STATE_SERVER_RECV_BUF);
+	ASSERT(http_engine_state(&eng->out) == HTTP_ENGINE_STATE_CLIENT_PREP_URL);
+}
+
+void http_proxyengine_free(HTTP_ProxyEngine *eng)
+{
+	http_engine_free(&eng->in);
+	http_engine_free(&eng->out);
+}
+
+HTTP_ProxyEngineState http_proxyengine_state(HTTP_ProxyEngine *eng)
+{
+	HTTP_EngineState istate = http_engine_state(&eng->in);
+	HTTP_EngineState ostate = http_engine_state(&eng->out);
+	if (istate == HTTP_ENGINE_STATE_SERVER_RECV_BUF    && ostate == HTTP_ENGINE_STATE_CLIENT_PREP_URL) return HTTP_PROXY_ENGINE_STATE_CLIENT_RECV_BUF;
+	if (istate == HTTP_ENGINE_STATE_SERVER_RECV_ACK    && ostate == HTTP_ENGINE_STATE_CLIENT_PREP_URL) return HTTP_PROXY_ENGINE_STATE_CLIENT_RECV_ACK;
+	if (istate == HTTP_ENGINE_STATE_SERVER_PREP_STATUS && ostate == HTTP_ENGINE_STATE_CLIENT_SEND_BUF) return HTTP_PROXY_ENGINE_STATE_SERVER_SEND_BUF;
+	if (istate == HTTP_ENGINE_STATE_SERVER_PREP_STATUS && ostate == HTTP_ENGINE_STATE_CLIENT_SEND_ACK) return HTTP_PROXY_ENGINE_STATE_SERVER_SEND_ACK;
+	if (istate == HTTP_ENGINE_STATE_SERVER_PREP_STATUS && ostate == HTTP_ENGINE_STATE_CLIENT_RECV_BUF) return HTTP_PROXY_ENGINE_STATE_SERVER_RECV_BUF;
+	if (istate == HTTP_ENGINE_STATE_SERVER_PREP_STATUS && ostate == HTTP_ENGINE_STATE_CLIENT_RECV_ACK) return HTTP_PROXY_ENGINE_STATE_SERVER_RECV_ACK;
+	if (istate == HTTP_ENGINE_STATE_SERVER_SEND_BUF    && ostate == HTTP_ENGINE_STATE_CLIENT_PREP_URL) return HTTP_PROXY_ENGINE_STATE_CLIENT_SEND_BUF;
+	if (istate == HTTP_ENGINE_STATE_SERVER_SEND_ACK    && ostate == HTTP_ENGINE_STATE_CLIENT_PREP_URL) return HTTP_PROXY_ENGINE_STATE_CLIENT_SEND_ACK;
+	ASSERT(istate == HTTP_ENGINE_STATE_SERVER_CLOSED || ostate == HTTP_ENGINE_STATE_CLIENT_CLOSED);
+	return HTTP_PROXY_ENGINE_STATE_CLOSED;
+}
+
+void http_proxyengine_close(HTTP_ProxyEngine *eng)
+{
+	http_engine_close(&eng->in);
+	http_engine_close(&eng->out);
+}
+
+char *http_proxyengine_serverrecvbuf(HTTP_ProxyEngine *eng, int *cap)
+{
+	return http_engine_recvbuf(&eng->in, cap);
+}
+
+static void forward_request(HTTP_ProxyEngine *eng)
+{
+	if (http_engine_state(&eng->in) == HTTP_ENGINE_STATE_SERVER_PREP_STATUS &&
+		http_engine_state(&eng->out) == HTTP_ENGINE_STATE_CLIENT_PREP_URL) {
+		
+		HTTP_Request *req = http_engine_getreq(&eng->in);
+
+		char url[] = "???";
+		http_engine_url(&eng->out, req->method, url, 1);
+
+		for (int i = 0; i < req->num_headers; i++)
+			http_engine_header_fmt(&eng->out, "%.*s: %.*s",
+				req->headers[i].name.len, req->headers[i].name.ptr,
+				req->headers[i].value.len, req->headers[i].value.ptr
+			);
+
+		http_engine_body(&eng->out, req->body.ptr, req->body.len);
+		http_engine_done(&eng->out);
+	}
+}
+
+static void forward_response(HTTP_ProxyEngine *eng)
+{
+	if (http_engine_state(&eng->in) == HTTP_ENGINE_STATE_SERVER_PREP_STATUS &&
+		http_engine_state(&eng->out) == HTTP_ENGINE_STATE_CLIENT_PREP_URL) {
+		
+		HTTP_Response *res = http_engine_getres(&eng->out);
+
+		http_engine_status(&eng->in, res->status);
+
+		for (int i = 0; i < res->num_headers; i++)
+			http_engine_header_fmt(&eng->in, "%.*s: %.*s",
+				res->headers[i].name.len, res->headers[i].name.ptr,
+				res->headers[i].value.len, res->headers[i].value.ptr
+			);
+
+		http_engine_body(&eng->in, res->body.ptr, res->body.len);
+		http_engine_done(&eng->in);
+	}
+}
+
+void http_proxyengine_serverrecvack(HTTP_ProxyEngine *eng, int num)
+{
+	http_engine_recvack(&eng->in, num);
+	forward_request(eng);
+}
+
+char *http_proxyengine_serversendbuf(HTTP_ProxyEngine *eng, int *len)
+{
+	return http_engine_sendbuf(&eng->in, len);
+}
+
+void http_proxyengine_serversendack(HTTP_ProxyEngine *eng, int num)
+{
+	http_engine_sendack(&eng->in, num);
+	forward_request(eng);
+}
+
+char *http_proxyengine_clientrecvbuf(HTTP_ProxyEngine *eng, int *cap)
+{
+	return http_engine_recvbuf(&eng->out, cap);
+}
+
+void http_proxyengine_clientrecvack(HTTP_ProxyEngine *eng, int num)
+{
+	http_engine_recvack(&eng->out, num);
+	forward_response(eng);
+}
+
+char *http_proxyengine_clientsendbuf(HTTP_ProxyEngine *eng, int *len)
+{
+	return http_engine_sendbuf(&eng->out, len);
+}
+
+void http_proxyengine_clientsendack(HTTP_ProxyEngine *eng, int num)
+{
+	http_engine_sendack(&eng->out, num);
+	forward_response(eng);
+}
+
+#endif // HTTP_PROXY_ENGINE
 /////////////////////////////////////////////////////////////////////
 // HTTP CLIENT AND SERVER
 /////////////////////////////////////////////////////////////////////
@@ -3201,6 +3337,232 @@ void http_response_done(HTTP_ResponseHandle res)
 }
 
 #endif // HTTP_SERVER
+/////////////////////////////////////////////////////////////////////
+// HTTP PROXY
+/////////////////////////////////////////////////////////////////////
+#if HTTP_PROXY
+
+#if !HTTP_PROXY_ENGINE
+#error "HTTP_PROXY depends on HTTP_PROXY_ENGINE"
+#endif
+
+int http_proxy_init(HTTP_Proxy *proxy, const char *addr, int port)
+{
+	struct sockaddr_in buf;
+	buf.sin_family = AF_INET;
+	buf.sin_port   = htons(port);
+	memset(&buf.sin_zero, 0, sizeof(buf.sin_zero));
+	if (inet_pton(AF_INET, addr, &buf.sin_addr) != 1)
+		return -1;
+
+	SOCKET listen_sock = socket(AF_INET, SOCK_STREAM, 0);
+
+#ifdef _WIN32
+	if (listen_sock == INVALID_SOCKET && WSAGetLastError() == WSANOTINITIALISED) {
+		WSADATA wd;
+		if (WSAStartup(MAKEWORD(2, 2), &wd))
+			return -1;
+		listen_sock = socket(AF_INET, SOCK_STREAM, 0);
+	}
+#endif
+
+	if (listen_sock == INVALID_SOCKET)
+		return -1;
+
+	if (set_socket_blocking(listen_sock, 0) < 0) {
+		CLOSE_SOCKET(listen_sock);
+		return -1;
+	}
+
+	if (bind(listen_sock, (struct sockaddr*) &buf, sizeof(buf)) < 0) {
+		CLOSE_SOCKET(listen_sock);
+		return -1;
+	}
+
+	if (listen(listen_sock, 32) < 0) {
+		CLOSE_SOCKET(listen_sock);
+		return -1;
+	}
+
+	proxy->num_conns = 0;
+	proxy->listen_sock = listen_sock;
+	for (int i = 0; i < HTTP_MAX_CONNS_PER_PROXY; i++) {
+		proxy->conns[i].client_sock = INVALID_SOCKET;
+		proxy->conns[i].server_sock = INVALID_SOCKET;
+	}
+
+	return 0;
+}
+
+void http_proxy_free(HTTP_Proxy *proxy)
+{
+	for (int i = 0, j = 0; j < proxy->num_conns; i++) {
+
+		if (proxy->conns[i].client_sock == INVALID_SOCKET)
+			continue;
+		j++;
+
+		CLOSE_SOCKET(proxy->conns[i].client_sock);
+		CLOSE_SOCKET(proxy->conns[i].server_sock);
+		http_proxyengine_free(&proxy->conns[i].eng);
+	}
+
+	CLOSE_SOCKET(proxy->listen_sock);
+}
+
+int http_proxy_wait(HTTP_Proxy *proxy, int timeout)
+{
+	for (;;) {
+
+		int           poll_indices[HTTP_MAX_CONNS_PER_PROXY+1];
+		struct pollfd poll_array[HTTP_MAX_CONNS_PER_PROXY+1];
+		int           poll_count = 0;
+
+		if (proxy->num_conns < HTTP_MAX_CONNS_PER_PROXY) {
+			poll_indices[poll_count] = -1;
+			poll_array[poll_count].fd = proxy->listen_sock;
+			poll_array[poll_count].events = POLLIN;
+			poll_array[poll_count].revents = 0;
+			poll_count++;
+		}
+
+		for (int i=0, j=0; j<proxy->num_conns; i++) {
+
+			if (proxy->conns[i].client_sock == INVALID_SOCKET)
+				continue;
+			j++;
+
+			SOCKET fd;
+			int events = 0;
+			switch (http_proxyengine_state(&proxy->conns[i].eng)) {
+				case HTTP_PROXY_ENGINE_STATE_CLIENT_RECV_BUF: fd = proxy->conns[i].client_sock; events = POLLIN;  break;
+				case HTTP_PROXY_ENGINE_STATE_CLIENT_SEND_BUF: fd = proxy->conns[i].client_sock; events = POLLOUT; break;
+				case HTTP_PROXY_ENGINE_STATE_SERVER_RECV_BUF: fd = proxy->conns[i].server_sock; events = POLLIN;  break;
+				case HTTP_PROXY_ENGINE_STATE_SERVER_SEND_BUF: fd = proxy->conns[i].server_sock; events = POLLOUT; break;
+			}
+			ASSERT(events);
+
+			poll_indices[poll_count] = i;
+			poll_array[poll_count].fd = proxy->conns[i].client_sock;
+			poll_array[poll_count].events = events;
+			poll_array[poll_count].revents = 0;
+			poll_count++;
+		}
+
+		int num = POLL(poll_array, poll_count, timeout);
+
+		for (int i = 0; i < poll_count; i++) {
+
+			if (!poll_array[i].revents)
+				continue;
+
+			int j = poll_indices[i];
+			if (j == -1) {
+
+				SOCKET accepted_sock = accept(proxy->listen_sock, NULL, NULL);
+				if (accepted_sock == INVALID_SOCKET) {
+					ASSERT(0); // TODO
+				}
+
+				int i = 0;
+				while (proxy->conns[i].client_sock != INVALID_SOCKET)
+					i++;
+
+				HTTP_ProxyConnection *conn = &proxy->conns[i];
+				conn->client_sock = accepted_sock;
+				conn->server_sock = xxx;
+				http_proxyengine_init(&conn->eng, memfunc, NULL);
+				continue;
+			}
+
+			HTTP_ProxyConnection *conn = &proxy->conns[j];
+			HTTP_ProxyEngine *eng = &conn->eng;
+
+			switch (http_proxyengine_state(eng)) {
+
+				case HTTP_PROXY_ENGINE_STATE_CLIENT_RECV_BUF:
+				{
+					int cap;
+					char *dst = http_proxyengine_clientrecvbuf(eng, &cap);
+					if (dst) {
+						int ret = recv(conn->client_sock, dst, cap, 0);
+						if (ret == 0)
+							http_proxyengine_close(eng);
+						else if (ret < 0) {
+							if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+								http_proxyengine_close(eng);
+							ret = 0;
+						}
+						http_proxyengine_clientrecvack(eng, ret);
+					}
+				}
+				break;
+
+				case HTTP_PROXY_ENGINE_STATE_CLIENT_SEND_BUF:
+				{
+					int len;
+					char *src = http_proxyengine_clientsendbuf(eng, &len);
+					if (src) {
+						int ret = send(conn->client_sock, src, len, 0);
+						if (ret < 0) {
+							if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+								http_proxyengine_close(eng);
+							ret = 0;
+						}
+						http_proxyengine_clientsendack(eng, ret);
+					}
+				}
+				break;
+
+				case HTTP_PROXY_ENGINE_STATE_SERVER_RECV_BUF:
+				{
+					int cap;
+					char *dst = http_proxyengine_serverrecvbuf(eng, &cap);
+					if (dst) {
+						int ret = recv(conn->server_sock, dst, cap, 0);
+						if (ret == 0)
+							http_proxyengine_close(eng);
+						else if (ret < 0) {
+							if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+								http_proxyengine_close(eng);
+							ret = 0;
+						}
+						http_proxyengine_serverrecvack(eng, ret);
+					}
+				}
+				break;
+
+				case HTTP_PROXY_ENGINE_STATE_SERVER_SEND_BUF:
+				{
+					int len;
+					char *src = http_proxyengine_serversendbuf(eng, &len);
+					if (src) {
+						int ret = send(conn->server_sock, src, len, 0);
+						if (ret < 0) {
+							if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+								http_proxyengine_close(eng);
+							ret = 0;
+						}
+						http_proxyengine_serversendack(eng, ret);
+					}
+				}
+				break;
+			}
+
+			if (http_proxyengine_state(eng) == HTTP_PROXY_ENGINE_STATE_CLOSED) {
+				http_proxyengine_free(eng);
+				CLOSE_SOCKET(conn->client_sock);
+				CLOSE_SOCKET(conn->server_sock);
+				conn->client_sock = INVALID_SOCKET;
+				conn->server_sock = INVALID_SOCKET;
+			}
+		}
+	}
+
+	return 0;
+}
+
+#endif // HTTP_PROXY
 /////////////////////////////////////////////////////////////////////
 // HTTP ROUTER
 /////////////////////////////////////////////////////////////////////
