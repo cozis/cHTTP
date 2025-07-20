@@ -6,3 +6,5 @@ parse Transfer-Encoding
 Make it cross-platform
 Find a way to compile OpenSSL on windows
 handle 3xx client redirections
+add discussion on string management
+add discussion on error management

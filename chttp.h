@@ -17,20 +17,74 @@ extern "C" {
 // src/basic.h
 //////////////////////////////////////////////////////////////////////
 
-#define HTTP_STR(X) ((HTTP_String) {(X), sizeof(X)-1})
-#define HTTP_CEIL(X, Y) (((X) + (Y) - 1) / (Y))
-
+// String type used throughout cHTTP.
 typedef struct {
 	char *ptr;
 	long  len;
 } HTTP_String;
 
-int         http_streq     (HTTP_String s1, HTTP_String s2);
-int         http_streqcase (HTTP_String s1, HTTP_String s2);
-HTTP_String http_trim      (HTTP_String s);
+// Compare two strings and return true iff they have
+// the same contents.
+bool http_streq(HTTP_String s1, HTTP_String s2);
 
+// Compre two strings case-insensitively (uppercase and
+// lowercase versions of a letter are considered the same)
+// and return true iff they have the same contents.
+bool http_streqcase(HTTP_String s1, HTTP_String s2);
+
+// Remove spaces and tabs from the start and the end of
+// a string. This doesn't change the original string and
+// the new one references the contents of the original one.
+HTTP_String http_trim(HTTP_String s);
+
+// Macro to simplify converting string literals to
+// HTTP_String.
+//
+// Instead of doing this:
+//
+//   char *s = "some string";
+//
+// You do this:
+//
+//   HTTP_String s = HTTP_STR("some string")
+//
+// This is a bit cumbersome, but better than null-terminated
+// strings, having a pointer and length variable pairs whenever
+// a function operates on a string. If this wasn't a library
+// I would have done for
+//
+//   #define S(X) ...
+//
+// But I don't want to cause collisions with user code.
+#define HTTP_STR(X) ((HTTP_String) {(X), sizeof(X)-1})
+
+// Returns the number of items of a static array.
 #define HTTP_COUNT(X) (sizeof(X) / sizeof((X)[0]))
+
+// Macro used to make invariants of the code more explicit.
+//
+// Say you have some function that operates on two integers
+// and that by design their sum is always 100. This macro is
+// useful to make that explicit:
+//
+//   void func(int a, int b)
+//   {
+//     HTTP_ASSERT(a + b == 100);
+//     ...
+//   }
+//
+// Assertions are about documentation, *not* error management.
+//
+// In non-release builds (where NDEBUG is not defined) asserted
+// expressions are evaluated and if not true, the program is halted.
+// This is quite nice as they offer a way to document code in
+// a way that can be checked at runtime, unlike regular comments
+// like this one.
+#ifdef NDEBUG
+#define HTTP_ASSERT(X) ((void) 0)
+#else
 #define HTTP_ASSERT(X) {if (!(X)) { __builtin_trap(); }}
+#endif
 
 //////////////////////////////////////////////////////////////////////
 // src/parse.h
@@ -246,28 +300,95 @@ void             http_engine_undo    (HTTP_Engine *eng);
 // src/client.h
 //////////////////////////////////////////////////////////////////////
 
+// Initialize the global state of cHTTP.
+//
+// cHTTP tries to avoid global state. What this function
+// does is call the global initialization functions of
+// its dependencies (OpenSSL and Winsock)
 void http_global_init(void);
+
+// Free the global state of cHTTP.
 void http_global_free(void);
 
+// Opaque type describing an "HTTP client". Any request
+// that is started must always be associated to an HTTP
+// client object.
 typedef struct HTTP_Client HTTP_Client;
 
+// Handle for a pending request. This should be considered
+// opaque. Don't read or modify its fields!
 typedef struct {
     void *data0;
     int   data1;
     int   data2;
 } HTTP_RequestHandle;
 
-HTTP_Client*   http_client_init     (void);
-void           http_client_free     (HTTP_Client *client);
-int            http_client_request  (HTTP_Client *client, HTTP_RequestHandle *handle);
-int            http_client_wait     (HTTP_Client *client, HTTP_RequestHandle *handle);
-void           http_request_trace   (HTTP_RequestHandle handle, bool trace);
-void           http_request_line    (HTTP_RequestHandle handle, HTTP_Method method, HTTP_String url);
-void           http_request_header  (HTTP_RequestHandle handle, char *header, int len);
-void           http_request_body    (HTTP_RequestHandle handle, char *body, int len);
-void           http_request_submit  (HTTP_RequestHandle handle);
-HTTP_Response* http_request_result  (HTTP_RequestHandle handle);
-void           http_request_free    (HTTP_RequestHandle handle);
+// Initialize a client object. If something goes wrong,
+// NULL is returned.
+HTTP_Client *http_client_init(void);
+
+// Deinitialize a client object
+void http_client_free(HTTP_Client *client);
+
+// Create a request object associated to the given client.
+// On success, 0 is returned and the handle is initialized.
+// On error, -1 is returned.
+int http_client_request(HTTP_Client *client, HTTP_RequestHandle *handle);
+
+// Wait for the completion of one request associated to
+// the client. The handle of the resolved request is returned
+// through the handle output parameter. If you're not
+// interested in which request completed (like when you
+// have only one pending request), you can pass NULL.
+//
+// On error -1 is retutned, else 0 is returned and the
+// handle is initialized.
+//
+// Note that calling this function when no requests are
+// pending is considered an error. 
+int http_client_wait(HTTP_Client *client, HTTP_RequestHandle *handle);
+
+// Enable/disable I/O tracing for the specified request.
+// This must be done when the request is in the initialization
+// phase.
+void http_request_trace(HTTP_RequestHandle handle, bool trace);
+
+// Set the method and URL of the specified request object.
+// This must be the first thing you do after http_client_request
+// is called (you may http_request_trace before, but nothing
+// else!)
+void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_String url);
+
+// Append a header to the specified request. You must call
+// this after http_request_line and may do so multiple times.
+//
+// TODO: use HTTP_String instead of char*+int
+void http_request_header(HTTP_RequestHandle handle, char *header, int len);
+
+// Append some data to the request's body. You must call
+// this after either http_request_line or http_request_header.
+//
+// TODO: use HTTP_String instead of char*+int
+void http_request_body(HTTP_RequestHandle handle, char *body, int len);
+
+// Mark the initialization of the request as completed and
+// perform the request.
+void http_request_submit(HTTP_RequestHandle handle);
+
+// Retrieve the response to the specified request. If the
+// request hasn't completed or it couldn't be performed
+// due to an error, NULL is returned. If the request completed,
+// the parsed response object is returned.
+//
+// Note that responses 4xx and 5xx code responses are still
+// considered as successes from cHTTP's perspective.
+HTTP_Response *http_request_result(HTTP_RequestHandle handle);
+
+// Free resources associated to a request. This must be called
+// after the request has completed.
+//
+// TODO: allow aborting pending requests
+void http_request_free(HTTP_RequestHandle handle);
 
 //////////////////////////////////////////////////////////////////////
 // src/server.h
@@ -302,6 +423,20 @@ void         http_response_done      (HTTP_ResponseHandle res);
 // src/cert.h
 //////////////////////////////////////////////////////////////////////
 
+// This is an utility to create self-signed certificates
+// useful when testing HTTPS servers locally. This is only
+// meant to be used by people starting out with a library
+// and simplifying the zero to one phase.
+//
+// The C, O, and CN are respectively country name, organization name,
+// and common name of the certificate. For instance:
+//
+//   C="IT"
+//   O="My Organization"
+//   CN="my_website.com"
+//
+// The output is a certificate file in PEM format and a private
+// key file with the key used to sign the certificate.
 int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
     HTTP_String cert_file, HTTP_String key_file);
 

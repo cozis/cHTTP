@@ -34,6 +34,20 @@
 // src/cert.h
 //////////////////////////////////////////////////////////////////////
 
+// This is an utility to create self-signed certificates
+// useful when testing HTTPS servers locally. This is only
+// meant to be used by people starting out with a library
+// and simplifying the zero to one phase.
+//
+// The C, O, and CN are respectively country name, organization name,
+// and common name of the certificate. For instance:
+//
+//   C="IT"
+//   O="My Organization"
+//   CN="my_website.com"
+//
+// The output is a certificate file in PEM format and a private
+// key file with the key used to sign the certificate.
 int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
     HTTP_String cert_file, HTTP_String key_file);
 
@@ -168,14 +182,16 @@ int         socket_wait         (Socket **socks, int num_socks);
 // src/basic.c
 //////////////////////////////////////////////////////////////////////
 
-int http_streq(HTTP_String s1, HTTP_String s2)
+bool http_streq(HTTP_String s1, HTTP_String s2)
 {
 	if (s1.len != s2.len)
-		return 0;
-	for (int i = 0; i < s1.len; i++)
+		return false;
+
+    for (int i = 0; i < s1.len; i++)
 		if (s1.ptr[i] != s2.ptr[i])
-			return 0;
-	return 1;
+			return false;
+
+	return true;
 }
 
 static char to_lower(char c)
@@ -185,14 +201,16 @@ static char to_lower(char c)
 	return c;
 }
 
-int http_streqcase(HTTP_String s1, HTTP_String s2)
+bool http_streqcase(HTTP_String s1, HTTP_String s2)
 {
 	if (s1.len != s2.len)
-		return 0;
+		return false;
+
 	for (int i = 0; i < s1.len; i++)
 		if (to_lower(s1.ptr[i]) != to_lower(s2.ptr[i]))
-			return 0;
-	return 1;
+			return false;
+
+	return true;
 }
 
 HTTP_String http_trim(HTTP_String s)

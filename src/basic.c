@@ -2,14 +2,16 @@
 #include <stddef.h>
 #include <string.h>
 
-int http_streq(HTTP_String s1, HTTP_String s2)
+bool http_streq(HTTP_String s1, HTTP_String s2)
 {
 	if (s1.len != s2.len)
-		return 0;
-	for (int i = 0; i < s1.len; i++)
+		return false;
+
+    for (int i = 0; i < s1.len; i++)
 		if (s1.ptr[i] != s2.ptr[i])
-			return 0;
-	return 1;
+			return false;
+
+	return true;
 }
 
 static char to_lower(char c)
@@ -19,14 +21,16 @@ static char to_lower(char c)
 	return c;
 }
 
-int http_streqcase(HTTP_String s1, HTTP_String s2)
+bool http_streqcase(HTTP_String s1, HTTP_String s2)
 {
 	if (s1.len != s2.len)
-		return 0;
+		return false;
+
 	for (int i = 0; i < s1.len; i++)
 		if (to_lower(s1.ptr[i]) != to_lower(s2.ptr[i]))
-			return 0;
-	return 1;
+			return false;
+
+	return true;
 }
 
 HTTP_String http_trim(HTTP_String s)
