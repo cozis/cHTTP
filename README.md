@@ -37,6 +37,7 @@ And this is an HTTP server:
 
 int main(void)
 {
+    http_global_init();
     HTTP_Server *server = http_server_init(HTTP_STR("127.0.0.1"), 8080);
 
     for (;;) {
@@ -45,8 +46,8 @@ int main(void)
         HTTP_ResponseHandle res;
         http_server_wait(server, &res, &res);
 
-        HTTP_String path = req->url.path;
-        printf("requested path [%.*s]\n", HTTP_UNPACK(req->url.path));
+        printf("requested path [%.*s]\n",
+            HTTP_UNPACK(req->url.path));
 
         http_response_status(res, 200);
         http_response_header(res, "Content-Type: text/plain");
@@ -56,6 +57,7 @@ int main(void)
     }
 
     http_server_free(server);
+    http_global_free();
     return 0;
 }
 ```
