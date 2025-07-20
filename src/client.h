@@ -94,4 +94,14 @@ HTTP_Response *http_request_result(HTTP_RequestHandle handle);
 // TODO: allow aborting pending requests
 void http_request_free(HTTP_RequestHandle handle);
 
+// TODO: comment
+HTTP_Response *http_get(HTTP_String url,
+    HTTP_String *headers, int num_headers,
+    HTTP_RequestHandle *phandle);
+
+// TODO: comment
+HTTP_Response *http_post(HTTP_String url,
+    HTTP_String *headers, int num_headers,
+    HTTP_String body, HTTP_RequestHandle *phandle);
+
 #endif // CLIENT_INCLUDED

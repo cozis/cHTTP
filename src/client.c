@@ -371,3 +371,82 @@ void http_request_free(HTTP_RequestHandle handle)
     conn->state = CLIENT_CONNECTION_FREE;
     client->num_conns--;
 }
+
+static HTTP_Client *default_client___; // TODO: deinitialize the default client when http_global_free is called
+
+static HTTP_Client *get_default_client(void)
+{
+    if (default_client___ == NULL)
+        default_client___ = http_client_init();
+    return default_client___;
+}
+
+HTTP_Response *http_get(HTTP_String url, HTTP_String *headers, int num_headers, HTTP_RequestHandle *phandle)
+{
+    HTTP_Client *client = get_default_client();
+    if (client == NULL)
+        return NULL;
+
+    HTTP_RequestHandle handle;
+    int ret = http_client_request(client, &handle);
+    if (ret < 0)
+        return NULL;
+
+    http_request_line(handle, HTTP_METHOD_GET, url);
+
+    for (int i = 0; i < num_headers; i++)
+        http_request_header(handle, headers[i]);
+
+    http_request_submit(handle);
+
+    ret = http_client_wait(client, NULL); // TODO: it's assumed there is only one request pending
+    if (ret < 0) {
+        http_request_free(handle); // TODO: currently free only works on completed request handles
+        return NULL;
+    }
+
+    HTTP_Response *res = http_request_result(handle);
+    if (res == NULL) {
+        http_request_free(handle);
+        return NULL;
+    }
+
+    *phandle = handle;
+    return res;
+}
+
+HTTP_Response *http_post(HTTP_String url, HTTP_String *headers, int num_headers, HTTP_String body, HTTP_RequestHandle *phandle)
+{
+    HTTP_Client *client = get_default_client();
+    if (client == NULL)
+        return NULL;
+
+    HTTP_RequestHandle handle;
+    int ret = http_client_request(client, &handle);
+    if (ret < 0)
+        return NULL;
+
+    http_request_line(handle, HTTP_METHOD_GET, url);
+
+    for (int i = 0; i < num_headers; i++)
+        http_request_header(handle, headers[i]);
+
+    http_request_body(handle, body);
+
+    http_request_submit(handle);
+
+    ret = http_client_wait(client, NULL); // TODO: it's assumed there is only one request pending
+    if (ret < 0) {
+        http_request_free(handle); // TODO: currently free only works on completed request handles
+        return NULL;
+    }
+
+    HTTP_Response *res = http_request_result(handle);
+    if (res == NULL) {
+        http_request_free(handle);
+        return NULL;
+    }
+
+    *phandle = handle;
+    return res;
+}

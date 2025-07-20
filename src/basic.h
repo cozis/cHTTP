@@ -47,6 +47,9 @@ HTTP_String http_trim(HTTP_String s);
 // Returns the number of items of a static array.
 #define HTTP_COUNT(X) (sizeof(X) / sizeof((X)[0]))
 
+// TODO: comment
+#define HTTP_UNPACK(X) (X).len, (X).ptr
+
 // Macro used to make invariants of the code more explicit.
 //
 // Say you have some function that operates on two integers
