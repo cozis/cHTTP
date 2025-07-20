@@ -115,4 +115,5 @@ char*            http_engine_bodybuf (HTTP_Engine *eng, int *cap);
 void             http_engine_bodyack (HTTP_Engine *eng, int num);
 void             http_engine_done    (HTTP_Engine *eng);
 void             http_engine_undo    (HTTP_Engine *eng);
+
 #endif // HTTP_ENGINE_INCLUDED

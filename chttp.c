@@ -30,8 +30,16 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+//////////////////////////////////////////////////////////////////////
+// src/cert.h
+//////////////////////////////////////////////////////////////////////
+
 int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
     HTTP_String cert_file, HTTP_String key_file);
+
+//////////////////////////////////////////////////////////////////////
+// src/socket.h
+//////////////////////////////////////////////////////////////////////
 
 // This is a socket abstraction module for non-blocking TCP and TLS sockets.
 //
@@ -156,6 +164,10 @@ void        socket_close        (Socket *sock);
 void        socket_free         (Socket *sock);
 int         socket_wait         (Socket **socks, int num_socks);
 
+//////////////////////////////////////////////////////////////////////
+// src/basic.c
+//////////////////////////////////////////////////////////////////////
+
 int http_streq(HTTP_String s1, HTTP_String s2)
 {
 	if (s1.len != s2.len)
@@ -246,7 +258,10 @@ void print_bytes(HTTP_String prefix, HTTP_String src)
         cur++;
     }
     putc('\n', stream);
-}
+}//////////////////////////////////////////////////////////////////////
+// src/parse.c
+//////////////////////////////////////////////////////////////////////
+
 // From RFC 9112
 	//   request-target = origin-form
 	//                  / absolute-form
@@ -1276,7 +1291,10 @@ HTTP_String http_getcookie(HTTP_Request *req, HTTP_String name)
 {
 	// TODO
 	return (HTTP_String) {NULL, 0};
-}
+}//////////////////////////////////////////////////////////////////////
+// src/engine.c
+//////////////////////////////////////////////////////////////////////
+
 // This is the implementation of a byte queue useful
 // for systems that need to process engs of bytes.
 //
@@ -2260,7 +2278,10 @@ void http_engine_undo(HTTP_Engine *eng)
 		eng->state = HTTP_ENGINE_STATE_CLIENT_PREP_URL;
 	else
 		eng->state = HTTP_ENGINE_STATE_SERVER_PREP_STATUS;
-}
+}//////////////////////////////////////////////////////////////////////
+// src/socket.c
+//////////////////////////////////////////////////////////////////////
+
 void socket_global_init(void)
 {
     SSL_library_init();
@@ -3023,7 +3044,10 @@ int socket_wait(Socket **socks, int num_socks)
     }
 
     return -1;
-}
+}//////////////////////////////////////////////////////////////////////
+// src/client.c
+//////////////////////////////////////////////////////////////////////
+
 // TODO
 #define ERROR printf("error at %s:%d\n", __FILE__, __LINE__);
 
@@ -3387,7 +3411,10 @@ void http_request_free(HTTP_RequestHandle handle)
     socket_free(&conn->socket);
     conn->state = CLIENT_CONNECTION_FREE;
     client->num_conns--;
-}
+}//////////////////////////////////////////////////////////////////////
+// src/server.c
+//////////////////////////////////////////////////////////////////////
+
 #define MAX_CONNS (1<<10)
 
 typedef struct {
@@ -3825,7 +3852,10 @@ void http_response_done(HTTP_ResponseHandle res)
         http_engine_free(&conn->engine);
         server->num_conns--;
     }
-}
+}//////////////////////////////////////////////////////////////////////
+// src/router.c
+//////////////////////////////////////////////////////////////////////
+
 #ifndef _WIN32
 #endif
 

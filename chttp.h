@@ -13,6 +13,10 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+//////////////////////////////////////////////////////////////////////
+// src/basic.h
+//////////////////////////////////////////////////////////////////////
+
 #define HTTP_STR(X) ((HTTP_String) {(X), sizeof(X)-1})
 #define HTTP_CEIL(X, Y) (((X) + (Y) - 1) / (Y))
 
@@ -27,6 +31,10 @@ HTTP_String http_trim      (HTTP_String s);
 
 #define HTTP_COUNT(X) (sizeof(X) / sizeof((X)[0]))
 #define HTTP_ASSERT(X) {if (!(X)) { __builtin_trap(); }}
+
+//////////////////////////////////////////////////////////////////////
+// src/parse.h
+//////////////////////////////////////////////////////////////////////
 
 #define HTTP_MAX_HEADERS 32
 
@@ -115,6 +123,10 @@ int         http_find_header    (HTTP_Header *headers, int num_headers, HTTP_Str
 HTTP_String http_getqueryparam  (HTTP_Request *req, HTTP_String name);
 HTTP_String http_getbodyparam   (HTTP_Request *req, HTTP_String name);
 HTTP_String http_getcookie      (HTTP_Request *req, HTTP_String name);
+
+//////////////////////////////////////////////////////////////////////
+// src/engine.h
+//////////////////////////////////////////////////////////////////////
 
 typedef enum {
 	HTTP_MEMFUNC_MALLOC,
@@ -229,6 +241,11 @@ char*            http_engine_bodybuf (HTTP_Engine *eng, int *cap);
 void             http_engine_bodyack (HTTP_Engine *eng, int num);
 void             http_engine_done    (HTTP_Engine *eng);
 void             http_engine_undo    (HTTP_Engine *eng);
+
+//////////////////////////////////////////////////////////////////////
+// src/client.h
+//////////////////////////////////////////////////////////////////////
+
 void http_global_init(void);
 void http_global_free(void);
 
@@ -251,6 +268,10 @@ void           http_request_body    (HTTP_RequestHandle handle, char *body, int 
 void           http_request_submit  (HTTP_RequestHandle handle);
 HTTP_Response* http_request_result  (HTTP_RequestHandle handle);
 void           http_request_free    (HTTP_RequestHandle handle);
+
+//////////////////////////////////////////////////////////////////////
+// src/server.h
+//////////////////////////////////////////////////////////////////////
 
 typedef struct {
     void *data0;
@@ -277,8 +298,16 @@ void         http_response_bodyack   (HTTP_ResponseHandle res, int num);
 void         http_response_undo      (HTTP_ResponseHandle res);
 void         http_response_done      (HTTP_ResponseHandle res);
 
+//////////////////////////////////////////////////////////////////////
+// src/cert.h
+//////////////////////////////////////////////////////////////////////
+
 int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
     HTTP_String cert_file, HTTP_String key_file);
+
+//////////////////////////////////////////////////////////////////////
+// src/router.h
+//////////////////////////////////////////////////////////////////////
 
 typedef struct HTTP_Router HTTP_Router;
 typedef void (*HTTP_RouterFunc)(HTTP_Request*, HTTP_ResponseHandle, void*);;

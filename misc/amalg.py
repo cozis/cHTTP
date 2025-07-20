@@ -25,6 +25,11 @@ class AmalgamationBuilder:
         original_line_number = 1
         skipped_lines = 0
         first_content_line = True
+
+        self.body += "//////////////////////////////////////////////////////////////////////\n"
+        self.body += "// " + filepath + "\n"
+        self.body += "//////////////////////////////////////////////////////////////////////\n"
+        self.body += "\n"
         
         for line in lines:
             # Check if the line is an include
@@ -190,8 +195,8 @@ def main():
     source = source_builder.result()
     
     # Write results
-    print("Writing http.h...")
-    with open("http.h", 'w', encoding='utf-8') as f:
+    print("Writing chttp.h...")
+    with open("chttp.h", 'w', encoding='utf-8') as f:
         f.write('/*\n')
         f.write(' * HTTP Library - Amalgamated Header\n')
         f.write(' * Generated automatically - do not edit manually\n')
@@ -207,8 +212,8 @@ def main():
         f.write('#endif\n\n')
         f.write('#endif /* HTTP_AMALGAMATION_H */\n')
     
-    print("Writing http.c...")
-    with open("http.c", 'w', encoding='utf-8') as f:
+    print("Writing chttp.c...")
+    with open("chttp.c", 'w', encoding='utf-8') as f:
         f.write('/*\n')
         f.write(' * HTTP Library - Amalgamated Source\n')
         f.write(' * Generated automatically - do not edit manually\n')
