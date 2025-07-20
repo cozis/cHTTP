@@ -35,10 +35,7 @@ void testeq_engstate(HTTP_EngineState l, HTTP_EngineState r, HTTP_String uneval_
 {
 	if (l != r) {
 		printf("Test failed at %s:%d\n", file, line);
-		printf("  TEST_EQ(%.*s, %.*s) -> TEST_EQ(%s, %s)\n",
-			(int) uneval_l.len, uneval_l.ptr,
-			(int) uneval_r.len, uneval_r.ptr,
-			statestr(l), statestr(r));
+		printf("  TEST_EQ(%.*s, %.*s) -> TEST_EQ(%s, %s)\n", HTTP_UNPACK(uneval_l), HTTP_UNPACK(uneval_r), statestr(l), statestr(r));
 		abort();
 	}
 }
@@ -47,10 +44,7 @@ void testeq_int(int l, int r, HTTP_String uneval_l, HTTP_String uneval_r, const 
 {
 	if (l != r) {
 		printf("Test failed at %s:%d\n", file, line);
-		printf("  TEST_EQ(%.*s, %.*s) -> TEST_EQ(%d, %d)\n",
-			(int) uneval_l.len, uneval_l.ptr,
-			(int) uneval_r.len, uneval_r.ptr,
-			l, r);
+		printf("  TEST_EQ(%.*s, %.*s) -> TEST_EQ(%d, %d)\n", HTTP_UNPACK(uneval_l), HTTP_UNPACK(uneval_r), l, r);
 		abort();
 	}
 }
@@ -59,11 +53,7 @@ void testeq_str(HTTP_String l, HTTP_String r, HTTP_String uneval_l, HTTP_String 
 {
 	if (!http_streq(l, r)) {
 		printf("Test failed at %s:%d\n", file, line);
-		printf("  TEST_EQ(\"%.*s\", \"%.*s\") -> TEST_EQ(%.*s, %.*s)\n",
-			(int) uneval_l.len, uneval_l.ptr,
-			(int) uneval_r.len, uneval_r.ptr,
-			(int) l.len, l.ptr,
-			(int) r.len, r.ptr);
+		printf("  TEST_EQ(\"%.*s\", \"%.*s\") -> TEST_EQ(%.*s, %.*s)\n", HTTP_UNPACK(uneval_l), HTTP_UNPACK(uneval_r), HTTP_UNPACK(l), HTTP_UNPACK(r));
 		abort();
 	}
 }

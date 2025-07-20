@@ -48,7 +48,7 @@ int main(void)
         // sure to express the length when interacting with
         // libc:
         HTTP_String path = req->url.path;
-        printf("requested path [%.*s]\n", (int) path.len, path.ptr);
+        printf("requested path [%.*s]\n", HTTP_UNPACK(path));
 
         // To find a specific header value, you can either
         // iterate over the [req->headers] array or use
@@ -60,7 +60,7 @@ int main(void)
         } else {
             // Found
             HTTP_String value = req->headers[idx].value;
-            printf("Header has value [%.*s]\n", (int) value.len, value.ptr);
+            printf("Header has value [%.*s]\n", HTTP_UNPACK(value));
         }
 
         // To create a response, you will need to specify

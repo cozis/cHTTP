@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
         }
 
         printf("Status: %d\n", result->status);
-        printf("Body: %.*s\n", (int)result->body.len, result->body.ptr);
+        printf("Body: %.*s\n", HTTP_UNPACK(result->body));
 
         http_request_free(reqs[i-1]);
     }

@@ -173,11 +173,11 @@ int main(int argc, char **argv)
             if (url.len == 0) break;
 
             if (is_already_crawled(url)) {
-                printf("Ignoring " RED "%.*s" RST "\n", (int) url.len, url.ptr);
+                printf("Ignoring " RED "%.*s" RST "\n", HTTP_UNPACK(url));
                 continue;
             }
 
-            printf("Fetching " GRN "%.*s" RST "\n", (int) url.len, url.ptr);
+            printf("Fetching " GRN "%.*s" RST "\n", HTTP_UNPACK(url));
             add_to_crawled_list(url);
 
             HTTP_RequestHandle req;
