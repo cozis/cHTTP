@@ -1,26 +1,21 @@
-.PHONY: all report
 
-#OSTAG = LINUX
-OSTAG = WINDOWS
+CC = gcc
+CFLAGS = -I. -Wall -Wextra -O0 -g3
+LFLAGS = -lssl -lcrypto
 
-EXT_WINDOWS = .exe
-EXT_LINUX   = .out
+CFILES = $(shell find src -name "*.c")
+HFILES = $(shell find src -name "*.h")
 
-LFLAGS_WINDOWS = -lws2_32
-LFLAGS_LINUX   = -lssl -lcrypto -ggdb
+all: client_example server_example http.c http.h
 
-LFLAGS = ${LFLAGS_${OSTAG}}
-EXT = ${EXT_${OSTAG}}
+http.c http.h: $(HFILES) $(CFILES)
+	python misc/amalg.py
 
-all:
-	gcc -o simple_server$(EXT) examples/simple_server.c tinyhttp.c -Wall -Wextra -DHTTP_CLIENT=0 -DHTTP_ROUTER=0 $(LFLAGS)
-	gcc -o blocking_server_with_engine$(EXT) examples/blocking_server_with_engine.c tinyhttp.c -Wall -Wextra -DHTTP_CLIENT=0 -DHTTP_ROUTER=0 $(LFLAGS) -g3
-	gcc -o iocp_server_with_engine.exe examples/iocp_server_with_engine.c tinyhttp.c -Wall -Wextra -lws2_32
-	gcc -o test$(EXT) tests/test.c tests/test_branch_coverage_parse.c tests/test_branch_coverage_engine.c tests/test_fuzz_engine.c tinyhttp.c -fprofile-arcs -ftest-coverage $(LFLAGS)
-
-report:
-	lcov --capture --directory . --output-file coverage.info --rc lcov_branch_coverage=1
-	genhtml coverage.info --output-directory coverage_report --rc lcov_branch_coverage=1 --rc genhtml_branch_coverage=1
+client_example: examples/client_example.c http.c http.h
+	$(CC) examples/client_example.c http.c $(CFLAGS) -o $@ $(LFLAGS)
+	
+server_example: examples/server_example.c http.c http.h
+	$(CC) examples/server_example.c http.c $(CFLAGS) -o $@ $(LFLAGS)
 
 clean:
-	rm *.gcda *.gcno coverage.info test$(EXT_WINDOWS) test$(EXT_LINUX)
+	rm -f client_example server_example

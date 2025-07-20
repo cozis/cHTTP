@@ -1,8 +1,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
-
-#include "../tinyhttp.h"
+#include <http.h>
 
 #define MAX_CLIENTS (1<<10)
 
