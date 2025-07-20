@@ -311,7 +311,7 @@ void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_Strin
     http_engine_url(&conn->engine, method, url, 1);
 }
 
-void http_request_header(HTTP_RequestHandle handle, char *header, int len)
+void http_request_header(HTTP_RequestHandle handle, HTTP_String str)
 {
     ClientConnection *conn = handle2clientconn(handle);
     if (conn == NULL)
@@ -319,10 +319,10 @@ void http_request_header(HTTP_RequestHandle handle, char *header, int len)
     if (conn->state != CLIENT_CONNECTION_INIT)
         return;
 
-    http_engine_header(&conn->engine, header, len);
+    http_engine_header(&conn->engine, str);
 }
 
-void http_request_body(HTTP_RequestHandle handle, char *body, int len)
+void http_request_body(HTTP_RequestHandle handle, HTTP_String str)
 {
     ClientConnection *conn = handle2clientconn(handle);
     if (conn == NULL)
@@ -330,7 +330,7 @@ void http_request_body(HTTP_RequestHandle handle, char *body, int len)
     if (conn->state != CLIENT_CONNECTION_INIT)
         return;
 
-    http_engine_body(&conn->engine, body, len);
+    http_engine_body(&conn->engine, str);
 }
 
 void http_request_submit(HTTP_RequestHandle handle)

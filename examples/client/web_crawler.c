@@ -2,9 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <http.h>
-
-#define COUNT(X) (sizeof(X) / sizeof((X)[0]))
+#include <chttp.h>
 
 #define BLK "\e[0;30m"
 #define RED "\e[0;31m"
@@ -149,7 +147,7 @@ int main(int argc, char **argv)
         return -1;
     }
     http_request_line(req, HTTP_METHOD_GET, start_url);
-    http_request_header(req, "User-Agent: Simple crawler", -1);
+    http_request_header(req, HTTP_STR("User-Agent: Simple crawler"));
     http_request_submit(req);
 
     for (;;) {
@@ -188,7 +186,7 @@ int main(int argc, char **argv)
                 continue;
 
             http_request_line(req, HTTP_METHOD_GET, url);
-            http_request_header(req, "User-Agent: Simple crawler", -1);
+            http_request_header(req, HTTP_STR("User-Agent: Simple crawler"));
             http_request_submit(req);
         }
     }

@@ -65,15 +65,11 @@ void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_Strin
 
 // Append a header to the specified request. You must call
 // this after http_request_line and may do so multiple times.
-//
-// TODO: use HTTP_String instead of char*+int
-void http_request_header(HTTP_RequestHandle handle, char *header, int len);
+void http_request_header(HTTP_RequestHandle handle, HTTP_String str);
 
 // Append some data to the request's body. You must call
 // this after either http_request_line or http_request_header.
-//
-// TODO: use HTTP_String instead of char*+int
-void http_request_body(HTTP_RequestHandle handle, char *body, int len);
+void http_request_body(HTTP_RequestHandle handle, HTTP_String str);
 
 // Mark the initialization of the request as completed and
 // perform the request.

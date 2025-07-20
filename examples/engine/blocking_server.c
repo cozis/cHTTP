@@ -18,7 +18,7 @@
 #define CLOSE_SOCKET close
 #endif
 
-#include <http.h>
+#include <chttp.h>
 
 // This example showcases how to use the engine interface
 // to build a blocking HTTP server that works on Windows

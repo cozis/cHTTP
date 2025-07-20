@@ -133,7 +133,6 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
         }
     }
 
-    server->num_websites = 0;
     server->num_conns = 0;
     server->ready_head = 0;
     server->ready_count = 0;
@@ -368,16 +367,13 @@ void http_response_header(HTTP_ResponseHandle res, const char *fmt, ...)
 	va_end(args);
 }
 
-void http_response_body(HTTP_ResponseHandle res, char *src, int len)
+void http_response_body(HTTP_ResponseHandle res, HTTP_String str)
 {
 	Connection *conn = handle2conn(res);
 	if (conn == NULL)
 		return;
 
-	if (len < 0)
-		len = strlen(src);
-
-	http_engine_body(&conn->engine, src, len);
+	http_engine_body(&conn->engine, str);
 }
 
 void http_response_bodycap(HTTP_ResponseHandle res, int mincap)

@@ -198,7 +198,7 @@ def main():
     print("Writing chttp.h...")
     with open("chttp.h", 'w', encoding='utf-8') as f:
         f.write('/*\n')
-        f.write(' * HTTP Library - Amalgamated Header\n')
+        f.write(' * cHTTP Library - Amalgamated Header\n')
         f.write(' * Generated automatically - do not edit manually\n')
         f.write(' */\n\n')
         f.write('#ifndef HTTP_AMALGAMATION_H\n')
@@ -215,10 +215,10 @@ def main():
     print("Writing chttp.c...")
     with open("chttp.c", 'w', encoding='utf-8') as f:
         f.write('/*\n')
-        f.write(' * HTTP Library - Amalgamated Source\n')
+        f.write(' * cHTTP Library - Amalgamated Source\n')
         f.write(' * Generated automatically - do not edit manually\n')
         f.write(' */\n\n')
-        f.write('#include "http.h"\n\n')
+        f.write('#include "chttp.h"\n\n')
         f.write(source)
     
     print("Amalgamation complete!")

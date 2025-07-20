@@ -1,5 +1,6 @@
+#include <stdio.h>
 #include <stdbool.h>
-#include <http.h>
+#include <chttp.h>
 
 // This example shows how to set up a basic HTTP server
 
@@ -30,7 +31,7 @@ int main(void)
         HTTP_ResponseHandle res;
 
         // Block until a request is available
-        int ret = http_server_wait(server, &res, &res);
+        int ret = http_server_wait(server, &req, &res);
 
         // The wait functions returns 0 on success and -1
         // on error. By "error" I mean an unrecoverable

@@ -33,7 +33,7 @@ int main(void)
 
 And this is an HTTP server:
 ```c
-#include <http.h>
+#include <chttp.h>
 
 int main(void)
 {

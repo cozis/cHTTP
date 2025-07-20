@@ -108,8 +108,8 @@ HTTP_Response*   http_engine_getres  (HTTP_Engine *eng);
 
 void             http_engine_url     (HTTP_Engine *eng, HTTP_Method method, HTTP_String url, int minor);
 void             http_engine_status  (HTTP_Engine *eng, int status);
-void             http_engine_header  (HTTP_Engine *eng, const char *src, int len);
-void             http_engine_body    (HTTP_Engine *eng, void *src, int len); 
+void             http_engine_header  (HTTP_Engine *eng, HTTP_String str);
+void             http_engine_body    (HTTP_Engine *eng, HTTP_String str); 
 void             http_engine_bodycap (HTTP_Engine *eng, int mincap);
 char*            http_engine_bodybuf (HTTP_Engine *eng, int *cap);
 void             http_engine_bodyack (HTTP_Engine *eng, int num);

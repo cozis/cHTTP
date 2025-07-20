@@ -1,5 +1,5 @@
 /*
- * HTTP Library - Amalgamated Header
+ * cHTTP Library - Amalgamated Header
  * Generated automatically - do not edit manually
  */
 
@@ -60,6 +60,9 @@ HTTP_String http_trim(HTTP_String s);
 
 // Returns the number of items of a static array.
 #define HTTP_COUNT(X) (sizeof(X) / sizeof((X)[0]))
+
+// TODO: comment
+#define HTTP_UNPACK(X) (X).len, (X).ptr
 
 // Macro used to make invariants of the code more explicit.
 //
@@ -288,8 +291,8 @@ HTTP_Response*   http_engine_getres  (HTTP_Engine *eng);
 
 void             http_engine_url     (HTTP_Engine *eng, HTTP_Method method, HTTP_String url, int minor);
 void             http_engine_status  (HTTP_Engine *eng, int status);
-void             http_engine_header  (HTTP_Engine *eng, const char *src, int len);
-void             http_engine_body    (HTTP_Engine *eng, void *src, int len); 
+void             http_engine_header  (HTTP_Engine *eng, HTTP_String str);
+void             http_engine_body    (HTTP_Engine *eng, HTTP_String str); 
 void             http_engine_bodycap (HTTP_Engine *eng, int mincap);
 char*            http_engine_bodybuf (HTTP_Engine *eng, int *cap);
 void             http_engine_bodyack (HTTP_Engine *eng, int num);
@@ -361,15 +364,11 @@ void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_Strin
 
 // Append a header to the specified request. You must call
 // this after http_request_line and may do so multiple times.
-//
-// TODO: use HTTP_String instead of char*+int
-void http_request_header(HTTP_RequestHandle handle, char *header, int len);
+void http_request_header(HTTP_RequestHandle handle, HTTP_String str);
 
 // Append some data to the request's body. You must call
 // this after either http_request_line or http_request_header.
-//
-// TODO: use HTTP_String instead of char*+int
-void http_request_body(HTTP_RequestHandle handle, char *body, int len);
+void http_request_body(HTTP_RequestHandle handle, HTTP_String str);
 
 // Mark the initialization of the request as completed and
 // perform the request.
@@ -389,6 +388,16 @@ HTTP_Response *http_request_result(HTTP_RequestHandle handle);
 //
 // TODO: allow aborting pending requests
 void http_request_free(HTTP_RequestHandle handle);
+
+// TODO: comment
+HTTP_Response *http_get(HTTP_String url,
+    HTTP_String *headers, int num_headers,
+    HTTP_RequestHandle *phandle);
+
+// TODO: comment
+HTTP_Response *http_post(HTTP_String url,
+    HTTP_String *headers, int num_headers,
+    HTTP_String body, HTTP_RequestHandle *phandle);
 
 //////////////////////////////////////////////////////////////////////
 // src/server.h
@@ -412,7 +421,7 @@ int          http_server_wait        (HTTP_Server *server, HTTP_Request **req, H
 int          http_server_add_website (HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
 void         http_response_status    (HTTP_ResponseHandle res, int status);
 void         http_response_header    (HTTP_ResponseHandle res, const char *fmt, ...);
-void         http_response_body      (HTTP_ResponseHandle res, char *src, int len);
+void         http_response_body      (HTTP_ResponseHandle res, HTTP_String str);
 void         http_response_bodycap   (HTTP_ResponseHandle res, int mincap);
 char*        http_response_bodybuf   (HTTP_ResponseHandle res, int *cap);
 void         http_response_bodyack   (HTTP_ResponseHandle res, int num);

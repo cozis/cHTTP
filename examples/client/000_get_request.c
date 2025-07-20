@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <chttp.h>
 
 // This is an example of how to use cHTTP to perform
@@ -46,7 +47,7 @@ int main(void)
         );
     }
 
-    printf("body: %.*s\n", res->body.len, res->body.ptr);
+    printf("body: %.*s\n", HTTP_UNPACK(res->body));
 
     // When we are done reading from the response object
     // we must free the request's resources.

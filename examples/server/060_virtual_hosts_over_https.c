@@ -1,4 +1,4 @@
-#include <http.h>
+#include <chttp.h>
 
 // This is an example of how to serve different websites
 // over a single HTTPS server instance.
@@ -29,7 +29,7 @@ int main(void)
     // First, set up an HTTPS server instance with one
     // of the certificate. This will act as default certificate
     // when ecrypted connections don't target a specific domain.
-    HTTP_Server *server = http_server_init(
+    HTTP_Server *server = http_server_init_ex(
         HTTP_STR("127.0.0.1"), 8080, 8443,
         HTTP_STR("websiteA_cert.pem"),
         HTTP_STR("websiteA_key.pem")

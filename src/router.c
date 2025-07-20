@@ -358,7 +358,7 @@ static int serve_dynamic_route(Route *route, HTTP_Request *req, HTTP_ResponseHan
 	int path_len = sanitize_path(req->url.path, path_mem, (int) sizeof(path_mem));
 	if (path_len < 0) {
 		http_response_status(res, 400);
-		http_response_body(res, "Invalid path", -1);
+		http_response_body(res, HTTP_STR("Invalid path"));
 		http_response_done(res);
 		return 1;
 	}
@@ -403,7 +403,7 @@ int http_serve(char *addr, int port, HTTP_Router *router)
 {
 	int ret;
 
-	HTTP_Server *server = http_server_init((HTTP_String) { addr, strlen(addr) }, port, 0, (HTTP_String) {}, (HTTP_String) {});
+	HTTP_Server *server = http_server_init_ex((HTTP_String) { addr, strlen(addr) }, port, 0, (HTTP_String) {}, (HTTP_String) {});
 	if (server == NULL) {
 		http_router_free(router);
 		return -1;

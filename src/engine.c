@@ -774,16 +774,14 @@ void http_engine_status(HTTP_Engine *eng, int status)
 	eng->state = HTTP_ENGINE_STATE_SERVER_PREP_HEADER;
 }
 
-void http_engine_header(HTTP_Engine *eng, const char *src, int len)
+void http_engine_header(HTTP_Engine *eng, HTTP_String str)
 {
 	if ((eng->state & HTTP_ENGINE_STATEBIT_PREP_HEADER) == 0)
 		return;
 
-	if (len < 0) len = strlen(src);
-
 	// TODO: Check that the header is valid
 
-	byte_queue_write(&eng->output, src, len);
+	byte_queue_write(&eng->output, str.ptr, str.len);
 	byte_queue_write(&eng->output, "\r\n", 2);
 }
 
@@ -848,16 +846,14 @@ static void complete_message_body(HTTP_Engine *eng)
 	byte_queue_patch(&eng->output, eng->content_length_value_offset, tmp + i, 10 - i);
 }
 
-void http_engine_body(HTTP_Engine *eng, void *src, int len)
+void http_engine_body(HTTP_Engine *eng, HTTP_String str)
 {
-	if (len < 0) len = strlen(src);
-
-	http_engine_bodycap(eng, len);
+	http_engine_bodycap(eng, str.len);
 	int cap;
 	char *buf = http_engine_bodybuf(eng, &cap);
 	if (buf) {
-		memcpy(buf, src, len);
-		http_engine_bodyack(eng, len);
+		memcpy(buf, str.ptr, str.len);
+		http_engine_bodyack(eng, str.len);
 	}
 }
 

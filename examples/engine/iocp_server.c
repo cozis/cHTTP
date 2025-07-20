@@ -1,7 +1,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
-#include <http.h>
+#include <chttp.h>
 
 #define MAX_CLIENTS (1<<10)
 

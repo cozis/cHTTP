@@ -1,4 +1,5 @@
-#include <http.h>
+#include <stddef.h>
+#include <chttp.h>
 
 // This example shows how undo a response that is being built
 // when an error occurs.
@@ -14,7 +15,7 @@ int main(void)
         HTTP_Request *req;
         HTTP_ResponseHandle res;
 
-        int ret = http_server_wait(server, &res, &res);
+        int ret = http_server_wait(server, &req, &res);
         if (ret < 0) return -1;
 
         // Say we are building a request..

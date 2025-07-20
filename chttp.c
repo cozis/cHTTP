@@ -1,9 +1,9 @@
 /*
- * HTTP Library - Amalgamated Source
+ * cHTTP Library - Amalgamated Source
  * Generated automatically - do not edit manually
  */
 
-#include "http.h"
+#include "chttp.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -2075,16 +2075,14 @@ void http_engine_status(HTTP_Engine *eng, int status)
 	eng->state = HTTP_ENGINE_STATE_SERVER_PREP_HEADER;
 }
 
-void http_engine_header(HTTP_Engine *eng, const char *src, int len)
+void http_engine_header(HTTP_Engine *eng, HTTP_String str)
 {
 	if ((eng->state & HTTP_ENGINE_STATEBIT_PREP_HEADER) == 0)
 		return;
 
-	if (len < 0) len = strlen(src);
-
 	// TODO: Check that the header is valid
 
-	byte_queue_write(&eng->output, src, len);
+	byte_queue_write(&eng->output, str.ptr, str.len);
 	byte_queue_write(&eng->output, "\r\n", 2);
 }
 
@@ -2149,16 +2147,14 @@ static void complete_message_body(HTTP_Engine *eng)
 	byte_queue_patch(&eng->output, eng->content_length_value_offset, tmp + i, 10 - i);
 }
 
-void http_engine_body(HTTP_Engine *eng, void *src, int len)
+void http_engine_body(HTTP_Engine *eng, HTTP_String str)
 {
-	if (len < 0) len = strlen(src);
-
-	http_engine_bodycap(eng, len);
+	http_engine_bodycap(eng, str.len);
 	int cap;
 	char *buf = http_engine_bodybuf(eng, &cap);
 	if (buf) {
-		memcpy(buf, src, len);
-		http_engine_bodyack(eng, len);
+		memcpy(buf, str.ptr, str.len);
+		http_engine_bodyack(eng, str.len);
 	}
 }
 
@@ -3013,15 +3009,13 @@ void socket_free(Socket *sock) {
     }
 }
 
-#define COUNT(X) (sizeof(X) / sizeof((X)[0]))
-
-int socket_wait(Socket **socks, int num_socks)
+int socket_wait(Socket **socks, int num_socks) // TODO: is this used?
 {
     if (num_socks <= 0)
         return -1;
 
     struct pollfd polled[100]; // TODO: make this value configurable
-    if (num_socks > (int) COUNT(polled))
+    if (num_socks > (int) HTTP_COUNT(polled))
         return -1;
 
     for (;;) {
@@ -3370,7 +3364,7 @@ void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_Strin
     http_engine_url(&conn->engine, method, url, 1);
 }
 
-void http_request_header(HTTP_RequestHandle handle, char *header, int len)
+void http_request_header(HTTP_RequestHandle handle, HTTP_String str)
 {
     ClientConnection *conn = handle2clientconn(handle);
     if (conn == NULL)
@@ -3378,10 +3372,10 @@ void http_request_header(HTTP_RequestHandle handle, char *header, int len)
     if (conn->state != CLIENT_CONNECTION_INIT)
         return;
 
-    http_engine_header(&conn->engine, header, len);
+    http_engine_header(&conn->engine, str);
 }
 
-void http_request_body(HTTP_RequestHandle handle, char *body, int len)
+void http_request_body(HTTP_RequestHandle handle, HTTP_String str)
 {
     ClientConnection *conn = handle2clientconn(handle);
     if (conn == NULL)
@@ -3389,7 +3383,7 @@ void http_request_body(HTTP_RequestHandle handle, char *body, int len)
     if (conn->state != CLIENT_CONNECTION_INIT)
         return;
 
-    http_engine_body(&conn->engine, body, len);
+    http_engine_body(&conn->engine, str);
 }
 
 void http_request_submit(HTTP_RequestHandle handle)
@@ -3429,6 +3423,85 @@ void http_request_free(HTTP_RequestHandle handle)
     socket_free(&conn->socket);
     conn->state = CLIENT_CONNECTION_FREE;
     client->num_conns--;
+}
+
+static HTTP_Client *default_client___; // TODO: deinitialize the default client when http_global_free is called
+
+static HTTP_Client *get_default_client(void)
+{
+    if (default_client___ == NULL)
+        default_client___ = http_client_init();
+    return default_client___;
+}
+
+HTTP_Response *http_get(HTTP_String url, HTTP_String *headers, int num_headers, HTTP_RequestHandle *phandle)
+{
+    HTTP_Client *client = get_default_client();
+    if (client == NULL)
+        return NULL;
+
+    HTTP_RequestHandle handle;
+    int ret = http_client_request(client, &handle);
+    if (ret < 0)
+        return NULL;
+
+    http_request_line(handle, HTTP_METHOD_GET, url);
+
+    for (int i = 0; i < num_headers; i++)
+        http_request_header(handle, headers[i]);
+
+    http_request_submit(handle);
+
+    ret = http_client_wait(client, NULL); // TODO: it's assumed there is only one request pending
+    if (ret < 0) {
+        http_request_free(handle); // TODO: currently free only works on completed request handles
+        return NULL;
+    }
+
+    HTTP_Response *res = http_request_result(handle);
+    if (res == NULL) {
+        http_request_free(handle);
+        return NULL;
+    }
+
+    *phandle = handle;
+    return res;
+}
+
+HTTP_Response *http_post(HTTP_String url, HTTP_String *headers, int num_headers, HTTP_String body, HTTP_RequestHandle *phandle)
+{
+    HTTP_Client *client = get_default_client();
+    if (client == NULL)
+        return NULL;
+
+    HTTP_RequestHandle handle;
+    int ret = http_client_request(client, &handle);
+    if (ret < 0)
+        return NULL;
+
+    http_request_line(handle, HTTP_METHOD_GET, url);
+
+    for (int i = 0; i < num_headers; i++)
+        http_request_header(handle, headers[i]);
+
+    http_request_body(handle, body);
+
+    http_request_submit(handle);
+
+    ret = http_client_wait(client, NULL); // TODO: it's assumed there is only one request pending
+    if (ret < 0) {
+        http_request_free(handle); // TODO: currently free only works on completed request handles
+        return NULL;
+    }
+
+    HTTP_Response *res = http_request_result(handle);
+    if (res == NULL) {
+        http_request_free(handle);
+        return NULL;
+    }
+
+    *phandle = handle;
+    return res;
 }//////////////////////////////////////////////////////////////////////
 // src/server.c
 //////////////////////////////////////////////////////////////////////
@@ -3559,7 +3632,6 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
         }
     }
 
-    server->num_websites = 0;
     server->num_conns = 0;
     server->ready_head = 0;
     server->ready_count = 0;
@@ -3794,16 +3866,13 @@ void http_response_header(HTTP_ResponseHandle res, const char *fmt, ...)
 	va_end(args);
 }
 
-void http_response_body(HTTP_ResponseHandle res, char *src, int len)
+void http_response_body(HTTP_ResponseHandle res, HTTP_String str)
 {
 	Connection *conn = handle2conn(res);
 	if (conn == NULL)
 		return;
 
-	if (len < 0)
-		len = strlen(src);
-
-	http_engine_body(&conn->engine, src, len);
+	http_engine_body(&conn->engine, str);
 }
 
 void http_response_bodycap(HTTP_ResponseHandle res, int mincap)
@@ -4225,7 +4294,7 @@ static int serve_dynamic_route(Route *route, HTTP_Request *req, HTTP_ResponseHan
 	int path_len = sanitize_path(req->url.path, path_mem, (int) sizeof(path_mem));
 	if (path_len < 0) {
 		http_response_status(res, 400);
-		http_response_body(res, "Invalid path", -1);
+		http_response_body(res, HTTP_STR("Invalid path"));
 		http_response_done(res);
 		return 1;
 	}
@@ -4270,7 +4339,7 @@ int http_serve(char *addr, int port, HTTP_Router *router)
 {
 	int ret;
 
-	HTTP_Server *server = http_server_init((HTTP_String) { addr, strlen(addr) }, port, 0, (HTTP_String) {}, (HTTP_String) {});
+	HTTP_Server *server = http_server_init_ex((HTTP_String) { addr, strlen(addr) }, port, 0, (HTTP_String) {}, (HTTP_String) {});
 	if (server == NULL) {
 		http_router_free(router);
 		return -1;
