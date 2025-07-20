@@ -1,16 +1,16 @@
+#include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdarg.h>
 #include <assert.h> // TODO: remove some of these headers
-#include <stdio.h>
 #include <stddef.h>
 #include <limits.h>
 #include <stdint.h>
 #include <string.h>
+
 #include "basic.h"
 #include "engine.h"
-#include "byte_queue.h"
 
 // This is the implementation of a byte queue useful
 // for systems that need to process engs of bytes.

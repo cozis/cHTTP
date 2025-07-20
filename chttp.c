@@ -9,15 +9,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <netdb.h>
-#include <openssl/bn.h>
-#include <openssl/conf.h>
-#include <openssl/err.h>
-#include <openssl/evp.h>
-#include <openssl/pem.h>
-#include <openssl/rsa.h>
-#include <openssl/ssl.h>
-#include <openssl/x509v3.h>
 #include <poll.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -27,12 +18,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 //////////////////////////////////////////////////////////////////////
 // src/cert.h
 //////////////////////////////////////////////////////////////////////
+
+#ifndef CERT_INCLUDED
+#define CERT_INCLUDED
+
+#include "basic.h"
 
 // This is an utility to create self-signed certificates
 // useful when testing HTTPS servers locally. This is only
@@ -51,10 +46,12 @@
 int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
     HTTP_String cert_file, HTTP_String key_file);
 
-//////////////////////////////////////////////////////////////////////
+#endif // CERT_INCLUDED//////////////////////////////////////////////////////////////////////
 // src/socket.h
 //////////////////////////////////////////////////////////////////////
 
+#ifndef SOCKET_INCLUDED
+#define SOCKET_INCLUDED
 // This is a socket abstraction module for non-blocking TCP and TLS sockets.
 //
 // Sockets may be in a number of states based on if they are plain TCP or TLS
@@ -108,7 +105,13 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 // which means the user needs to call socket_free to free the socket
 // as it's not unusable.
 
+#ifdef HTTPS_ENABLED
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/x509v3.h>
+#endif
 
+#include "parse.h"
 
 typedef struct {
     int is_ipv6;
@@ -139,8 +142,10 @@ typedef struct {
     SocketState state;
     SocketWantEvent event;
     int fd;
+#if HTTPS_ENABLED
     SSL *ssl;
     SSL_CTX *ssl_ctx;
+#endif
     AddrInfo *addr_list;
     int addr_count;
     int addr_cursor;
@@ -148,16 +153,20 @@ typedef struct {
     uint16_t port;
 } Socket;
 
+#ifdef HTTPS_ENABLED
 typedef struct {
     char name[128];
     SSL_CTX *ssl_ctx;
 } Domain;
+#endif
 
 typedef struct {
+#ifdef HTTPS_ENABLED
     SSL_CTX *ssl_ctx;
     int num_domains;
     int max_domains;
     Domain *domains;
+#endif
 } SocketGroup;
 
 void        socket_global_init  (void);
@@ -178,7 +187,7 @@ void        socket_close        (Socket *sock);
 void        socket_free         (Socket *sock);
 int         socket_wait         (Socket **socks, int num_socks);
 
-//////////////////////////////////////////////////////////////////////
+#endif // SOCKET_INCLUDED//////////////////////////////////////////////////////////////////////
 // src/basic.c
 //////////////////////////////////////////////////////////////////////
 
@@ -2296,21 +2305,40 @@ void http_engine_undo(HTTP_Engine *eng)
 // src/socket.c
 //////////////////////////////////////////////////////////////////////
 
+#ifdef HTTPS_ENABLED
+#include <openssl/pem.h>
+#include <openssl/conf.h>
+#include <openssl/x509v3.h>
+#include <openssl/rsa.h>
+#include <openssl/evp.h>
+#include <openssl/bn.h>
+#endif
+#ifdef _WIN32
+#include <winsock2.h>
+#endif
+#ifdef __linux__
+#include <netdb.h>
+#endif
 void socket_global_init(void)
 {
+#ifdef HTTPS_ENABLED
     SSL_library_init();
     SSL_load_error_strings();
     OpenSSL_add_all_algorithms();
+#endif
 }
 
 void socket_global_free(void)
 {
+#ifdef HTTPS_ENABLED
     EVP_cleanup();
     ERR_free_strings();
+#endif
 }
 
 int socket_group_init(SocketGroup *group)
 {
+#ifdef HTTPS_ENABLED
     SSL_CTX *ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (!ssl_ctx) {
         fprintf(stderr, "Unable to create SSL context\n");
@@ -2336,9 +2364,13 @@ int socket_group_init(SocketGroup *group)
     group->domains = NULL;
     group->num_domains = 0;
     group->max_domains = 0;
+#else
+    (void) group;
+#endif
     return 0;
 }
 
+#ifdef HTTPS_ENABLED
 static int servername_callback(SSL *ssl, int *ad, void *arg)
 {
     SocketGroup *group = arg;
@@ -2357,9 +2389,11 @@ static int servername_callback(SSL *ssl, int *ad, void *arg)
 
     return SSL_TLSEXT_ERR_NOACK;
 }
+#endif
 
 int socket_group_init_server(SocketGroup *group, HTTP_String cert_file, HTTP_String key_file)
 {
+#ifdef HTTPS_ENABLED
     SSL_CTX *ssl_ctx = SSL_CTX_new(TLS_server_method());
     if (!ssl_ctx) {
         fprintf(stderr, "Unable to create server SSL context\n");
@@ -2420,16 +2454,27 @@ int socket_group_init_server(SocketGroup *group, HTTP_String cert_file, HTTP_Str
     group->domains = NULL;
     group->num_domains = 0;
     group->max_domains = 0;
+#else
+    (void) group;
+    if (cert_file.len > 0 || key_file.len > 0)
+        return -1;
+#endif
+
     return 0;
 }
 
 void socket_group_free(SocketGroup *group)
 {
+#ifdef HTTPS_ENABLED
     SSL_CTX_free(group->ssl_ctx);
+#else
+    (void) group;
+#endif
 }
 
 int socket_group_add_domain(SocketGroup *group, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
+#ifdef HTTPS_ENABLED
     if (group->num_domains == group->max_domains) {
 
         int new_max_domains = 2 * group->max_domains;
@@ -2513,6 +2558,13 @@ int socket_group_add_domain(SocketGroup *group, HTTP_String domain, HTTP_String 
     domain_info->ssl_ctx = ssl_ctx;
     group->num_domains++;
     return 0;
+#else
+    (void) group;
+    (void) domain;
+    (void) cert_file;
+    (void) key_file;
+    return -1;
+#endif
 }
 
 SocketState socket_state(Socket *sock)
@@ -2522,12 +2574,20 @@ SocketState socket_state(Socket *sock)
 
 void socket_accept(Socket *sock, SocketGroup *group, int fd)
 {
+#ifdef HTTPS_ENABLED
+    sock->ssl = NULL;
+    sock->ssl_ctx = group ? group->ssl_ctx : NULL;
+#else
+    if (group) {
+        sock->state = SOCKET_STATE_DIED;
+        return;
+    }
+#endif
+
     // Initialize socket for server-side TLS handshake
     sock->state = SOCKET_STATE_ACCEPTED;  // TCP connection already established
     sock->event = SOCKET_WANT_NONE;
     sock->fd = fd;
-    sock->ssl = NULL;
-    sock->ssl_ctx = group ? group->ssl_ctx : NULL;
     sock->addr_list = NULL;
     sock->addr_count = 0;
     sock->addr_cursor = 0;
@@ -2535,7 +2595,7 @@ void socket_accept(Socket *sock, SocketGroup *group, int fd)
     sock->port = 0;
     
     // Set non-blocking mode for the accepted socket
-    int flags = fcntl(fd, F_GETFL, 0);
+    int flags = fcntl(fd, F_GETFL, 0); // TODO: fail on error
     if (flags >= 0) {
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
@@ -2544,12 +2604,20 @@ void socket_accept(Socket *sock, SocketGroup *group, int fd)
     socket_update(sock);
 }
 
-void socket_connect(Socket *sock, SocketGroup *group, HTTP_String host, uint16_t port) {
+void socket_connect(Socket *sock, SocketGroup *group, HTTP_String host, uint16_t port)
+{
+#ifdef HTTPS_ENABLED
+    sock->ssl = NULL;
+    sock->ssl_ctx = group ? group->ssl_ctx : NULL;
+#else
+    if (group) {
+        sock->state = SOCKET_STATE_DIED;
+        return;
+    }
+#endif
     sock->state = SOCKET_STATE_PENDING;
     sock->event = SOCKET_WANT_NONE;
     sock->fd = -1;
-    sock->ssl = NULL;
-    sock->ssl_ctx = group ? group->ssl_ctx : NULL;
     sock->addr_list = NULL;
     sock->addr_count = 0;
     sock->addr_cursor = 0;
@@ -2599,12 +2667,20 @@ void socket_connect(Socket *sock, SocketGroup *group, HTTP_String host, uint16_t
     socket_update(sock);
 }
 
-void socket_connect_ipv4(Socket *sock, SocketGroup *group, HTTP_IPv4 addr, uint16_t port) {
+void socket_connect_ipv4(Socket *sock, SocketGroup *group, HTTP_IPv4 addr, uint16_t port)
+{
+#ifdef HTTPS_ENABLED
+    sock->ssl = NULL;
+    sock->ssl_ctx = group ? group->ssl_ctx : NULL;
+#else
+    if (group) {
+        sock->state = SOCKET_STATE_DIED;
+        return;
+    }
+#endif
     sock->state = SOCKET_STATE_PENDING;
     sock->event = SOCKET_WANT_NONE;
     sock->fd = -1;
-    sock->ssl = NULL;
-    sock->ssl_ctx = group ? group->ssl_ctx : NULL;
     sock->addr_list = NULL;
     sock->addr_count = 0;
     sock->addr_cursor = 0;
@@ -2620,12 +2696,20 @@ void socket_connect_ipv4(Socket *sock, SocketGroup *group, HTTP_IPv4 addr, uint1
     socket_update(sock);
 }
 
-void socket_connect_ipv6(Socket *sock, SocketGroup *group, HTTP_IPv6 addr, uint16_t port) {
+void socket_connect_ipv6(Socket *sock, SocketGroup *group, HTTP_IPv6 addr, uint16_t port)
+{
+#ifdef HTTPS_ENABLED
+    sock->ssl = NULL;
+    sock->ssl_ctx = group ? group->ssl_ctx : NULL;
+#else
+    if (group) {
+        sock->state = SOCKET_STATE_DIED;
+        return;
+    }
+#endif
     sock->state = SOCKET_STATE_PENDING;
     sock->event = SOCKET_WANT_NONE;
     sock->fd = -1;
-    sock->ssl = NULL;
-    sock->ssl_ctx = group ? group->ssl_ctx : NULL;
     sock->addr_list = NULL;
     sock->addr_count = 0;
     sock->addr_cursor = 0;
@@ -2641,6 +2725,16 @@ void socket_connect_ipv6(Socket *sock, SocketGroup *group, HTTP_IPv6 addr, uint1
     socket_update(sock);
 }
 
+bool socket_secure(Socket *sock)
+{
+#ifdef HTTPS_ENABLED
+    return sock->ssl_ctx != NULL;
+#else
+    (void) sock;
+    return false;
+#endif
+}
+
 void socket_update(Socket *sock)
 {
     sock->event = SOCKET_WANT_NONE;
@@ -2653,10 +2747,12 @@ void socket_update(Socket *sock)
         switch (sock->state) {
         case SOCKET_STATE_PENDING:
         {
+#ifdef HTTPS_ENABLED
             if (sock->ssl) {
                 SSL_free(sock->ssl);
                 sock->ssl = NULL;
             }
+#endif
 
             if (sock->fd != -1)
                 close(sock->fd);
@@ -2762,11 +2858,11 @@ void socket_update(Socket *sock)
 
         case SOCKET_STATE_CONNECTED:
         {
-            if (sock->ssl_ctx == NULL) {
+            if (!socket_secure(sock)) {
                 sock->event = SOCKET_WANT_NONE;
                 sock->state = SOCKET_STATE_ESTABLISHED_READY;
             } else {
-
+#ifdef HTTPS_ENABLED
                 // Start SSL handshake
                 if (!sock->ssl) {
                     sock->ssl = SSL_new(sock->ssl_ctx);
@@ -2798,17 +2894,20 @@ void socket_update(Socket *sock)
                 sock->event = SOCKET_WANT_NONE;
                 sock->state = SOCKET_STATE_PENDING;
                 again = true;
+#else
+                HTTP_ASSERT(0);
+#endif
             }
         }
         break;
 
         case SOCKET_STATE_ACCEPTED:
         {
-            if (sock->ssl_ctx == NULL) {
+            if (!socket_secure(sock)) {
                 sock->event = SOCKET_WANT_NONE;
                 sock->state = SOCKET_STATE_ESTABLISHED_READY;
             } else {
-
+#ifdef HTTPS_ENABLED
                 // Start server-side SSL handshake
                 if (!sock->ssl) {
                     sock->ssl = SSL_new(sock->ssl_ctx);
@@ -2837,6 +2936,9 @@ void socket_update(Socket *sock)
                 // Server socket error - close the connection
                 sock->event = SOCKET_WANT_NONE;
                 sock->state = SOCKET_STATE_DIED;
+#else
+               HTTP_ASSERT(0);
+#endif
             }
         }
         break;
@@ -2850,11 +2952,11 @@ void socket_update(Socket *sock)
 
         case SOCKET_STATE_SHUTDOWN:
         {
-            if (sock->ssl_ctx == NULL) {
+            if (!socket_secure(sock)) {
                 sock->event = SOCKET_WANT_NONE;
                 sock->state = SOCKET_STATE_DIED;
             } else {
-
+#ifdef HTTPS_ENABLED
                 int ret = SSL_shutdown(sock->ssl);
                 if (ret == 1) {
                     sock->event = SOCKET_WANT_NONE;
@@ -2875,6 +2977,9 @@ void socket_update(Socket *sock)
 
                 sock->event = SOCKET_WANT_NONE;
                 sock->state = SOCKET_STATE_DIED;
+#else
+                HTTP_ASSERT(0);
+#endif
             }
         }
         break;
@@ -2895,7 +3000,7 @@ int socket_read(Socket *sock, char *dst, int max) {
         return -1;
     }
 
-    if (sock->ssl_ctx == NULL) {
+    if (!socket_secure(sock)) {
         int ret = read(sock->fd, dst, max);
         if (ret == 0) {
             sock->event = SOCKET_WANT_NONE;
@@ -2916,6 +3021,7 @@ int socket_read(Socket *sock, char *dst, int max) {
         }
         return ret;
     } else {
+#ifdef HTTPS_ENABLED
         int ret = SSL_read(sock->ssl, dst, max);
         if (ret <= 0) {
             int err = SSL_get_error(sock->ssl, ret);
@@ -2934,6 +3040,10 @@ int socket_read(Socket *sock, char *dst, int max) {
             ret = 0;
         }
         return ret;
+#else
+        HTTP_ASSERT(0);
+        return -1;
+#endif
     }
 }
 
@@ -2945,7 +3055,7 @@ int socket_write(Socket *sock, char *src, int len) {
         return 0;
     }
 
-    if (sock->ssl_ctx == NULL) {
+    if (!socket_secure(sock)) {
         int ret = write(sock->fd, src, len);
         if (ret < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -2961,6 +3071,7 @@ int socket_write(Socket *sock, char *src, int len) {
         }
         return ret;
     } else {
+#ifdef HTTPS_ENABLED
         int ret = SSL_write(sock->ssl, src, len);
         if (ret <= 0) {
             int err = SSL_get_error(sock->ssl, ret);
@@ -2979,6 +3090,9 @@ int socket_write(Socket *sock, char *src, int len) {
             ret = 0;
         }
         return ret;
+#else
+        HTTP_ASSERT(0);
+#endif
     }
 }
 
@@ -2989,20 +3103,23 @@ void socket_close(Socket *sock) {
     socket_update(sock);
 }
 
-void socket_free(Socket *sock) {
-    // Release all resources associated to the socket
-    if (sock->ssl) {
+void socket_free(Socket *sock)
+{
+#ifdef HTTPS_ENABLED
+    if (sock->ssl)
         SSL_free(sock->ssl);
-        sock->ssl = NULL;
-    }
+#endif
+
     if (sock->fd >= 0) {
         close(sock->fd);
         sock->fd = -1;
     }
+
     if (sock->hostname) {
         free(sock->hostname);
         sock->hostname = NULL;
     }
+
     if (sock->addr_list) {
         free(sock->addr_list);
         sock->addr_list = NULL;
@@ -3503,6 +3620,164 @@ HTTP_Response *http_post(HTTP_String url, HTTP_String *headers, int num_headers,
     *phandle = handle;
     return res;
 }//////////////////////////////////////////////////////////////////////
+// src/cert.c
+//////////////////////////////////////////////////////////////////////
+
+#ifdef HTTPS_ENABLED
+#include <openssl/pem.h>
+#include <openssl/conf.h>
+#include <openssl/x509v3.h>
+#include <openssl/rsa.h>
+#include <openssl/evp.h>
+#include <openssl/bn.h>
+#endif
+#ifdef HTTPS_ENABLED
+
+static EVP_PKEY *generate_rsa_key_pair(int key_bits)
+{
+    EVP_PKEY_CTX *ctx;
+    EVP_PKEY *pkey;
+    
+    // Create the context for key generation
+    ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+    if (!ctx)
+        return NULL;
+    
+    if (EVP_PKEY_keygen_init(ctx) <= 0) {
+        EVP_PKEY_CTX_free(ctx);
+        return NULL;
+    }
+    
+    if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, key_bits) <= 0) {
+        EVP_PKEY_CTX_free(ctx);
+        return NULL;
+    }
+
+    if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
+        EVP_PKEY_CTX_free(ctx);
+        return NULL;
+    }
+
+    EVP_PKEY_CTX_free(ctx);
+    return pkey;
+}
+
+static X509 *create_certificate(EVP_PKEY *pkey, HTTP_String C, HTTP_String O, HTTP_String CN, int days)
+{
+    X509 *x509 = X509_new();
+    if (!x509)
+        return NULL;
+
+    // Set version (version 3)
+    X509_set_version(x509, 2);
+    
+    // Set serial number
+    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
+    
+    // Set validity period
+    X509_gmtime_adj(X509_get_notBefore(x509), 0);
+    X509_gmtime_adj(X509_get_notAfter(x509), 31536000L * days); // days * seconds_per_year
+
+    // Set public key
+    X509_set_pubkey(x509, pkey);
+
+    // Set subject name
+    X509_NAME *name = X509_get_subject_name(x509);
+    X509_NAME_add_entry_by_txt(name, "C",  MBSTRING_ASC, (unsigned char*) C.ptr,  C.len,  -1, 0);
+    X509_NAME_add_entry_by_txt(name, "O",  MBSTRING_ASC, (unsigned char*) O.ptr,  O.len,  -1, 0);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*) CN.ptr, CN.len, -1, 0);
+
+    // Set issuer name (same as subject for self-signed)
+    X509_set_issuer_name(x509, name);
+
+    if (!X509_sign(x509, pkey, EVP_sha256())) {
+        X509_free(x509);
+        return NULL;
+    }
+
+    return x509;
+}
+
+static int save_private_key(EVP_PKEY *pkey, const char *filename)
+{
+    FILE *fp = fopen(filename, "wb");
+    if (!fp)
+        return -1;
+
+    // Write private key in PEM format
+    if (!PEM_write_PrivateKey(fp, pkey, NULL, NULL, 0, NULL, NULL)) {
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+static int cert_save(X509 *x509, const char *filename)
+{
+    FILE *fp = fopen(filename, "wb");
+    if (!fp) {
+        fprintf(stderr, "Error opening file for certificate: %s\n", filename);
+        return -1;
+    }
+
+    // Write certificate in PEM format
+    if (!PEM_write_X509(fp, x509)) {
+        fprintf(stderr, "Error writing certificate\n");
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    printf("Certificate saved to: %s\n", filename);
+    return 0;
+}
+
+int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
+    HTTP_String cert_file, HTTP_String key_file)
+{
+    EVP_PKEY *pkey = generate_rsa_key_pair(2048);
+    if (pkey == NULL)
+        return -1;
+
+    X509 *x509 = create_certificate(pkey, C, O, CN, 1)
+    if (x509 == NULL) {
+        EVP_PKEY_free(pkey);
+        return -1;
+    }
+
+    if (save_private_key(pkey, key_file) < 0) {
+        X509_free(x509);
+        EVP_PKEY_free(pkey);
+        return -1;
+    }
+
+    if (save_certificate(x509, cert_file) < 0) {
+        X509_free(x509);
+        EVP_PKEY_free(pkey);
+        return -1;
+    }
+
+    X509_free(x509);
+    EVP_PKEY_free(pkey);
+    return 0;
+}
+
+#else
+
+int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
+    HTTP_String cert_file, HTTP_String key_file)
+{
+    (void) C;
+    (void) O;
+    (void) CN;
+    (void) cert_file;
+    (void) key_file;
+    return -1;
+}
+
+#endif//////////////////////////////////////////////////////////////////////
 // src/server.c
 //////////////////////////////////////////////////////////////////////
 
@@ -3662,7 +3937,7 @@ void http_server_free(HTTP_Server *server)
     free(server);
 }
 
-int http_server_website(HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
+int http_server_add_website(HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
     return socket_group_add_domain(&server->group, domain, cert_file, key_file);
 }
@@ -3708,24 +3983,21 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
 
         for (int i = 0, j = 0; i < server->num_conns; i++) {
 
-            if (!server->conns[i].used)
+            Connection *conn = &server->conns[i];
+
+            if (!conn->used)
                 continue;
             j++;
 
             int events = 0;
-
-            if (server->conns[i].socket.ssl_ctx)
-                events = server->conns[i].socket.event;
-            else {
-                switch (http_engine_state(&server->conns[i].engine)) {
-                    case HTTP_ENGINE_STATE_SERVER_RECV_BUF: events = POLLIN;  break;
-                    case HTTP_ENGINE_STATE_SERVER_SEND_BUF: events = POLLOUT; break;
-                    default:break;
-                }
+            switch (conn->socket.event) {
+                case SOCKET_WANT_NONE: events = 0; break;
+                case SOCKET_WANT_READ: events = POLLIN; break;
+                case SOCKET_WANT_WRITE: events = POLLOUT; break;
             }
 
             if (events) {
-                polled[num_polled].fd = server->conns[i].socket.fd;
+                polled[num_polled].fd = conn->socket.fd;
                 polled[num_polled].events = events;
                 polled[num_polled].revents = 0;
                 indices[num_polled] = i;
@@ -3754,6 +4026,7 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
 
                     server->conns[k].used = true;
                     socket_accept(&server->conns[k].socket, secure ? &server->group : NULL, new_fd);
+
                     http_engine_init(&server->conns[k].engine, 0, server_memfunc, NULL);
                     server->num_conns++;
                 }
@@ -3944,8 +4217,11 @@ void http_response_done(HTTP_ResponseHandle res)
 //////////////////////////////////////////////////////////////////////
 
 #ifndef _WIN32
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #endif
-
 typedef enum {
 	ROUTE_STATIC_DIR,
 	ROUTE_DYNAMIC,

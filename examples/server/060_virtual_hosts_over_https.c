@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <chttp.h>
 
 // This is an example of how to serve different websites
@@ -41,6 +42,7 @@ int main(void)
     // certificates using the add_website function
 
     ret = http_server_add_website(server,
+        HTTP_STR("websiteB.com"),
         HTTP_STR("websiteB_cert.pem"),
         HTTP_STR("websiteB_key.pem")
     );
@@ -48,6 +50,7 @@ int main(void)
         return -1;
 
     ret = http_server_add_website(server,
+        HTTP_STR("websiteC.com"),
         HTTP_STR("websiteC_cert.pem"),
         HTTP_STR("websiteC_key.pem")
     );
@@ -94,13 +97,13 @@ int main(void)
         if (http_streq(host, HTTP_STR("websiteB.com"))) {
 
             http_response_status(res, 200);
-            http_response_body(res, "Hello from websiteB.com!");
+            http_response_body(res, HTTP_STR("Hello from websiteB.com!"));
             http_response_done(res);
 
         } else if (http_streq(host, HTTP_STR("websiteC.com"))) {
 
             http_response_status(res, 200);
-            http_response_body(res, "Hello from websiteC.com!");
+            http_response_body(res, HTTP_STR("Hello from websiteC.com!"));
             http_response_done(res);
 
         } else {
@@ -109,7 +112,7 @@ int main(void)
             // with the certificate setup
 
             http_response_status(res, 200);
-            http_response_body(res, "Hello from websiteA.com!");
+            http_response_body(res, HTTP_STR("Hello from websiteA.com!"));
             http_response_done(res);
         }
     }

@@ -53,12 +53,15 @@
 // which means the user needs to call socket_free to free the socket
 // as it's not unusable.
 
-#include <errno.h>
+#include <stdint.h>
 
-#include "parse.h"
+#ifdef HTTPS_ENABLED
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
+#endif
+
+#include "parse.h"
 
 typedef struct {
     int is_ipv6;
@@ -89,8 +92,10 @@ typedef struct {
     SocketState state;
     SocketWantEvent event;
     int fd;
+#if HTTPS_ENABLED
     SSL *ssl;
     SSL_CTX *ssl_ctx;
+#endif
     AddrInfo *addr_list;
     int addr_count;
     int addr_cursor;
@@ -98,16 +103,20 @@ typedef struct {
     uint16_t port;
 } Socket;
 
+#ifdef HTTPS_ENABLED
 typedef struct {
     char name[128];
     SSL_CTX *ssl_ctx;
 } Domain;
+#endif
 
 typedef struct {
+#ifdef HTTPS_ENABLED
     SSL_CTX *ssl_ctx;
     int num_domains;
     int max_domains;
     Domain *domains;
+#endif
 } SocketGroup;
 
 void        socket_global_init  (void);

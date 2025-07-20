@@ -1,14 +1,29 @@
 #include <string.h>
 #include <stdlib.h>
 #include <limits.h>
-#include "router.h"
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#ifdef __linux__
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #endif
+
+#include "router.h"
+
+bool is_alpha(char c)
+{
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+bool is_digit(char c)
+{
+	return c >= '0' && c <= '9';
+}
 
 typedef enum {
 	ROUTE_STATIC_DIR,

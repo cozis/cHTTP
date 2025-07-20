@@ -1,8 +1,20 @@
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdbool.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#define POLL WSAPoll
+#define CLOSE_SOCKET closesocket
+#endif
+
+#ifdef __linux__
 #include <sys/socket.h>
 #include <poll.h>
-#include <stdlib.h>
+#define CLOSE_SOCKET close
+#endif
+
 #include "engine.h"
 #include "socket.h"
 #include "server.h"
@@ -39,12 +51,12 @@ static int listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int b
     {
         int flags = fcntl(listen_fd, F_GETFL, 0);
         if (flags < 0) {
-            close(listen_fd);
+            CLOSE_SOCKET(listen_fd);
             return -1;
         }
 
         if (fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-            close(listen_fd);
+            CLOSE_SOCKET(listen_fd);
             return -1;
         }
     }
@@ -61,7 +73,7 @@ static int listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int b
 
         _Static_assert(sizeof(struct in_addr) == sizeof(HTTP_IPv4));
         if (http_parse_ipv4(addr.ptr, addr.len, (HTTP_IPv4*) &addr_buf) < 0) {
-            close(listen_fd);
+            CLOSE_SOCKET(listen_fd);
             return -1;
         }
     }
@@ -71,12 +83,12 @@ static int listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int b
     bind_buf.sin_addr   = addr_buf;
     bind_buf.sin_port   = htons(port);
     if (bind(listen_fd, (struct sockaddr*) &bind_buf, sizeof(bind_buf)) < 0) {
-        close(listen_fd);
+        CLOSE_SOCKET(listen_fd);
         return -1;
     }
 
     if (listen(listen_fd, backlog) < 0) {
-        close(listen_fd);
+        CLOSE_SOCKET(listen_fd);
         return -1;
     }
 
@@ -119,7 +131,7 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
     else {
 
         if (socket_group_init_server(&server->group, cert_key, private_key) < 0) {
-            close(server->listen_fd);
+            CLOSE_SOCKET(server->listen_fd);
             free(server);
             return NULL;
         }
@@ -127,7 +139,7 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
         server->secure_fd = listen_socket(addr, secure_port, reuse_addr, backlog);
         if (server->secure_fd < 0) {
             socket_group_free(&server->group);
-            close(server->listen_fd);
+            CLOSE_SOCKET(server->listen_fd);
             free(server);
             return NULL;
         }
@@ -156,14 +168,14 @@ void http_server_free(HTTP_Server *server)
         // TODO
     }
 
-    close(server->secure_fd);
-    close(server->listen_fd);
+    CLOSE_SOCKET(server->secure_fd);
+    CLOSE_SOCKET(server->listen_fd);
     if (server->secure_fd != -1)
         socket_group_free(&server->group);
     free(server);
 }
 
-int http_server_website(HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
+int http_server_add_website(HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
     return socket_group_add_domain(&server->group, domain, cert_file, key_file);
 }
@@ -209,24 +221,21 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
 
         for (int i = 0, j = 0; i < server->num_conns; i++) {
 
-            if (!server->conns[i].used)
+            Connection *conn = &server->conns[i];
+
+            if (!conn->used)
                 continue;
             j++;
 
             int events = 0;
-
-            if (server->conns[i].socket.ssl_ctx)
-                events = server->conns[i].socket.event;
-            else {
-                switch (http_engine_state(&server->conns[i].engine)) {
-                    case HTTP_ENGINE_STATE_SERVER_RECV_BUF: events = POLLIN;  break;
-                    case HTTP_ENGINE_STATE_SERVER_SEND_BUF: events = POLLOUT; break;
-                    default:break;
-                }
+            switch (conn->socket.event) {
+                case SOCKET_WANT_NONE: events = 0; break;
+                case SOCKET_WANT_READ: events = POLLIN; break;
+                case SOCKET_WANT_WRITE: events = POLLOUT; break;
             }
 
             if (events) {
-                polled[num_polled].fd = server->conns[i].socket.fd;
+                polled[num_polled].fd = conn->socket.fd;
                 polled[num_polled].events = events;
                 polled[num_polled].revents = 0;
                 indices[num_polled] = i;
@@ -235,7 +244,7 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
         }
 
         int timeout = -1;
-        poll(polled, num_polled, timeout);
+        POLL(polled, num_polled, timeout);
 
         for (int i = 0; i < num_polled; i++) {
 
@@ -255,6 +264,7 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
 
                     server->conns[k].used = true;
                     socket_accept(&server->conns[k].socket, secure ? &server->group : NULL, new_fd);
+
                     http_engine_init(&server->conns[k].engine, 0, server_memfunc, NULL);
                     server->num_conns++;
                 }

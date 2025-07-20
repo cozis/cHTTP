@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AmalgamationBuilder - Implementation with improved #line support
+AmalgamationBuilder - Implementation with improved #line support and conditional include preservation
 """
 
 import re
@@ -25,6 +25,8 @@ class AmalgamationBuilder:
         original_line_number = 1
         skipped_lines = 0
         first_content_line = True
+        in_conditional_block = False
+        conditional_depth = 0
 
         self.body += "//////////////////////////////////////////////////////////////////////\n"
         self.body += "// " + filepath + "\n"
@@ -32,7 +34,33 @@ class AmalgamationBuilder:
         self.body += "\n"
         
         for line in lines:
-            # Check if the line is an include
+            # Check if we're entering a conditional block
+            if self._is_conditional_start(line):
+                if conditional_depth == 0:
+                    in_conditional_block = True
+                conditional_depth += 1
+                # Keep conditional blocks in place
+                self.body += line
+                original_line_number += 1
+                continue
+            
+            # Check if we're exiting a conditional block
+            if self._is_conditional_end(line):
+                conditional_depth -= 1
+                if conditional_depth == 0:
+                    in_conditional_block = False
+                # Keep conditional blocks in place
+                self.body += line
+                original_line_number += 1
+                continue
+            
+            # If we're inside a conditional block, keep all lines as-is
+            if in_conditional_block:
+                self.body += line
+                original_line_number += 1
+                continue
+            
+            # Check if the line is an include (outside conditional blocks only)
             if self._is_include_line(line):
                 include_info = self._extract_include_info(line)
                 if include_info:
@@ -68,6 +96,18 @@ class AmalgamationBuilder:
             # Append the current line to body
             self.body += line
             original_line_number += 1
+    
+    def _is_conditional_start(self, line: str) -> bool:
+        """Check if a line starts a conditional compilation block"""
+        stripped = line.strip()
+        return (stripped.startswith('#ifdef ') or 
+                stripped.startswith('#ifndef ') or 
+                stripped.startswith('#if '))
+    
+    def _is_conditional_end(self, line: str) -> bool:
+        """Check if a line ends a conditional compilation block"""
+        stripped = line.strip()
+        return stripped.startswith('#endif')
     
     def _is_include_line(self, line: str) -> bool:
         """Check if a line is an #include directive"""
@@ -185,6 +225,7 @@ def main():
         "src/engine.c",
         "src/socket.c",
         "src/client.c",
+        "src/cert.c",
         "src/server.c",
         "src/router.c"
     ]

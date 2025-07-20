@@ -1,3 +1,5 @@
+#ifdef _WIN32
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
@@ -223,3 +225,15 @@ int main(void)
 	
 	return 0;
 }
+
+#else
+
+#include <stdio.h>
+
+int main(void)
+{
+    printf("This example only works on windows!\n");
+    return -1;
+}
+
+#endif

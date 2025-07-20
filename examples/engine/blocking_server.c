@@ -51,10 +51,10 @@ static void produce_response(HTTP_Engine *eng)
 	http_engine_status(eng, 200);
 
 	// Set zero or more headers
-	http_engine_header(eng, "Server: tinyhttp", -1);
+	http_engine_header(eng, HTTP_STR("Server: tinyhttp"));
 
 	// Set some bytes in the body
-	http_engine_body(eng, "Hello, world!", 13);
+	http_engine_body(eng, HTTP_STR("Hello, world!"));
 
 	// This is one difference from the http_response_XXX API.
 	// It's possible to write response content directly into

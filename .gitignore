@@ -7,3 +7,6 @@ coverage_report
 
 *.out
 *.exe
+*.o
+*.a
+*.so

@@ -1,5 +1,23 @@
+#include <stdlib.h>
 #include <stdbool.h>
 #include <chttp.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+typedef void*              Thread;
+typedef unsigned long      ThreadReturn;
+typedef CRITICAL_SECTION   Mutex;
+typedef CONDITION_VARIABLE Condvar;
+#endif
+
+#ifdef __linux__
+#include <pthread.h>
+typedef pthread_t          Thread;
+typedef void*              ThreadReturn;
+typedef pthread_mutex_t    Mutex;
+typedef pthread_cond_t     Condvar;
+#endif
 
 // NOTE: This example doesn't work yet!
 
@@ -56,7 +74,20 @@ Job pop_job(void);
 // with no new job pushed.
 bool push_job(Job job, bool block);
 
-void *worker(void*)
+void thread_create(Thread *thread, void *arg, ThreadReturn (*func)(void*));
+ThreadReturn thread_join(Thread thread);
+
+void mutex_init(Mutex *mutex);
+void mutex_free(Mutex *mutex);
+void mutex_lock(Mutex *mutex);
+void mutex_unlock(Mutex *mutex);
+
+void condvar_init(Condvar *condvar);
+void condvar_free(Condvar *condvar);
+void condvar_wait(Condvar *condvar, Mutex *mutex);
+void condvar_signal(Condvar *condvar);
+
+ThreadReturn worker(void*)
 {
     for (bool exit = false; !exit; ) {
 
@@ -82,7 +113,7 @@ void *worker(void*)
         }
     }
 
-    return NULL;
+    return 0;
 }
 
 int main(void)
@@ -93,12 +124,15 @@ int main(void)
     if (server == NULL)
         return -1;
 
+    Thread worker_id;
+    thread_create(&worker_id, NULL, worker);
+
     for (;;) {
 
         HTTP_Request *req;
         HTTP_ResponseHandle res;
 
-        int ret = http_server_wait(server, &res, &res);
+        int ret = http_server_wait(server, &req, &res);
         if (ret < 0) return -1;
 
         if (http_streq(req->url.path, HTTP_STR("/endpoint_A"))) {
@@ -139,6 +173,7 @@ int main(void)
     Job job;
     job.type = NO_JOB;
     push_job(job, true);
+    thread_join(worker_id);
 
     http_server_free(server);
     free_job_queue();
@@ -176,8 +211,8 @@ Job pop_job(void)
 {
     mutex_lock(&queue_lock);
 
-    while (queue_count == 0);
-        condvar_wait(&queue_produce_event, &queue_lock, -1);
+    while (queue_count == 0)
+        condvar_wait(&queue_produce_event, &queue_lock);
 
     Job job = queue[queue_head];
     queue_head = (queue_head + 1) % MAX_JOBS;
@@ -199,7 +234,7 @@ bool push_job(Job job, bool block)
         }
 
         do
-            condvar_wait(&queue_consume_event, &queue_lock, -1);
+            condvar_wait(&queue_consume_event, &queue_lock);
         while (queue_count == 0);
     }
 
@@ -210,4 +245,135 @@ bool push_job(Job job, bool block)
     condvar_signal(&queue_produce_event);
     mutex_unlock(&queue_lock);
     return true;
+}
+
+//////////////////////////////////////////////
+
+void thread_create(Thread *thread, void *arg, ThreadReturn (*func)(void*))
+{
+#ifdef _WIN32
+    Thread thread_ = CreateThread(NULL, 0, func, arg, 0, NULL);
+    if (thread_ == INVALID_HANDLE_VALUE)
+        abort();
+    *thread = thread_;
+#endif
+
+#ifdef __linux__
+    int ret = pthread_create(thread, NULL, func, arg);
+    if (ret) abort();
+#endif
+}
+
+ThreadReturn thread_join(Thread thread)
+{
+#ifdef _WIN32
+    ThreadReturn result;
+    WaitForSingleObject(thread, INFINITE);
+    if (!GetExitCodeThread(thread, &result))
+        abort();
+    CloseHandle(thread);
+    return result;
+#endif
+
+#ifdef __linux__
+    ThreadReturn result;
+    int ret = pthread_join(thread, &result);
+    if (ret) abort();
+    return result;
+#endif
+}
+
+void mutex_init(Mutex *mutex)
+{
+#ifdef _WIN32
+    InitializeCriticalSection(mutex);
+#endif
+
+#ifdef __linux__
+    if (pthread_mutex_init(mutex, NULL))
+        abort();
+#endif
+}
+
+void mutex_free(Mutex *mutex)
+{
+#ifdef _WIN32
+    DeleteCriticalSection(mutex);
+#endif
+
+#ifdef __linux__
+    if (pthread_mutex_destroy(mutex))
+        abort();
+#endif
+}
+
+void mutex_lock(Mutex *mutex)
+{
+#ifdef _WIN32
+    EnterCriticalSection(mutex);
+#endif
+
+#ifdef __linux__
+    if (pthread_mutex_lock(mutex))
+        abort();
+#endif
+}
+
+void mutex_unlock(Mutex *mutex)
+{
+#ifdef _WIN32
+    LeaveCriticalSection(mutex);
+#endif
+
+#ifdef __linux__
+    if (pthread_mutex_unlock(mutex))
+        abort();
+#endif
+}
+
+void condvar_init(Condvar *condvar)
+{
+#ifdef _WIN32
+    InitializeConditionVariable(condvar);
+#endif
+
+#ifdef __linux__
+    if (pthread_cond_init(condvar, NULL))
+        abort();
+#endif
+}
+
+void condvar_free(Condvar *condvar)
+{
+#ifdef __linux__
+    if (pthread_cond_destroy(condvar))
+        abort();
+#else
+    (void) condvar;
+#endif
+}
+
+void condvar_wait(Condvar *condvar, Mutex *mutex)
+{
+#ifdef _WIN32
+    if (!SleepConditionVariableCS(condvar, mutex, INFINITE))
+        abort();
+#endif
+
+#ifdef __linux__
+    int err = pthread_cond_wait(condvar, mutex);
+    if (err) abort();
+#endif
+}
+
+void condvar_signal(Condvar *condvar)
+{
+#ifdef _WIN32
+    WakeConditionVariable(condvar);
+#endif
+
+#ifdef __linux__
+    if (pthread_cond_signal(condvar))
+        abort();
+#endif
 }

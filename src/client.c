@@ -1,14 +1,22 @@
+#include <stdint.h>
+#include <assert.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#define POLL WSAPoll
+#endif
+
+#ifdef __linux__
+#include <poll.h>
+#define POLL poll
+#endif
+
 #include "client.h"
 #include "socket.h"
 #include "engine.h"
-#include <stdint.h>
-#include <stdbool.h>
-#include <assert.h>
-#include <stdlib.h>
-
-// TODO
-#include <stdio.h>
-#define ERROR printf("error at %s:%d\n", __FILE__, __LINE__);
 
 #define CLIENT_MAX_CONNS 256
 
@@ -200,7 +208,7 @@ int http_client_wait(HTTP_Client *client, HTTP_RequestHandle *handle)
         if (num_polled == 0)
             return -1;
 
-        poll(polled, num_polled, -1);
+        POLL(polled, num_polled, -1);
 
         for (int i = 0; i < num_polled; i++) {
 
@@ -275,7 +283,6 @@ void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_Strin
     int ret = http_parse_url(url.ptr, url.len, &parsed_url);
     if (ret != url.len) {
         // TODO
-        ERROR;
         return;
     }
 
@@ -284,7 +291,6 @@ void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_Strin
         secure = true;
     } else if (!http_streq(parsed_url.scheme, HTTP_STR("http"))) {
         // TODO
-        ERROR;
         return;
     }
 
@@ -304,7 +310,6 @@ void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_Strin
 
         case HTTP_HOST_MODE_VOID:
         // TODO
-        ERROR;
         return;
     }
 

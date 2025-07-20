@@ -1,12 +1,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef HTTPS_ENABLED
 #include <openssl/pem.h>
 #include <openssl/conf.h>
 #include <openssl/x509v3.h>
 #include <openssl/rsa.h>
 #include <openssl/evp.h>
 #include <openssl/bn.h>
+#endif
+
+#include "cert.h"
+
+#ifdef HTTPS_ENABLED
 
 static EVP_PKEY *generate_rsa_key_pair(int key_bits)
 {
@@ -138,3 +145,18 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
     EVP_PKEY_free(pkey);
     return 0;
 }
+
+#else
+
+int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
+    HTTP_String cert_file, HTTP_String key_file)
+{
+    (void) C;
+    (void) O;
+    (void) CN;
+    (void) cert_file;
+    (void) key_file;
+    return -1;
+}
+
+#endif
