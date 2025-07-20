@@ -732,15 +732,13 @@ void socket_free(Socket *sock) {
     }
 }
 
-#define COUNT(X) (sizeof(X) / sizeof((X)[0]))
-
-int socket_wait(Socket **socks, int num_socks)
+int socket_wait(Socket **socks, int num_socks) // TODO: is this used?
 {
     if (num_socks <= 0)
         return -1;
 
     struct pollfd polled[100]; // TODO: make this value configurable
-    if (num_socks > (int) COUNT(polled))
+    if (num_socks > (int) HTTP_COUNT(polled))
         return -1;
 
     for (;;) {
