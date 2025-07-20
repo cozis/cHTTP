@@ -44,15 +44,11 @@ int main(void)
 
         HTTP_Request *req;
         HTTP_ResponseHandle res;
-        http_server_wait(server, &res, &res);
-
-        printf("requested path [%.*s]\n",
-            HTTP_UNPACK(req->url.path));
+        http_server_wait(server, &req, &res);
 
         http_response_status(res, 200);
         http_response_header(res, "Content-Type: text/plain");
-        http_response_body(res, HTTP_STR("Hello"));
-        http_response_body(res, HTTP_STR(", world!"));
+        http_response_body(res, HTTP_STR("Hello, world!"));
         http_response_done(res);
     }
 
