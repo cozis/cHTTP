@@ -19,24 +19,21 @@
 
 static EVP_PKEY *generate_rsa_key_pair(int key_bits)
 {
-    EVP_PKEY_CTX *ctx;
-    EVP_PKEY *pkey;
-    
-    // Create the context for key generation
-    ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+    EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
     if (!ctx)
         return NULL;
-    
+
     if (EVP_PKEY_keygen_init(ctx) <= 0) {
         EVP_PKEY_CTX_free(ctx);
         return NULL;
     }
-    
+
     if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, key_bits) <= 0) {
         EVP_PKEY_CTX_free(ctx);
         return NULL;
     }
 
+    EVP_PKEY *pkey;
     if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
         EVP_PKEY_CTX_free(ctx);
         return NULL;

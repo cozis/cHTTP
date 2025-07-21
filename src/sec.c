@@ -108,7 +108,7 @@ int secure_context_init_as_server(SecureContext *sec,
 
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     
-    static char cert_buffer[1024];
+    char cert_buffer[1024];
     if (cert_file.len >= (int) sizeof(cert_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
@@ -117,7 +117,7 @@ int secure_context_init_as_server(SecureContext *sec,
     cert_buffer[cert_file.len] = '\0';
     
     // Copy private key file path to static buffer
-    static char key_buffer[1024];
+    char key_buffer[1024];
     if (key_file.len >= (int) sizeof(key_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
@@ -174,7 +174,7 @@ int secure_context_add_cert(SecureContext *sec,
 
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     
-    static char cert_buffer[1024];
+    char cert_buffer[1024];
     if (cert_file.len >= (int) sizeof(cert_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
@@ -182,7 +182,7 @@ int secure_context_add_cert(SecureContext *sec,
     memcpy(cert_buffer, cert_file.ptr, cert_file.len);
     cert_buffer[cert_file.len] = '\0';
     
-    static char key_buffer[1024];
+    char key_buffer[1024];
     if (key_file.len >= (int) sizeof(key_buffer)) {
         SSL_CTX_free(ctx);
         return -1;

@@ -124,7 +124,6 @@ void socket_connect(Socket *sock, SecureContext *sec,
     struct addrinfo *res = NULL;
     int ret = getaddrinfo(pending_connect->hostname, portstr, &hints, &res);
     if (ret != 0) {
-        printf("ret=%d\n", ret); // TODO: remove
         pending_connect_free(pending_connect);
         sock->state = SOCKET_STATE_DIED;
         sock->events = 0;

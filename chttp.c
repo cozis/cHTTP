@@ -1762,7 +1762,6 @@ byte_queue_write_fmt2(HTTP_ByteQueue *queue, const char *fmt, va_list args)
 	if (len < 0) {
 		queue->flags |= BYTE_QUEUE_ERROR;
 		va_end(args2);
-		va_end(args);
 		return;
 	}
 
@@ -1776,7 +1775,6 @@ byte_queue_write_fmt2(HTTP_ByteQueue *queue, const char *fmt, va_list args)
 	byte_queue_write_ack(queue, len);
 
 	va_end(args2);
-	va_end(args);
 }
 
 static void
@@ -2406,24 +2404,21 @@ void http_engine_undo(HTTP_Engine *eng)
 
 static EVP_PKEY *generate_rsa_key_pair(int key_bits)
 {
-    EVP_PKEY_CTX *ctx;
-    EVP_PKEY *pkey;
-    
-    // Create the context for key generation
-    ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+    EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
     if (!ctx)
         return NULL;
-    
+
     if (EVP_PKEY_keygen_init(ctx) <= 0) {
         EVP_PKEY_CTX_free(ctx);
         return NULL;
     }
-    
+
     if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, key_bits) <= 0) {
         EVP_PKEY_CTX_free(ctx);
         return NULL;
     }
 
+    EVP_PKEY *pkey;
     if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
         EVP_PKEY_CTX_free(ctx);
         return NULL;
@@ -2673,7 +2668,7 @@ int secure_context_init_as_server(SecureContext *sec,
 
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     
-    static char cert_buffer[1024];
+    char cert_buffer[1024];
     if (cert_file.len >= (int) sizeof(cert_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
@@ -2682,7 +2677,7 @@ int secure_context_init_as_server(SecureContext *sec,
     cert_buffer[cert_file.len] = '\0';
     
     // Copy private key file path to static buffer
-    static char key_buffer[1024];
+    char key_buffer[1024];
     if (key_file.len >= (int) sizeof(key_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
@@ -2739,7 +2734,7 @@ int secure_context_add_cert(SecureContext *sec,
 
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     
-    static char cert_buffer[1024];
+    char cert_buffer[1024];
     if (cert_file.len >= (int) sizeof(cert_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
@@ -2747,7 +2742,7 @@ int secure_context_add_cert(SecureContext *sec,
     memcpy(cert_buffer, cert_file.ptr, cert_file.len);
     cert_buffer[cert_file.len] = '\0';
     
-    static char key_buffer[1024];
+    char key_buffer[1024];
     if (key_file.len >= (int) sizeof(key_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
@@ -2838,7 +2833,7 @@ int set_socket_blocking(RAW_SOCKET sock, bool value)
     if (value) flags &= ~O_NONBLOCK;
     else       flags |= O_NONBLOCK;
     if (fcntl(sock, F_SETFL, flags) < 0)
-        return BAD_SOCKET;
+        return -1;
 #endif
     
     return 0;
@@ -3027,7 +3022,6 @@ void socket_connect(Socket *sock, SecureContext *sec,
     struct addrinfo *res = NULL;
     int ret = getaddrinfo(pending_connect->hostname, portstr, &hints, &res);
     if (ret != 0) {
-        printf("ret=%d\n", ret); // TODO: remove
         pending_connect_free(pending_connect);
         sock->state = SOCKET_STATE_DIED;
         sock->events = 0;
@@ -4490,7 +4484,7 @@ HTTP_Response *http_post(HTTP_String url, HTTP_String *headers, int num_headers,
     int ret = http_client_get_builder(client, &builder);
     if (ret < 0)
         return NULL;
-    http_request_builder_line(builder, HTTP_METHOD_GET, url);
+    http_request_builder_line(builder, HTTP_METHOD_POST, url);
     for (int i = 0; i < num_headers; i++)
         http_request_builder_header(builder, headers[i]);
     http_request_builder_body(builder, body);
@@ -4872,7 +4866,7 @@ struct HTTP_Router {
 HTTP_Router *http_router_init(void)
 {
 	int max_routes = 32;
-	HTTP_Router *router = malloc(max_routes * sizeof(HTTP_Router));
+	HTTP_Router *router = malloc(sizeof(HTTP_Router) + max_routes * sizeof(Route));
 	if (router == NULL)
 		return NULL;
 	router->max_routes = max_routes;

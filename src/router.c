@@ -50,7 +50,7 @@ struct HTTP_Router {
 HTTP_Router *http_router_init(void)
 {
 	int max_routes = 32;
-	HTTP_Router *router = malloc(max_routes * sizeof(HTTP_Router));
+	HTTP_Router *router = malloc(sizeof(HTTP_Router) + max_routes * sizeof(Route));
 	if (router == NULL)
 		return NULL;
 	router->max_routes = max_routes;

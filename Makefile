@@ -1,6 +1,6 @@
 
 CC = gcc
-CFLAGS = -I. -Wall -Wextra -O0 -g3
+CFLAGS = -I. -Wall -Wextra -O0 -g3 -DHTTPS_ENABLED
 LFLAGS =
 AR = ar
 

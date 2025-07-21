@@ -47,7 +47,7 @@ int set_socket_blocking(RAW_SOCKET sock, bool value)
     if (value) flags &= ~O_NONBLOCK;
     else       flags |= O_NONBLOCK;
     if (fcntl(sock, F_SETFL, flags) < 0)
-        return BAD_SOCKET;
+        return -1;
 #endif
     
     return 0;

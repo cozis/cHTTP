@@ -371,7 +371,6 @@ byte_queue_write_fmt2(HTTP_ByteQueue *queue, const char *fmt, va_list args)
 	if (len < 0) {
 		queue->flags |= BYTE_QUEUE_ERROR;
 		va_end(args2);
-		va_end(args);
 		return;
 	}
 
@@ -385,7 +384,6 @@ byte_queue_write_fmt2(HTTP_ByteQueue *queue, const char *fmt, va_list args)
 	byte_queue_write_ack(queue, len);
 
 	va_end(args2);
-	va_end(args);
 }
 
 static void

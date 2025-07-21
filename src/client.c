@@ -435,7 +435,7 @@ HTTP_Response *http_post(HTTP_String url, HTTP_String *headers, int num_headers,
     int ret = http_client_get_builder(client, &builder);
     if (ret < 0)
         return NULL;
-    http_request_builder_line(builder, HTTP_METHOD_GET, url);
+    http_request_builder_line(builder, HTTP_METHOD_POST, url);
     for (int i = 0; i < num_headers; i++)
         http_request_builder_header(builder, headers[i]);
     http_request_builder_body(builder, body);
