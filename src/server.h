@@ -2,7 +2,10 @@
 #define HTTP_SERVER_INCLUDED
 
 #include <stdint.h>
+
+#ifndef HTTP_AMALGAMATION
 #include "parse.h"
+#endif
 
 typedef struct {
     void *data0;

@@ -1,7 +1,9 @@
 #ifndef CERT_INCLUDED
 #define CERT_INCLUDED
 
+#ifndef HTTP_AMALGAMATION
 #include "basic.h"
+#endif
 
 // This is an utility to create self-signed certificates
 // useful when testing HTTPS servers locally. This is only

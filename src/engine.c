@@ -9,8 +9,10 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifndef HTTP_AMALGAMATION
 #include "basic.h"
 #include "engine.h"
+#endif
 
 // This is the implementation of a byte queue useful
 // for systems that need to process engs of bytes.

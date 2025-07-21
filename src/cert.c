@@ -11,7 +11,9 @@
 #include <openssl/bn.h>
 #endif
 
+#ifndef HTTP_AMALGAMATION
 #include "cert.h"
+#endif
 
 #ifdef HTTPS_ENABLED
 

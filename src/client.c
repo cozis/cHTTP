@@ -14,9 +14,11 @@
 #define POLL poll
 #endif
 
+#ifndef HTTP_AMALGAMATION
 #include "client.h"
 #include "socket.h"
 #include "engine.h"
+#endif
 
 #define CLIENT_MAX_CONNS 256
 

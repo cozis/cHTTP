@@ -2,8 +2,11 @@
 #include <stdint.h>
 #include <string.h>
 #include <assert.h>
+
+#ifndef HTTP_AMALGAMATION
 #include "parse.h"
 #include "basic.h"
+#endif
 
 // From RFC 9112
 	//   request-target = origin-form

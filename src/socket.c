@@ -1,20 +1,8 @@
-#include <poll.h>
 #include <assert.h> // TODO: organize these includes
-#include "socket.h"
-#ifdef HTTPS_ENABLED
-#include <openssl/pem.h>
-#include <openssl/conf.h>
-#include <openssl/x509v3.h>
-#include <openssl/rsa.h>
-#include <openssl/evp.h>
-#include <openssl/bn.h>
-#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -24,7 +12,21 @@
 #endif
 
 #ifdef __linux__
+#include <poll.h>
 #include <netdb.h>
+#endif
+
+#ifdef HTTPS_ENABLED
+#include <openssl/pem.h>
+#include <openssl/conf.h>
+#include <openssl/x509v3.h>
+#include <openssl/rsa.h>
+#include <openssl/evp.h>
+#include <openssl/bn.h>
+#endif
+
+#ifndef HTTP_AMALGAMATION
+#include "socket.h"
 #endif
 
 void socket_global_init(void)

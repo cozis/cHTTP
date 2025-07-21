@@ -1,6 +1,9 @@
 #ifndef PARSE_INCLUDED
 #define PARSE_INCLUDED
+
+#ifndef HTTP_AMALGAMATION
 #include "basic.h"
+#endif
 
 #define HTTP_MAX_HEADERS 32
 

@@ -1,7 +1,9 @@
 #ifndef HTTP_ROUTER_INCLUDED
 #define HTTP_ROUTER_INCLUDED
 
+#ifndef HTTP_AMALGAMATION
 #include "server.h"
+#endif
 
 typedef struct HTTP_Router HTTP_Router;
 typedef void (*HTTP_RouterFunc)(HTTP_Request*, HTTP_ResponseHandle, void*);;

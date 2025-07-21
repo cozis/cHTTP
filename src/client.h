@@ -2,7 +2,10 @@
 #define CLIENT_INCLUDED
 
 #include <stdbool.h>
+
+#ifndef HTTP_AMALGAMATION
 #include "parse.h"
+#endif
 
 // Initialize the global state of cHTTP.
 //

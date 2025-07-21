@@ -1,55 +1,10 @@
-/*
- * cHTTP Library - Amalgamated Source
- * Generated automatically - do not edit manually
- */
-
 #include "chttp.h"
 
-#include <assert.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <limits.h>
-#include <poll.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-//////////////////////////////////////////////////////////////////////
-// src/cert.h
-//////////////////////////////////////////////////////////////////////
-
-#ifndef CERT_INCLUDED
-#define CERT_INCLUDED
-
-#include "basic.h"
-
-// This is an utility to create self-signed certificates
-// useful when testing HTTPS servers locally. This is only
-// meant to be used by people starting out with a library
-// and simplifying the zero to one phase.
-//
-// The C, O, and CN are respectively country name, organization name,
-// and common name of the certificate. For instance:
-//
-//   C="IT"
-//   O="My Organization"
-//   CN="my_website.com"
-//
-// The output is a certificate file in PEM format and a private
-// key file with the key used to sign the certificate.
-int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
-    HTTP_String cert_file, HTTP_String key_file);
-
-#endif // CERT_INCLUDED//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 // src/socket.h
-//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/socket.h"
 #ifndef SOCKET_INCLUDED
 #define SOCKET_INCLUDED
 // This is a socket abstraction module for non-blocking TCP and TLS sockets.
@@ -105,13 +60,17 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 // which means the user needs to call socket_free to free the socket
 // as it's not unusable.
 
+#include <stdint.h>
+
 #ifdef HTTPS_ENABLED
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
 #endif
 
+#ifndef HTTP_AMALGAMATION
 #include "parse.h"
+#endif
 
 typedef struct {
     int is_ipv6;
@@ -187,9 +146,19 @@ void        socket_close        (Socket *sock);
 void        socket_free         (Socket *sock);
 int         socket_wait         (Socket **socks, int num_socks);
 
-#endif // SOCKET_INCLUDED//////////////////////////////////////////////////////////////////////
+#endif // SOCKET_INCLUDED
+
+////////////////////////////////////////////////////////////////////////////////////////
 // src/basic.c
-//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/basic.c"
+#include <stddef.h>
+#include <string.h>
+
+#ifndef HTTP_AMALGAMATION
+#include "basic.h"
+#endif
 
 bool http_streq(HTTP_String s1, HTTP_String s2)
 {
@@ -246,6 +215,7 @@ static bool is_printable(char c)
     return c >= ' ' && c <= '~';
 }
 
+#include <stdio.h>
 void print_bytes(HTTP_String prefix, HTTP_String src)
 {
     if (src.len == 0)
@@ -285,9 +255,22 @@ void print_bytes(HTTP_String prefix, HTTP_String src)
         cur++;
     }
     putc('\n', stream);
-}//////////////////////////////////////////////////////////////////////
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
 // src/parse.c
-//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/parse.c"
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+#include <assert.h>
+
+#ifndef HTTP_AMALGAMATION
+#include "parse.h"
+#include "basic.h"
+#endif
 
 // From RFC 9112
 	//   request-target = origin-form
@@ -1318,9 +1301,28 @@ HTTP_String http_getcookie(HTTP_Request *req, HTTP_String name)
 {
 	// TODO
 	return (HTTP_String) {NULL, 0};
-}//////////////////////////////////////////////////////////////////////
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
 // src/engine.c
-//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/engine.c"
+#include <stdio.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+#include <stdarg.h>
+#include <assert.h> // TODO: remove some of these headers
+#include <stddef.h>
+#include <limits.h>
+#include <stdint.h>
+#include <string.h>
+
+#ifndef HTTP_AMALGAMATION
+#include "basic.h"
+#include "engine.h"
+#endif
 
 // This is the implementation of a byte queue useful
 // for systems that need to process engs of bytes.
@@ -2301,9 +2303,16 @@ void http_engine_undo(HTTP_Engine *eng)
 		eng->state = HTTP_ENGINE_STATE_CLIENT_PREP_URL;
 	else
 		eng->state = HTTP_ENGINE_STATE_SERVER_PREP_STATUS;
-}//////////////////////////////////////////////////////////////////////
-// src/socket.c
-//////////////////////////////////////////////////////////////////////
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// src/cert.c
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/cert.c"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifdef HTTPS_ENABLED
 #include <openssl/pem.h>
@@ -2313,12 +2322,195 @@ void http_engine_undo(HTTP_Engine *eng)
 #include <openssl/evp.h>
 #include <openssl/bn.h>
 #endif
+
+#ifndef HTTP_AMALGAMATION
+#include "cert.h"
+#endif
+
+#ifdef HTTPS_ENABLED
+
+static EVP_PKEY *generate_rsa_key_pair(int key_bits)
+{
+    EVP_PKEY_CTX *ctx;
+    EVP_PKEY *pkey;
+    
+    // Create the context for key generation
+    ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+    if (!ctx)
+        return NULL;
+    
+    if (EVP_PKEY_keygen_init(ctx) <= 0) {
+        EVP_PKEY_CTX_free(ctx);
+        return NULL;
+    }
+    
+    if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, key_bits) <= 0) {
+        EVP_PKEY_CTX_free(ctx);
+        return NULL;
+    }
+
+    if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
+        EVP_PKEY_CTX_free(ctx);
+        return NULL;
+    }
+
+    EVP_PKEY_CTX_free(ctx);
+    return pkey;
+}
+
+static X509 *create_certificate(EVP_PKEY *pkey, HTTP_String C, HTTP_String O, HTTP_String CN, int days)
+{
+    X509 *x509 = X509_new();
+    if (!x509)
+        return NULL;
+
+    // Set version (version 3)
+    X509_set_version(x509, 2);
+    
+    // Set serial number
+    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
+    
+    // Set validity period
+    X509_gmtime_adj(X509_get_notBefore(x509), 0);
+    X509_gmtime_adj(X509_get_notAfter(x509), 31536000L * days); // days * seconds_per_year
+
+    // Set public key
+    X509_set_pubkey(x509, pkey);
+
+    // Set subject name
+    X509_NAME *name = X509_get_subject_name(x509);
+    X509_NAME_add_entry_by_txt(name, "C",  MBSTRING_ASC, (unsigned char*) C.ptr,  C.len,  -1, 0);
+    X509_NAME_add_entry_by_txt(name, "O",  MBSTRING_ASC, (unsigned char*) O.ptr,  O.len,  -1, 0);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*) CN.ptr, CN.len, -1, 0);
+
+    // Set issuer name (same as subject for self-signed)
+    X509_set_issuer_name(x509, name);
+
+    if (!X509_sign(x509, pkey, EVP_sha256())) {
+        X509_free(x509);
+        return NULL;
+    }
+
+    return x509;
+}
+
+static int save_private_key(EVP_PKEY *pkey, const char *filename)
+{
+    FILE *fp = fopen(filename, "wb");
+    if (!fp)
+        return -1;
+
+    // Write private key in PEM format
+    if (!PEM_write_PrivateKey(fp, pkey, NULL, NULL, 0, NULL, NULL)) {
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+static int cert_save(X509 *x509, const char *filename)
+{
+    FILE *fp = fopen(filename, "wb");
+    if (!fp) {
+        fprintf(stderr, "Error opening file for certificate: %s\n", filename);
+        return -1;
+    }
+
+    // Write certificate in PEM format
+    if (!PEM_write_X509(fp, x509)) {
+        fprintf(stderr, "Error writing certificate\n");
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    printf("Certificate saved to: %s\n", filename);
+    return 0;
+}
+
+int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
+    HTTP_String cert_file, HTTP_String key_file)
+{
+    EVP_PKEY *pkey = generate_rsa_key_pair(2048);
+    if (pkey == NULL)
+        return -1;
+
+    X509 *x509 = create_certificate(pkey, C, O, CN, 1)
+    if (x509 == NULL) {
+        EVP_PKEY_free(pkey);
+        return -1;
+    }
+
+    if (save_private_key(pkey, key_file) < 0) {
+        X509_free(x509);
+        EVP_PKEY_free(pkey);
+        return -1;
+    }
+
+    if (save_certificate(x509, cert_file) < 0) {
+        X509_free(x509);
+        EVP_PKEY_free(pkey);
+        return -1;
+    }
+
+    X509_free(x509);
+    EVP_PKEY_free(pkey);
+    return 0;
+}
+
+#else
+
+int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
+    HTTP_String cert_file, HTTP_String key_file)
+{
+    (void) C;
+    (void) O;
+    (void) CN;
+    (void) cert_file;
+    (void) key_file;
+    return -1;
+}
+
+#endif
+
+////////////////////////////////////////////////////////////////////////////////////////
+// src/socket.c
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/socket.c"
+#include <assert.h> // TODO: organize these includes
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+
 #ifdef _WIN32
 #include <winsock2.h>
 #endif
+
 #ifdef __linux__
+#include <poll.h>
 #include <netdb.h>
 #endif
+
+#ifdef HTTPS_ENABLED
+#include <openssl/pem.h>
+#include <openssl/conf.h>
+#include <openssl/x509v3.h>
+#include <openssl/rsa.h>
+#include <openssl/evp.h>
+#include <openssl/bn.h>
+#endif
+
+#ifndef HTTP_AMALGAMATION
+#include "socket.h"
+#endif
+
 void socket_global_init(void)
 {
 #ifdef HTTPS_ENABLED
@@ -3173,12 +3365,34 @@ int socket_wait(Socket **socks, int num_socks) // TODO: is this used?
     }
 
     return -1;
-}//////////////////////////////////////////////////////////////////////
-// src/client.c
-//////////////////////////////////////////////////////////////////////
+}
 
-// TODO
-#define ERROR printf("error at %s:%d\n", __FILE__, __LINE__);
+////////////////////////////////////////////////////////////////////////////////////////
+// src/client.c
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/client.c"
+#include <stdint.h>
+#include <assert.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#define POLL WSAPoll
+#endif
+
+#ifdef __linux__
+#include <poll.h>
+#define POLL poll
+#endif
+
+#ifndef HTTP_AMALGAMATION
+#include "client.h"
+#include "socket.h"
+#include "engine.h"
+#endif
 
 #define CLIENT_MAX_CONNS 256
 
@@ -3370,7 +3584,7 @@ int http_client_wait(HTTP_Client *client, HTTP_RequestHandle *handle)
         if (num_polled == 0)
             return -1;
 
-        poll(polled, num_polled, -1);
+        POLL(polled, num_polled, -1);
 
         for (int i = 0; i < num_polled; i++) {
 
@@ -3445,7 +3659,6 @@ void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_Strin
     int ret = http_parse_url(url.ptr, url.len, &parsed_url);
     if (ret != url.len) {
         // TODO
-        ERROR;
         return;
     }
 
@@ -3454,7 +3667,6 @@ void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_Strin
         secure = true;
     } else if (!http_streq(parsed_url.scheme, HTTP_STR("http"))) {
         // TODO
-        ERROR;
         return;
     }
 
@@ -3474,7 +3686,6 @@ void http_request_line(HTTP_RequestHandle handle, HTTP_Method method, HTTP_Strin
 
         case HTTP_HOST_MODE_VOID:
         // TODO
-        ERROR;
         return;
     }
 
@@ -3619,167 +3830,40 @@ HTTP_Response *http_post(HTTP_String url, HTTP_String *headers, int num_headers,
 
     *phandle = handle;
     return res;
-}//////////////////////////////////////////////////////////////////////
-// src/cert.c
-//////////////////////////////////////////////////////////////////////
-
-#ifdef HTTPS_ENABLED
-#include <openssl/pem.h>
-#include <openssl/conf.h>
-#include <openssl/x509v3.h>
-#include <openssl/rsa.h>
-#include <openssl/evp.h>
-#include <openssl/bn.h>
-#endif
-#ifdef HTTPS_ENABLED
-
-static EVP_PKEY *generate_rsa_key_pair(int key_bits)
-{
-    EVP_PKEY_CTX *ctx;
-    EVP_PKEY *pkey;
-    
-    // Create the context for key generation
-    ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
-    if (!ctx)
-        return NULL;
-    
-    if (EVP_PKEY_keygen_init(ctx) <= 0) {
-        EVP_PKEY_CTX_free(ctx);
-        return NULL;
-    }
-    
-    if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, key_bits) <= 0) {
-        EVP_PKEY_CTX_free(ctx);
-        return NULL;
-    }
-
-    if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
-        EVP_PKEY_CTX_free(ctx);
-        return NULL;
-    }
-
-    EVP_PKEY_CTX_free(ctx);
-    return pkey;
 }
 
-static X509 *create_certificate(EVP_PKEY *pkey, HTTP_String C, HTTP_String O, HTTP_String CN, int days)
-{
-    X509 *x509 = X509_new();
-    if (!x509)
-        return NULL;
-
-    // Set version (version 3)
-    X509_set_version(x509, 2);
-    
-    // Set serial number
-    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
-    
-    // Set validity period
-    X509_gmtime_adj(X509_get_notBefore(x509), 0);
-    X509_gmtime_adj(X509_get_notAfter(x509), 31536000L * days); // days * seconds_per_year
-
-    // Set public key
-    X509_set_pubkey(x509, pkey);
-
-    // Set subject name
-    X509_NAME *name = X509_get_subject_name(x509);
-    X509_NAME_add_entry_by_txt(name, "C",  MBSTRING_ASC, (unsigned char*) C.ptr,  C.len,  -1, 0);
-    X509_NAME_add_entry_by_txt(name, "O",  MBSTRING_ASC, (unsigned char*) O.ptr,  O.len,  -1, 0);
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*) CN.ptr, CN.len, -1, 0);
-
-    // Set issuer name (same as subject for self-signed)
-    X509_set_issuer_name(x509, name);
-
-    if (!X509_sign(x509, pkey, EVP_sha256())) {
-        X509_free(x509);
-        return NULL;
-    }
-
-    return x509;
-}
-
-static int save_private_key(EVP_PKEY *pkey, const char *filename)
-{
-    FILE *fp = fopen(filename, "wb");
-    if (!fp)
-        return -1;
-
-    // Write private key in PEM format
-    if (!PEM_write_PrivateKey(fp, pkey, NULL, NULL, 0, NULL, NULL)) {
-        fclose(fp);
-        return -1;
-    }
-
-    fclose(fp);
-    return 0;
-}
-
-static int cert_save(X509 *x509, const char *filename)
-{
-    FILE *fp = fopen(filename, "wb");
-    if (!fp) {
-        fprintf(stderr, "Error opening file for certificate: %s\n", filename);
-        return -1;
-    }
-
-    // Write certificate in PEM format
-    if (!PEM_write_X509(fp, x509)) {
-        fprintf(stderr, "Error writing certificate\n");
-        fclose(fp);
-        return -1;
-    }
-
-    fclose(fp);
-    printf("Certificate saved to: %s\n", filename);
-    return 0;
-}
-
-int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
-    HTTP_String cert_file, HTTP_String key_file)
-{
-    EVP_PKEY *pkey = generate_rsa_key_pair(2048);
-    if (pkey == NULL)
-        return -1;
-
-    X509 *x509 = create_certificate(pkey, C, O, CN, 1)
-    if (x509 == NULL) {
-        EVP_PKEY_free(pkey);
-        return -1;
-    }
-
-    if (save_private_key(pkey, key_file) < 0) {
-        X509_free(x509);
-        EVP_PKEY_free(pkey);
-        return -1;
-    }
-
-    if (save_certificate(x509, cert_file) < 0) {
-        X509_free(x509);
-        EVP_PKEY_free(pkey);
-        return -1;
-    }
-
-    X509_free(x509);
-    EVP_PKEY_free(pkey);
-    return 0;
-}
-
-#else
-
-int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
-    HTTP_String cert_file, HTTP_String key_file)
-{
-    (void) C;
-    (void) O;
-    (void) CN;
-    (void) cert_file;
-    (void) key_file;
-    return -1;
-}
-
-#endif//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 // src/server.c
-//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/server.c"
+#include <stdint.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#define POLL WSAPoll
+#define CLOSE_SOCKET closesocket
+#endif
+
+#ifdef __linux__
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <poll.h>
+#define POLL poll
+#define CLOSE_SOCKET close
+#endif
+
+#ifndef HTTP_AMALGAMATION
+#include "engine.h"
+#include "socket.h"
+#include "server.h"
+#endif
 
 #define MAX_CONNS (1<<10)
 
@@ -3813,12 +3897,12 @@ static int listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int b
     {
         int flags = fcntl(listen_fd, F_GETFL, 0);
         if (flags < 0) {
-            close(listen_fd);
+            CLOSE_SOCKET(listen_fd);
             return -1;
         }
 
         if (fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-            close(listen_fd);
+            CLOSE_SOCKET(listen_fd);
             return -1;
         }
     }
@@ -3835,7 +3919,7 @@ static int listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int b
 
         _Static_assert(sizeof(struct in_addr) == sizeof(HTTP_IPv4));
         if (http_parse_ipv4(addr.ptr, addr.len, (HTTP_IPv4*) &addr_buf) < 0) {
-            close(listen_fd);
+            CLOSE_SOCKET(listen_fd);
             return -1;
         }
     }
@@ -3845,12 +3929,12 @@ static int listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int b
     bind_buf.sin_addr   = addr_buf;
     bind_buf.sin_port   = htons(port);
     if (bind(listen_fd, (struct sockaddr*) &bind_buf, sizeof(bind_buf)) < 0) {
-        close(listen_fd);
+        CLOSE_SOCKET(listen_fd);
         return -1;
     }
 
     if (listen(listen_fd, backlog) < 0) {
-        close(listen_fd);
+        CLOSE_SOCKET(listen_fd);
         return -1;
     }
 
@@ -3893,7 +3977,7 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
     else {
 
         if (socket_group_init_server(&server->group, cert_key, private_key) < 0) {
-            close(server->listen_fd);
+            CLOSE_SOCKET(server->listen_fd);
             free(server);
             return NULL;
         }
@@ -3901,7 +3985,7 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
         server->secure_fd = listen_socket(addr, secure_port, reuse_addr, backlog);
         if (server->secure_fd < 0) {
             socket_group_free(&server->group);
-            close(server->listen_fd);
+            CLOSE_SOCKET(server->listen_fd);
             free(server);
             return NULL;
         }
@@ -3930,8 +4014,8 @@ void http_server_free(HTTP_Server *server)
         // TODO
     }
 
-    close(server->secure_fd);
-    close(server->listen_fd);
+    CLOSE_SOCKET(server->secure_fd);
+    CLOSE_SOCKET(server->listen_fd);
     if (server->secure_fd != -1)
         socket_group_free(&server->group);
     free(server);
@@ -4006,7 +4090,7 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
         }
 
         int timeout = -1;
-        poll(polled, num_polled, timeout);
+        POLL(polled, num_polled, timeout);
 
         for (int i = 0; i < num_polled; i++) {
 
@@ -4212,16 +4296,43 @@ void http_response_done(HTTP_ResponseHandle res)
         http_engine_free(&conn->engine);
         server->num_conns--;
     }
-}//////////////////////////////////////////////////////////////////////
-// src/router.c
-//////////////////////////////////////////////////////////////////////
+}
 
-#ifndef _WIN32
+////////////////////////////////////////////////////////////////////////////////////////
+// src/router.c
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/router.c"
+#include <string.h>
+#include <stdlib.h>
+#include <limits.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#ifdef __linux__
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #endif
+
+#ifndef HTTP_AMALGAMATION
+#include "router.h"
+#endif
+
+#ifndef HTTP_AMALGAMATION
+bool is_alpha(char c)
+{
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+bool is_digit(char c)
+{
+	return c >= '0' && c <= '9';
+}
+#endif // HTTP_AMALGAMATION
+
 typedef enum {
 	ROUTE_STATIC_DIR,
 	ROUTE_DYNAMIC,

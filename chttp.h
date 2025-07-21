@@ -1,19 +1,13 @@
-/*
- * cHTTP Library - Amalgamated Header
- * Generated automatically - do not edit manually
- */
+#ifndef HTTP_AMALGAMATION
+#define HTTP_AMALGAMATION
 
-#ifndef HTTP_AMALGAMATION_H
-#define HTTP_AMALGAMATION_H
+// This file was generated automatically. Do not modify directly!
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 // src/basic.h
-//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/basic.h"
 #ifndef CHTTP_BASIC_INCLUDED
 #define CHTTP_BASIC_INCLUDED
 
@@ -91,13 +85,19 @@ HTTP_String http_trim(HTTP_String s);
 #define HTTP_ASSERT(X) {if (!(X)) { __builtin_trap(); }}
 #endif
 
-#endif // CHTTP_BASIC_INCLUDED//////////////////////////////////////////////////////////////////////
-// src/parse.h
-//////////////////////////////////////////////////////////////////////
+#endif // CHTTP_BASIC_INCLUDED
 
+////////////////////////////////////////////////////////////////////////////////////////
+// src/parse.h
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/parse.h"
 #ifndef PARSE_INCLUDED
 #define PARSE_INCLUDED
+
+#ifndef HTTP_AMALGAMATION
 #include "basic.h"
+#endif
 
 #define HTTP_MAX_HEADERS 32
 
@@ -187,13 +187,19 @@ HTTP_String http_getqueryparam  (HTTP_Request *req, HTTP_String name);
 HTTP_String http_getbodyparam   (HTTP_Request *req, HTTP_String name);
 HTTP_String http_getcookie      (HTTP_Request *req, HTTP_String name);
 
-#endif // PARSE_INCLUDED//////////////////////////////////////////////////////////////////////
-// src/engine.h
-//////////////////////////////////////////////////////////////////////
+#endif // PARSE_INCLUDED
 
+////////////////////////////////////////////////////////////////////////////////////////
+// src/engine.h
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/engine.h"
 #ifndef HTTP_ENGINE_INCLUDED
 #define HTTP_ENGINE_INCLUDED
+
+#ifndef HTTP_AMALGAMATION
 #include "parse.h"
+#endif
 
 typedef enum {
 	HTTP_MEMFUNC_MALLOC,
@@ -309,15 +315,52 @@ void             http_engine_bodyack (HTTP_Engine *eng, int num);
 void             http_engine_done    (HTTP_Engine *eng);
 void             http_engine_undo    (HTTP_Engine *eng);
 
-#endif // HTTP_ENGINE_INCLUDED//////////////////////////////////////////////////////////////////////
-// src/client.h
-//////////////////////////////////////////////////////////////////////
+#endif // HTTP_ENGINE_INCLUDED
 
+////////////////////////////////////////////////////////////////////////////////////////
+// src/cert.h
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/cert.h"
+#ifndef CERT_INCLUDED
+#define CERT_INCLUDED
+
+#ifndef HTTP_AMALGAMATION
+#include "basic.h"
+#endif
+
+// This is an utility to create self-signed certificates
+// useful when testing HTTPS servers locally. This is only
+// meant to be used by people starting out with a library
+// and simplifying the zero to one phase.
+//
+// The C, O, and CN are respectively country name, organization name,
+// and common name of the certificate. For instance:
+//
+//   C="IT"
+//   O="My Organization"
+//   CN="my_website.com"
+//
+// The output is a certificate file in PEM format and a private
+// key file with the key used to sign the certificate.
+int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
+    HTTP_String cert_file, HTTP_String key_file);
+
+#endif // CERT_INCLUDED
+
+////////////////////////////////////////////////////////////////////////////////////////
+// src/client.h
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/client.h"
 #ifndef CLIENT_INCLUDED
 #define CLIENT_INCLUDED
 
 #include <stdbool.h>
+
+#ifndef HTTP_AMALGAMATION
 #include "parse.h"
+#endif
 
 // Initialize the global state of cHTTP.
 //
@@ -415,15 +458,21 @@ HTTP_Response *http_post(HTTP_String url,
     HTTP_String *headers, int num_headers,
     HTTP_String body, HTTP_RequestHandle *phandle);
 
-#endif // CLIENT_INCLUDED//////////////////////////////////////////////////////////////////////
-// src/server.h
-//////////////////////////////////////////////////////////////////////
+#endif // CLIENT_INCLUDED
 
+////////////////////////////////////////////////////////////////////////////////////////
+// src/server.h
+////////////////////////////////////////////////////////////////////////////////////////
+
+#line 1 "src/server.h"
 #ifndef HTTP_SERVER_INCLUDED
 #define HTTP_SERVER_INCLUDED
 
 #include <stdint.h>
+
+#ifndef HTTP_AMALGAMATION
 #include "parse.h"
+#endif
 
 typedef struct {
     void *data0;
@@ -450,40 +499,19 @@ void         http_response_bodyack   (HTTP_ResponseHandle res, int num);
 void         http_response_undo      (HTTP_ResponseHandle res);
 void         http_response_done      (HTTP_ResponseHandle res);
 
-#endif // HTTP_SERVER_INCLUDED//////////////////////////////////////////////////////////////////////
-// src/cert.h
-//////////////////////////////////////////////////////////////////////
+#endif // HTTP_SERVER_INCLUDED
 
-#ifndef CERT_INCLUDED
-#define CERT_INCLUDED
-
-#include "basic.h"
-
-// This is an utility to create self-signed certificates
-// useful when testing HTTPS servers locally. This is only
-// meant to be used by people starting out with a library
-// and simplifying the zero to one phase.
-//
-// The C, O, and CN are respectively country name, organization name,
-// and common name of the certificate. For instance:
-//
-//   C="IT"
-//   O="My Organization"
-//   CN="my_website.com"
-//
-// The output is a certificate file in PEM format and a private
-// key file with the key used to sign the certificate.
-int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
-    HTTP_String cert_file, HTTP_String key_file);
-
-#endif // CERT_INCLUDED//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 // src/router.h
-//////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 
+#line 1 "src/router.h"
 #ifndef HTTP_ROUTER_INCLUDED
 #define HTTP_ROUTER_INCLUDED
 
+#ifndef HTTP_AMALGAMATION
 #include "server.h"
+#endif
 
 typedef struct HTTP_Router HTTP_Router;
 typedef void (*HTTP_RouterFunc)(HTTP_Request*, HTTP_ResponseHandle, void*);;
@@ -496,8 +524,4 @@ void         http_router_func    (HTTP_Router *router, HTTP_Method method, HTTP_
 int          http_serve          (char *addr, int port, HTTP_Router *router);
 
 #endif // HTTP_ROUTER_INCLUDED
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* HTTP_AMALGAMATION_H */
+#endif // HTTP_AMALGAMATION

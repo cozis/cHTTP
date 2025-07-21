@@ -61,7 +61,9 @@
 #include <openssl/x509v3.h>
 #endif
 
+#ifndef HTTP_AMALGAMATION
 #include "parse.h"
+#endif
 
 typedef struct {
     int is_ipv6;

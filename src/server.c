@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <stdbool.h>
 
@@ -10,14 +11,20 @@
 #endif
 
 #ifdef __linux__
+#include <fcntl.h>
+#include <unistd.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 #include <poll.h>
+#define POLL poll
 #define CLOSE_SOCKET close
 #endif
 
+#ifndef HTTP_AMALGAMATION
 #include "engine.h"
 #include "socket.h"
 #include "server.h"
+#endif
 
 #define MAX_CONNS (1<<10)
 

@@ -1,6 +1,9 @@
 #ifndef HTTP_ENGINE_INCLUDED
 #define HTTP_ENGINE_INCLUDED
+
+#ifndef HTTP_AMALGAMATION
 #include "parse.h"
+#endif
 
 typedef enum {
 	HTTP_MEMFUNC_MALLOC,
