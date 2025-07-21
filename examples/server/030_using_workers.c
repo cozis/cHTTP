@@ -52,7 +52,7 @@ typedef enum {
 
 typedef struct {
     JobType type;
-    HTTP_ResponseHandle res;
+    HTTP_ResponseBuilder builder;
 } Job;
 
 // Maximum number of jobs that can be buffered at once
@@ -100,15 +100,15 @@ ThreadReturn worker(void*)
             break;
 
             case JOB_A:
-            http_response_status(job.res, 200);
-            http_response_body(job.res, HTTP_STR("Job A completed"));
-            http_response_done(job.res);
+            http_response_builder_status(job.builder, 200);
+            http_response_builder_body(job.builder, HTTP_STR("Job A completed"));
+            http_response_builder_done(job.builder);
             break;
 
             case JOB_B:
-            http_response_status(job.res, 200);
-            http_response_body(job.res, HTTP_STR("Job B completed"));
-            http_response_done(job.res);
+            http_response_builder_status(job.builder, 200);
+            http_response_builder_body(job.builder, HTTP_STR("Job B completed"));
+            http_response_builder_done(job.builder);
             break;
         }
     }
@@ -131,9 +131,9 @@ int main(void)
     for (;;) {
 
         HTTP_Request *req;
-        HTTP_ResponseHandle res;
+        HTTP_ResponseBuilder builder;
 
-        int ret = http_server_wait(server, &req, &res);
+        int ret = http_server_wait(server, &req, &builder);
         if (ret < 0) return -1;
 
         if (http_streq(req->url.path, HTTP_STR("/endpoint_A"))) {
@@ -143,7 +143,7 @@ int main(void)
 
             Job job;
             job.type = JOB_A;
-            job.res  = res;
+            job.builder = builder;
             push_job(job, true);
         
         } else if (http_streq(req->url.path, HTTP_STR("/endpoint_B"))) {
@@ -155,18 +155,18 @@ int main(void)
 
             Job job;
             job.type = JOB_B;
-            job.res = res;
+            job.builder = builder;
             if (!push_job(job, false)) {
-                http_response_status(res, 503);
-                http_response_done(res);
+                http_response_builder_status(builder, 503);
+                http_response_builder_done(builder);
             }
 
         } else {
 
             // Other endpoints may resolve immediately
 
-            http_response_status(res, 404);
-            http_response_done(res);
+            http_response_builder_status(builder, 404);
+            http_response_builder_done(builder);
         }
     }
 

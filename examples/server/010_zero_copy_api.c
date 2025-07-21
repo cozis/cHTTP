@@ -9,7 +9,7 @@ int main(void)
     http_global_init();
 
     // All the setup is identical to the previous example.
-    // The only thing that changes where "http_response_body"
+    // The only thing that changes where "http_response_builder_body"
     // is called.
 
     HTTP_Server *server = http_server_init(HTTP_STR("127.0.0.1"), 8080);
@@ -19,19 +19,19 @@ int main(void)
     for (;;) {
 
         HTTP_Request *req;
-        HTTP_ResponseHandle res;
+        HTTP_ResponseBuilder builder;
 
-        int ret = http_server_wait(server, &req, &res);
+        int ret = http_server_wait(server, &req, &builder);
         if (ret < 0) return -1;
 
-        http_response_status(res, 200);
-        http_response_header(res, HTTP_STR("Content-Type: text/plain"));
+        http_response_builder_status(builder, 200);
+        http_response_builder_header(builder, HTTP_STR("Content-Type: text/plain"));
 
         // The previous example used the *_body function to
         // write the response body in chunks:
         //
-        //   http_response_body(res, HTTP_STR("Hello"));
-        //   http_response_body(res, HTTP_STR(", world!"));
+        //   http_response_builder_body(builder, HTTP_STR("Hello"));
+        //   http_response_builder_body(builder, HTTP_STR(", world!"));
         //
         // This function reads from an user buffer and copies
         // the data in the connection's output buffer. If the
@@ -53,7 +53,7 @@ int main(void)
         int  example_data_len = sizeof(example_data)-1;
 
         // Tell the server how much data we are going to write
-        http_response_bodycap(res, example_data_len);
+        http_response_builder_bodycap(builder, example_data_len);
 
         int cap;
         char *dst;
@@ -62,7 +62,7 @@ int main(void)
         // output parameter [cap] is the capacity of the region
         // and is equal or larger than the data we requested
         // with *_bodycap
-        dst = http_response_bodybuf(res, &cap);
+        dst = http_response_builder_bodybuf(builder, &cap);
 
         // Write the data directly into the output buffer. In
         // this example we are copying from memory, but you could
@@ -73,7 +73,7 @@ int main(void)
 
         // Tell the server how much bytes we have written to
         // the provided region.
-        http_response_bodyack(res, example_data_len);
+        http_response_builder_bodyack(builder, example_data_len);
 
         // The reason we had to guard the [memcpy] by checking the
         // [dst] pointer is that if an error occurred internally
@@ -84,7 +84,7 @@ int main(void)
         // as nothing bad happened.
 
         // As usual, mark the response as complete
-        http_response_done(res);
+        http_response_builder_done(builder);
 
         // If we're being being honest, this is not a zero-copy
         // interface. It's more like an N-1 copy interface as in

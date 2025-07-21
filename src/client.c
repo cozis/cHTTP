@@ -230,7 +230,7 @@ int http_client_wait(HTTP_Client *client, HTTP_Response **result, void **user_da
     return 0;
 }
 
-static ClientConnection *builder2conn(HTTP_RequestBuilder handle)
+static ClientConnection *client_builder_to_conn(HTTP_RequestBuilder handle)
 {
     if (handle.data0 == NULL)
         return NULL;
@@ -250,7 +250,7 @@ static ClientConnection *builder2conn(HTTP_RequestBuilder handle)
 
 void http_request_builder_user_data(HTTP_RequestBuilder builder, void *user_data)
 {
-    ClientConnection *conn = builder2conn(builder);
+    ClientConnection *conn = client_builder_to_conn(builder);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT)
@@ -261,7 +261,7 @@ void http_request_builder_user_data(HTTP_RequestBuilder builder, void *user_data
 
 void http_request_builder_trace(HTTP_RequestBuilder builder, bool trace)
 {
-    ClientConnection *conn = builder2conn(builder);
+    ClientConnection *conn = client_builder_to_conn(builder);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT)
@@ -272,7 +272,7 @@ void http_request_builder_trace(HTTP_RequestBuilder builder, bool trace)
 
 void http_request_builder_line(HTTP_RequestBuilder builder, HTTP_Method method, HTTP_String url)
 {
-    ClientConnection *conn = builder2conn(builder);
+    ClientConnection *conn = client_builder_to_conn(builder);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT)
@@ -320,7 +320,7 @@ void http_request_builder_line(HTTP_RequestBuilder builder, HTTP_Method method, 
 
 void http_request_builder_header(HTTP_RequestBuilder handle, HTTP_String str)
 {
-    ClientConnection *conn = builder2conn(handle);
+    ClientConnection *conn = client_builder_to_conn(handle);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT)
@@ -331,7 +331,7 @@ void http_request_builder_header(HTTP_RequestBuilder handle, HTTP_String str)
 
 void http_request_builder_body(HTTP_RequestBuilder handle, HTTP_String str)
 {
-    ClientConnection *conn = builder2conn(handle);
+    ClientConnection *conn = client_builder_to_conn(handle);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT)
@@ -343,7 +343,7 @@ void http_request_builder_body(HTTP_RequestBuilder handle, HTTP_String str)
 void http_request_builder_submit(HTTP_RequestBuilder handle)
 {
     HTTP_Client *client = handle.data0;
-    ClientConnection *conn = builder2conn(handle);
+    ClientConnection *conn = client_builder_to_conn(handle);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT &&

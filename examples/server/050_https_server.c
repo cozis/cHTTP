@@ -60,16 +60,16 @@ int main(void)
     for (;;) {
 
         HTTP_Request *req;
-        HTTP_ResponseHandle res;
+        HTTP_ResponseBuilder builder;
 
-        int ret = http_server_wait(server, &req, &res);
+        int ret = http_server_wait(server, &req, &builder);
         if (ret < 0) return -1;
 
-        http_response_status(res, 200);
-        http_response_header(res, HTTP_STR("Content-Type: text/plain"));
-        http_response_body(res, HTTP_STR("Hello"));
-        http_response_body(res, HTTP_STR(", world!"));
-        http_response_done(res);
+        http_response_builder_status(builder, 200);
+        http_response_builder_header(builder, HTTP_STR("Content-Type: text/plain"));
+        http_response_builder_body(builder, HTTP_STR("Hello"));
+        http_response_builder_body(builder, HTTP_STR(", world!"));
+        http_response_builder_done(builder);
     }
 
     http_server_free(server);

@@ -301,7 +301,7 @@ static int file_read(File file, char *dst, int max)
 #endif
 }
 
-static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoint, HTTP_String base_path, HTTP_String endpoint)
+static int serve_file_or_index(HTTP_ResponseBuilder res, HTTP_String base_endpoint, HTTP_String base_path, HTTP_String endpoint)
 {
 	char mem[1<<12];
 	int ret = swap_parents(base_endpoint, base_path, endpoint, mem, sizeof(mem));
@@ -313,8 +313,8 @@ static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoin
 	File file;
 	ret = file_open(path.ptr, &file, &size);
 	if (ret == -1) {
-		http_response_status(res, 500);
-		http_response_done(res);
+		http_response_builder_status(res, 500);
+		http_response_builder_done(res);
 		return 1;
 	}
 	if (ret == 1) {
@@ -323,8 +323,8 @@ static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoin
 
 		char index[] = "index.html";
 		if (path.len + sizeof(index) + 1 > sizeof(mem)) {
-			http_response_status(res, 500);
-			http_response_done(res);
+			http_response_builder_status(res, 500);
+			http_response_builder_done(res);
 			return 1;
 		}
 		path.ptr[path.len++] = '/';
@@ -333,8 +333,8 @@ static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoin
 
 		ret = file_open(path.ptr, &file, &size);
 		if (ret == -1) {
-			http_response_status(res, 500);
-			http_response_done(res);
+			http_response_builder_status(res, 500);
+			http_response_builder_done(res);
 			return 1;
 		}
 		if (ret == 1)
@@ -344,9 +344,9 @@ static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoin
 
 	int cap;
 	char *dst;
-	http_response_status(res, 200);
-	http_response_bodycap(res, size);
-	dst = http_response_bodybuf(res, &cap);
+	http_response_builder_status(res, 200);
+	http_response_builder_bodycap(res, size);
+	dst = http_response_builder_bodybuf(res, &cap);
 	if (dst) {
 		int copied = 0;
 		while (copied < size) {
@@ -356,28 +356,28 @@ static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoin
 			copied += ret;
 		}
 		if (copied < size) goto err;
-		http_response_bodyack(res, size);
+		http_response_builder_bodyack(res, size);
 	}
-	http_response_done(res);
+	http_response_builder_done(res);
 	file_close(file);
 	return 1;
 err:
-	http_response_bodyack(res, 0);
-	http_response_undo(res);
-	http_response_status(res, 500);
-	http_response_done(res);
+	http_response_builder_bodyack(res, 0);
+	http_response_builder_undo(res);
+	http_response_builder_status(res, 500);
+	http_response_builder_done(res);
 	file_close(file);
 	return 1;
 }
 
-static int serve_dynamic_route(Route *route, HTTP_Request *req, HTTP_ResponseHandle res)
+static int serve_dynamic_route(Route *route, HTTP_Request *req, HTTP_ResponseBuilder res)
 {
 	char path_mem[1<<12];
 	int path_len = sanitize_path(req->url.path, path_mem, (int) sizeof(path_mem));
 	if (path_len < 0) {
-		http_response_status(res, 400);
-		http_response_body(res, HTTP_STR("Invalid path"));
-		http_response_done(res);
+		http_response_builder_status(res, 400);
+		http_response_builder_body(res, HTTP_STR("Invalid path"));
+		http_response_builder_done(res);
 		return 1;
 	}
 	HTTP_String path = {path_mem, path_len};
@@ -389,7 +389,7 @@ static int serve_dynamic_route(Route *route, HTTP_Request *req, HTTP_ResponseHan
 	return 1;
 }
 
-void http_router_resolve(HTTP_Router *router, HTTP_Request *req, HTTP_ResponseHandle res)
+void http_router_resolve(HTTP_Router *router, HTTP_Request *req, HTTP_ResponseBuilder res)
 {
 	for (int i = 0; i < router->num_routes; i++) {
 		Route *route = &router->routes[i];
@@ -408,13 +408,13 @@ void http_router_resolve(HTTP_Router *router, HTTP_Request *req, HTTP_ResponseHa
 			break;
 
 		default:
-			http_response_status(res, 500);
-			http_response_done(res);
+			http_response_builder_status(res, 500);
+			http_response_builder_done(res);
 			return;
 		}
 	}
-	http_response_status(res, 404);
-	http_response_done(res);
+	http_response_builder_status(res, 404);
+	http_response_builder_done(res);
 }
 
 int http_serve(char *addr, int port, HTTP_Router *router)
@@ -429,7 +429,7 @@ int http_serve(char *addr, int port, HTTP_Router *router)
 
 	for (;;) {
 		HTTP_Request *req;
-		HTTP_ResponseHandle res;
+		HTTP_ResponseBuilder res;
 		ret = http_server_wait(server, &req, &res);
 		if (ret < 0) {
 			http_server_free(server);

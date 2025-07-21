@@ -30,10 +30,10 @@ int main(void)
     for (;;) {
 
         HTTP_Request *req;
-        HTTP_ResponseHandle res;
+        HTTP_ResponseBuilder builder;
 
         // Block until a request is available
-        int ret = http_server_wait(server, &req, &res);
+        int ret = http_server_wait(server, &req, &builder);
 
         // The wait functions returns 0 on success and -1
         // on error. By "error" I mean an unrecoverable
@@ -70,19 +70,19 @@ int main(void)
         // order.
 
         // First the status code
-        http_response_status(res, 200);
+        http_response_builder_status(builder, 200);
 
         // Then zero or more headers
-        http_response_header(res, HTTP_STR("Content-Type: text/plain"));
+        http_response_builder_header(builder, HTTP_STR("Content-Type: text/plain"));
 
         // Then you can write zero or more chunks of the response body
-        http_response_body(res, HTTP_STR("Hello"));
-        http_response_body(res, HTTP_STR(", world!"));
+        http_response_builder_body(builder, HTTP_STR("Hello"));
+        http_response_builder_body(builder, HTTP_STR(", world!"));
 
         // Then, mark the request as complete (Very important or the server will hang!)
-        http_response_done(res);
+        http_response_builder_done(builder);
 
-        // Note that none of the http_response_* functions return errors.
+        // Note that none of the http_response_builder_* functions return errors.
         // This is by design to simplify user endpoint code. If at any point
         // something goes wrong, the server will send a code 4xx or 5xx to
         // the client or abort the TCP connection entirely.

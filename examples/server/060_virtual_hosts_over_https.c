@@ -87,8 +87,8 @@ int main(void)
     for (;;) {
 
         HTTP_Request *req;
-        HTTP_ResponseHandle res;
-        ret = http_server_wait(server, &req, &res);
+        HTTP_ResponseBuilder builder;
+        ret = http_server_wait(server, &req, &builder);
         if (ret < 0)
             break;
 
@@ -98,24 +98,24 @@ int main(void)
 
         if (http_streq(host, HTTP_STR("websiteB.com"))) {
 
-            http_response_status(res, 200);
-            http_response_body(res, HTTP_STR("Hello from websiteB.com!"));
-            http_response_done(res);
+            http_response_builder_status(builder, 200);
+            http_response_builder_body(builder, HTTP_STR("Hello from websiteB.com!"));
+            http_response_builder_done(builder);
 
         } else if (http_streq(host, HTTP_STR("websiteC.com"))) {
 
-            http_response_status(res, 200);
-            http_response_body(res, HTTP_STR("Hello from websiteC.com!"));
-            http_response_done(res);
+            http_response_builder_status(builder, 200);
+            http_response_builder_body(builder, HTTP_STR("Hello from websiteC.com!"));
+            http_response_builder_done(builder);
 
         } else {
 
             // Serve websiteA.com by default to be consistent
             // with the certificate setup
 
-            http_response_status(res, 200);
-            http_response_body(res, HTTP_STR("Hello from websiteA.com!"));
-            http_response_done(res);
+            http_response_builder_status(builder, 200);
+            http_response_builder_body(builder, HTTP_STR("Hello from websiteA.com!"));
+            http_response_builder_done(builder);
         }
     }
 

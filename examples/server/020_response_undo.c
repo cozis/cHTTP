@@ -15,15 +15,15 @@ int main(void)
     for (;;) {
 
         HTTP_Request *req;
-        HTTP_ResponseHandle res;
+        HTTP_ResponseBuilder builder;
 
-        int ret = http_server_wait(server, &req, &res);
+        int ret = http_server_wait(server, &req, &builder);
         if (ret < 0) return -1;
 
         // Say we are building a request..
 
-        http_response_status(res, 200);
-        http_response_header(res, HTTP_STR("Content-Type: text/plain"));
+        http_response_builder_status(builder, 200);
+        http_response_builder_header(builder, HTTP_STR("Content-Type: text/plain"));
 
         // .. and in the middle of building an error condition
         // occurs. Maybe a file was missing or an allocation fails.
@@ -37,19 +37,19 @@ int main(void)
         bool error_occurred = true;
         if (error_occurred) {
 
-            http_response_undo(res);
+            http_response_builder_undo(builder);
 
             // Now we are back to setting the status code
-            http_response_status(res, 500);
-            http_response_header(res, HTTP_STR("Content-Type: text/plain"));
-            http_response_body(res, HTTP_STR("An error occurred!"));
-            http_response_done(res);
+            http_response_builder_status(builder, 500);
+            http_response_builder_header(builder, HTTP_STR("Content-Type: text/plain"));
+            http_response_builder_body(builder, HTTP_STR("An error occurred!"));
+            http_response_builder_done(builder);
 
         } else {
 
             // If no error occures, we finish as planned
-            http_response_body(res, HTTP_STR("Hello, world!"));
-            http_response_done(res);
+            http_response_builder_body(builder, HTTP_STR("Hello, world!"));
+            http_response_builder_done(builder);
         }
     }
 

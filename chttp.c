@@ -4279,7 +4279,7 @@ int http_client_wait(HTTP_Client *client, HTTP_Response **result, void **user_da
     return 0;
 }
 
-static ClientConnection *builder2conn(HTTP_RequestBuilder handle)
+static ClientConnection *client_builder_to_conn(HTTP_RequestBuilder handle)
 {
     if (handle.data0 == NULL)
         return NULL;
@@ -4299,7 +4299,7 @@ static ClientConnection *builder2conn(HTTP_RequestBuilder handle)
 
 void http_request_builder_user_data(HTTP_RequestBuilder builder, void *user_data)
 {
-    ClientConnection *conn = builder2conn(builder);
+    ClientConnection *conn = client_builder_to_conn(builder);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT)
@@ -4310,7 +4310,7 @@ void http_request_builder_user_data(HTTP_RequestBuilder builder, void *user_data
 
 void http_request_builder_trace(HTTP_RequestBuilder builder, bool trace)
 {
-    ClientConnection *conn = builder2conn(builder);
+    ClientConnection *conn = client_builder_to_conn(builder);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT)
@@ -4321,7 +4321,7 @@ void http_request_builder_trace(HTTP_RequestBuilder builder, bool trace)
 
 void http_request_builder_line(HTTP_RequestBuilder builder, HTTP_Method method, HTTP_String url)
 {
-    ClientConnection *conn = builder2conn(builder);
+    ClientConnection *conn = client_builder_to_conn(builder);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT)
@@ -4369,7 +4369,7 @@ void http_request_builder_line(HTTP_RequestBuilder builder, HTTP_Method method, 
 
 void http_request_builder_header(HTTP_RequestBuilder handle, HTTP_String str)
 {
-    ClientConnection *conn = builder2conn(handle);
+    ClientConnection *conn = client_builder_to_conn(handle);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT)
@@ -4380,7 +4380,7 @@ void http_request_builder_header(HTTP_RequestBuilder handle, HTTP_String str)
 
 void http_request_builder_body(HTTP_RequestBuilder handle, HTTP_String str)
 {
-    ClientConnection *conn = builder2conn(handle);
+    ClientConnection *conn = client_builder_to_conn(handle);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT)
@@ -4392,7 +4392,7 @@ void http_request_builder_body(HTTP_RequestBuilder handle, HTTP_String str)
 void http_request_builder_submit(HTTP_RequestBuilder handle)
 {
     HTTP_Client *client = handle.data0;
-    ClientConnection *conn = builder2conn(handle);
+    ClientConnection *conn = client_builder_to_conn(handle);
     if (conn == NULL)
         return;
     if (conn->state != CLIENT_CONNECTION_INIT &&
@@ -4600,7 +4600,7 @@ static void* server_memfunc(HTTP_MemoryFuncTag tag, void *ptr, int len, void *da
     return NULL;
 }
 
-int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandle *handle)
+int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuilder *builder)
 {
     while (server->ready_count == 0) {
 
@@ -4701,63 +4701,63 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
     server->ready_count--;
 
     *req = http_engine_getreq(&server->conns[index].engine);
-    *handle = (HTTP_ResponseHandle) { server, index, server->conns[index].gen };
+    *builder = (HTTP_ResponseBuilder) { server, index, server->conns[index].gen };
     return 0;
 }
 
 static Connection*
-handle2conn(HTTP_ResponseHandle handle)
+server_builder_to_conn(HTTP_ResponseBuilder builder)
 {
-	HTTP_Server *server = handle.data0;
-	if (handle.data1 >= MAX_CONNS)
+	HTTP_Server *server = builder.data0;
+	if (builder.data1 >= MAX_CONNS)
 		return NULL;
 
-	Connection *conn = &server->conns[handle.data1];
-	if (conn->gen != handle.data2)
+	Connection *conn = &server->conns[builder.data1];
+	if (conn->gen != builder.data2)
 		return NULL;
 
 	return conn;
 }
 
-void http_response_status(HTTP_ResponseHandle res, int status)
+void http_response_builder_status(HTTP_ResponseBuilder res, int status)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_status(&conn->engine, status);
 }
 
-void http_response_header(HTTP_ResponseHandle res, HTTP_String str)
+void http_response_builder_header(HTTP_ResponseBuilder res, HTTP_String str)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_header(&conn->engine, str);
 }
 
-void http_response_body(HTTP_ResponseHandle res, HTTP_String str)
+void http_response_builder_body(HTTP_ResponseBuilder res, HTTP_String str)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_body(&conn->engine, str);
 }
 
-void http_response_bodycap(HTTP_ResponseHandle res, int mincap)
+void http_response_builder_bodycap(HTTP_ResponseBuilder res, int mincap)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_bodycap(&conn->engine, mincap);
 }
 
-char *http_response_bodybuf(HTTP_ResponseHandle res, int *cap)
+char *http_response_builder_bodybuf(HTTP_ResponseBuilder res, int *cap)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL) {
 		*cap = 0;
 		return NULL;
@@ -4766,28 +4766,28 @@ char *http_response_bodybuf(HTTP_ResponseHandle res, int *cap)
 	return http_engine_bodybuf(&conn->engine, cap);
 }
 
-void http_response_bodyack(HTTP_ResponseHandle res, int num)
+void http_response_builder_bodyack(HTTP_ResponseBuilder res, int num)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_bodyack(&conn->engine, num);
 }
 
-void http_response_undo(HTTP_ResponseHandle res)
+void http_response_builder_undo(HTTP_ResponseBuilder res)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_undo(&conn->engine);
 }
 
-void http_response_done(HTTP_ResponseHandle res)
+void http_response_builder_done(HTTP_ResponseBuilder res)
 {
     HTTP_Server *server = res.data0;
-    Connection *conn = handle2conn(res);
+    Connection *conn = server_builder_to_conn(res);
     if (conn == NULL)
         return;
 
@@ -5117,7 +5117,7 @@ static int file_read(File file, char *dst, int max)
 #endif
 }
 
-static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoint, HTTP_String base_path, HTTP_String endpoint)
+static int serve_file_or_index(HTTP_ResponseBuilder res, HTTP_String base_endpoint, HTTP_String base_path, HTTP_String endpoint)
 {
 	char mem[1<<12];
 	int ret = swap_parents(base_endpoint, base_path, endpoint, mem, sizeof(mem));
@@ -5129,8 +5129,8 @@ static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoin
 	File file;
 	ret = file_open(path.ptr, &file, &size);
 	if (ret == -1) {
-		http_response_status(res, 500);
-		http_response_done(res);
+		http_response_builder_status(res, 500);
+		http_response_builder_done(res);
 		return 1;
 	}
 	if (ret == 1) {
@@ -5139,8 +5139,8 @@ static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoin
 
 		char index[] = "index.html";
 		if (path.len + sizeof(index) + 1 > sizeof(mem)) {
-			http_response_status(res, 500);
-			http_response_done(res);
+			http_response_builder_status(res, 500);
+			http_response_builder_done(res);
 			return 1;
 		}
 		path.ptr[path.len++] = '/';
@@ -5149,8 +5149,8 @@ static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoin
 
 		ret = file_open(path.ptr, &file, &size);
 		if (ret == -1) {
-			http_response_status(res, 500);
-			http_response_done(res);
+			http_response_builder_status(res, 500);
+			http_response_builder_done(res);
 			return 1;
 		}
 		if (ret == 1)
@@ -5160,9 +5160,9 @@ static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoin
 
 	int cap;
 	char *dst;
-	http_response_status(res, 200);
-	http_response_bodycap(res, size);
-	dst = http_response_bodybuf(res, &cap);
+	http_response_builder_status(res, 200);
+	http_response_builder_bodycap(res, size);
+	dst = http_response_builder_bodybuf(res, &cap);
 	if (dst) {
 		int copied = 0;
 		while (copied < size) {
@@ -5172,28 +5172,28 @@ static int serve_file_or_index(HTTP_ResponseHandle res, HTTP_String base_endpoin
 			copied += ret;
 		}
 		if (copied < size) goto err;
-		http_response_bodyack(res, size);
+		http_response_builder_bodyack(res, size);
 	}
-	http_response_done(res);
+	http_response_builder_done(res);
 	file_close(file);
 	return 1;
 err:
-	http_response_bodyack(res, 0);
-	http_response_undo(res);
-	http_response_status(res, 500);
-	http_response_done(res);
+	http_response_builder_bodyack(res, 0);
+	http_response_builder_undo(res);
+	http_response_builder_status(res, 500);
+	http_response_builder_done(res);
 	file_close(file);
 	return 1;
 }
 
-static int serve_dynamic_route(Route *route, HTTP_Request *req, HTTP_ResponseHandle res)
+static int serve_dynamic_route(Route *route, HTTP_Request *req, HTTP_ResponseBuilder res)
 {
 	char path_mem[1<<12];
 	int path_len = sanitize_path(req->url.path, path_mem, (int) sizeof(path_mem));
 	if (path_len < 0) {
-		http_response_status(res, 400);
-		http_response_body(res, HTTP_STR("Invalid path"));
-		http_response_done(res);
+		http_response_builder_status(res, 400);
+		http_response_builder_body(res, HTTP_STR("Invalid path"));
+		http_response_builder_done(res);
 		return 1;
 	}
 	HTTP_String path = {path_mem, path_len};
@@ -5205,7 +5205,7 @@ static int serve_dynamic_route(Route *route, HTTP_Request *req, HTTP_ResponseHan
 	return 1;
 }
 
-void http_router_resolve(HTTP_Router *router, HTTP_Request *req, HTTP_ResponseHandle res)
+void http_router_resolve(HTTP_Router *router, HTTP_Request *req, HTTP_ResponseBuilder res)
 {
 	for (int i = 0; i < router->num_routes; i++) {
 		Route *route = &router->routes[i];
@@ -5224,13 +5224,13 @@ void http_router_resolve(HTTP_Router *router, HTTP_Request *req, HTTP_ResponseHa
 			break;
 
 		default:
-			http_response_status(res, 500);
-			http_response_done(res);
+			http_response_builder_status(res, 500);
+			http_response_builder_done(res);
 			return;
 		}
 	}
-	http_response_status(res, 404);
-	http_response_done(res);
+	http_response_builder_status(res, 404);
+	http_response_builder_done(res);
 }
 
 int http_serve(char *addr, int port, HTTP_Router *router)
@@ -5245,7 +5245,7 @@ int http_serve(char *addr, int port, HTTP_Router *router)
 
 	for (;;) {
 		HTTP_Request *req;
-		HTTP_ResponseHandle res;
+		HTTP_ResponseBuilder res;
 		ret = http_server_wait(server, &req, &res);
 		if (ret < 0) {
 			http_server_free(server);

@@ -471,7 +471,7 @@ typedef struct {
     void *data0;
     int   data1;
     int   data2;
-} HTTP_ResponseHandle;
+} HTTP_ResponseBuilder;
 
 typedef struct HTTP_Server HTTP_Server;
 
@@ -480,17 +480,17 @@ HTTP_Server *http_server_init(HTTP_String addr, uint16_t port);
 HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
     uint16_t secure_port, HTTP_String cert_key, HTTP_String private_key);
 
-void         http_server_free        (HTTP_Server *server);
-int          http_server_wait        (HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandle *handle);
-int          http_server_add_website (HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
-void         http_response_status    (HTTP_ResponseHandle res, int status);
-void         http_response_header    (HTTP_ResponseHandle res, HTTP_String str);
-void         http_response_body      (HTTP_ResponseHandle res, HTTP_String str);
-void         http_response_bodycap   (HTTP_ResponseHandle res, int mincap);
-char*        http_response_bodybuf   (HTTP_ResponseHandle res, int *cap);
-void         http_response_bodyack   (HTTP_ResponseHandle res, int num);
-void         http_response_undo      (HTTP_ResponseHandle res);
-void         http_response_done      (HTTP_ResponseHandle res);
+void         http_server_free              (HTTP_Server *server);
+int          http_server_wait              (HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuilder *handle);
+int          http_server_add_website       (HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
+void         http_response_builder_status  (HTTP_ResponseBuilder res, int status);
+void         http_response_builder_header  (HTTP_ResponseBuilder res, HTTP_String str);
+void         http_response_builder_body    (HTTP_ResponseBuilder res, HTTP_String str);
+void         http_response_builder_bodycap (HTTP_ResponseBuilder res, int mincap);
+char*        http_response_builder_bodybuf (HTTP_ResponseBuilder res, int *cap);
+void         http_response_builder_bodyack (HTTP_ResponseBuilder res, int num);
+void         http_response_builder_undo    (HTTP_ResponseBuilder res);
+void         http_response_builder_done    (HTTP_ResponseBuilder res);
 
 #endif // HTTP_SERVER_INCLUDED
 
@@ -507,11 +507,11 @@ void         http_response_done      (HTTP_ResponseHandle res);
 #endif
 
 typedef struct HTTP_Router HTTP_Router;
-typedef void (*HTTP_RouterFunc)(HTTP_Request*, HTTP_ResponseHandle, void*);;
+typedef void (*HTTP_RouterFunc)(HTTP_Request*, HTTP_ResponseBuilder, void*);;
 
 HTTP_Router* http_router_init    (void);
 void         http_router_free    (HTTP_Router *router);
-void         http_router_resolve (HTTP_Router *router, HTTP_Request *req, HTTP_ResponseHandle res);
+void         http_router_resolve (HTTP_Router *router, HTTP_Request *req, HTTP_ResponseBuilder res);
 void         http_router_dir     (HTTP_Router *router, HTTP_String endpoint, HTTP_String path);
 void         http_router_func    (HTTP_Router *router, HTTP_Method method, HTTP_String endpoint, HTTP_RouterFunc func, void*);
 int          http_serve          (char *addr, int port, HTTP_Router *router);

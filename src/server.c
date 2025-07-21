@@ -95,7 +95,7 @@ static void* server_memfunc(HTTP_MemoryFuncTag tag, void *ptr, int len, void *da
     return NULL;
 }
 
-int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandle *handle)
+int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuilder *builder)
 {
     while (server->ready_count == 0) {
 
@@ -196,63 +196,63 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
     server->ready_count--;
 
     *req = http_engine_getreq(&server->conns[index].engine);
-    *handle = (HTTP_ResponseHandle) { server, index, server->conns[index].gen };
+    *builder = (HTTP_ResponseBuilder) { server, index, server->conns[index].gen };
     return 0;
 }
 
 static Connection*
-handle2conn(HTTP_ResponseHandle handle)
+server_builder_to_conn(HTTP_ResponseBuilder builder)
 {
-	HTTP_Server *server = handle.data0;
-	if (handle.data1 >= MAX_CONNS)
+	HTTP_Server *server = builder.data0;
+	if (builder.data1 >= MAX_CONNS)
 		return NULL;
 
-	Connection *conn = &server->conns[handle.data1];
-	if (conn->gen != handle.data2)
+	Connection *conn = &server->conns[builder.data1];
+	if (conn->gen != builder.data2)
 		return NULL;
 
 	return conn;
 }
 
-void http_response_status(HTTP_ResponseHandle res, int status)
+void http_response_builder_status(HTTP_ResponseBuilder res, int status)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_status(&conn->engine, status);
 }
 
-void http_response_header(HTTP_ResponseHandle res, HTTP_String str)
+void http_response_builder_header(HTTP_ResponseBuilder res, HTTP_String str)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_header(&conn->engine, str);
 }
 
-void http_response_body(HTTP_ResponseHandle res, HTTP_String str)
+void http_response_builder_body(HTTP_ResponseBuilder res, HTTP_String str)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_body(&conn->engine, str);
 }
 
-void http_response_bodycap(HTTP_ResponseHandle res, int mincap)
+void http_response_builder_bodycap(HTTP_ResponseBuilder res, int mincap)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_bodycap(&conn->engine, mincap);
 }
 
-char *http_response_bodybuf(HTTP_ResponseHandle res, int *cap)
+char *http_response_builder_bodybuf(HTTP_ResponseBuilder res, int *cap)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL) {
 		*cap = 0;
 		return NULL;
@@ -261,28 +261,28 @@ char *http_response_bodybuf(HTTP_ResponseHandle res, int *cap)
 	return http_engine_bodybuf(&conn->engine, cap);
 }
 
-void http_response_bodyack(HTTP_ResponseHandle res, int num)
+void http_response_builder_bodyack(HTTP_ResponseBuilder res, int num)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_bodyack(&conn->engine, num);
 }
 
-void http_response_undo(HTTP_ResponseHandle res)
+void http_response_builder_undo(HTTP_ResponseBuilder res)
 {
-	Connection *conn = handle2conn(res);
+	Connection *conn = server_builder_to_conn(res);
 	if (conn == NULL)
 		return;
 
 	http_engine_undo(&conn->engine);
 }
 
-void http_response_done(HTTP_ResponseHandle res)
+void http_response_builder_done(HTTP_ResponseBuilder res)
 {
     HTTP_Server *server = res.data0;
-    Connection *conn = handle2conn(res);
+    Connection *conn = server_builder_to_conn(res);
     if (conn == NULL)
         return;
 

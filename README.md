@@ -41,13 +41,13 @@ int main(void)
     for (;;) {
 
         HTTP_Request *req;
-        HTTP_ResponseHandle res;
-        http_server_wait(server, &req, &res);
+        HTTP_ResponseBuilder builder;
+        http_server_wait(server, &req, &builder);
 
-        http_response_status(res, 200);
-        http_response_header(res, "Content-Type: text/plain");
-        http_response_body(res, HTTP_STR("Hello, world!"));
-        http_response_done(res);
+        http_response_builder_status(builder, 200);
+        http_response_builder_header(builder, "Content-Type: text/plain");
+        http_response_builder_body(builder, HTTP_STR("Hello, world!"));
+        http_response_builder_done(builder);
     }
 
     http_server_free(server);
