@@ -6,26 +6,24 @@ Here are some examples of how it looks like on the client and server. If you wan
 
 Here is a client performing a GET request:
 ```c
+#include <stdio.h>
 #include <chttp.h>
 
 int main(void)
 {
     http_global_init();
 
+    HTTP_String url = HTTP_STR("http://example.com/index.html");
+
     HTTP_String headers[] = {
         HTTP_STR("User-Agent: cHTTP"),
     };
 
-    HTTP_RequestHandle handle;
-    HTTP_Response *res = http_get(
-        HTTP_STR("http://example.com/index.html"),
-        headers, HTTP_COUNT(headers),
-        &handle
-    );
+    HTTP_Response *res = http_get(url, headers, 1);
 
-    fwrite(res->body.ptr, 1, res->body.ptr, stdout);
+    fwrite(res->body.ptr, 1, res->body.len, stdout);
 
-    http_request_free(handle);
+    http_response_free(res);
     http_global_free();
     return 0;
 }
