@@ -118,6 +118,7 @@ ThreadReturn worker(void*)
 
 int main(void)
 {
+    http_global_free();
     init_job_queue();
 
     HTTP_Server *server = http_server_init(HTTP_STR("127.0.0.1"), 8080);
@@ -177,6 +178,7 @@ int main(void)
 
     http_server_free(server);
     free_job_queue();
+    http_global_free();
     return 0;
 }
 

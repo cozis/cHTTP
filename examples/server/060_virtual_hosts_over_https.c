@@ -8,6 +8,8 @@ int setup_test_certificates(void);
 
 int main(void)
 {
+    http_global_init();
+
     // First, create three certificates for the domains:
     //
     //   websiteA.com
@@ -118,6 +120,7 @@ int main(void)
     }
 
     http_server_free(server);
+    http_global_free();
     return 0;
 }
 

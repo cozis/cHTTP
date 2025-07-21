@@ -7,6 +7,8 @@
 
 int main(void)
 {
+    http_global_init();
+
     // To setup an HTTPS server, we need to use the *_ex variant
     // of the server initialization function as it offers more
     // control. Server objects can serve HTTP traffic, HTTPS
@@ -71,5 +73,6 @@ int main(void)
     }
 
     http_server_free(server);
+    http_global_free();
     return 0;
 }

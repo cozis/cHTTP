@@ -6,6 +6,8 @@
 
 int main(void)
 {
+    http_global_init();
+
     // All the setup is identical to the previous example.
     // The only thing that changes where "http_response_body"
     // is called.
@@ -90,5 +92,6 @@ int main(void)
     }
 
     http_server_free(server);
+    http_global_free();
     return 0;
 }

@@ -6,6 +6,8 @@
 
 int main(void)
 {
+    http_global_init();
+
     // Choose the interface to listen on and the port.
     // Currently, servers can only bind to IPv4 addresses.
     HTTP_String addr = HTTP_STR("127.0.0.1");
@@ -90,6 +92,7 @@ int main(void)
     // your server in a way to exit gracefully, this is
     // you the server object is freed:
     http_server_free(server);
+    http_global_free();
 
     // Have fun. Bye!
     return 0;

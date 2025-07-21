@@ -6,6 +6,8 @@
 
 int main(void)
 {
+    http_global_init();
+
     HTTP_Server *server = http_server_init(HTTP_STR("127.0.0.1"), 8080);
     if (server == NULL)
         return -1;
@@ -52,5 +54,6 @@ int main(void)
     }
 
     http_server_free(server);
+    http_global_free();
     return 0;
 }
