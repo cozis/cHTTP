@@ -122,7 +122,9 @@ void socket_connect(Socket *sock, SecureContext *sec,
     hints.ai_socktype = SOCK_STREAM;
 
     struct addrinfo *res = NULL;
-    if (getaddrinfo(pending_connect->hostname, portstr, &hints, &res) != 0) {
+    int ret = getaddrinfo(pending_connect->hostname, portstr, &hints, &res);
+    if (ret != 0) {
+        printf("ret=%d\n", ret); // TODO: remove
         pending_connect_free(pending_connect);
         sock->state = SOCKET_STATE_DIED;
         sock->events = 0;
@@ -144,6 +146,7 @@ void socket_connect(Socket *sock, SecureContext *sec,
     sock->state = SOCKET_STATE_PENDING;
     sock->events = 0;
 
+    sock->raw = BAD_SOCKET;
     sock->user_data = user_data;
     sock->pending_connect = pending_connect;
     sock->sec = sec;
@@ -394,7 +397,7 @@ void socket_update(Socket *sock)
             // ready for output. This means the operation is complete.
 
             int err = 0;
-            int len = sizeof(err);
+            socklen_t len = sizeof(err);
 
             if (getsockopt(sock->raw, SOL_SOCKET, SO_ERROR, (void*) &err, &len) < 0 || err != 0) {
 

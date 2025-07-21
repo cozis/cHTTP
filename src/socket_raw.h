@@ -25,6 +25,9 @@
 #include "basic.h"
 #endif
 
+int  socket_raw_global_init(void);
+void socket_raw_global_free(void);
+
 int set_socket_blocking(RAW_SOCKET sock, bool value);
 
 RAW_SOCKET listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int backlog);

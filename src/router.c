@@ -79,7 +79,7 @@ void http_router_func(HTTP_Router *router, HTTP_Method method,
 	if (router->num_routes == router->max_routes)
 		abort();
 	Route *route = &router->routes[router->num_routes++];
-	// TODO: Don't ignore the method
+	(void) method; // TODO: Don't ignore the method
 	route->type = ROUTE_DYNAMIC;
 	route->endpoint = endpoint;
 	route->func = func;

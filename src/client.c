@@ -25,6 +25,7 @@
 typedef enum {
     CLIENT_CONNECTION_FREE,
     CLIENT_CONNECTION_INIT,
+    CLIENT_CONNECTION_INIT_ERROR,
     CLIENT_CONNECTION_WAIT,
     CLIENT_CONNECTION_DONE,
 } ClientConnectionState;
@@ -49,6 +50,19 @@ struct HTTP_Client {
     int ready_count;
     int ready[CLIENT_MAX_CONNS];
 };
+
+int http_global_init(void)
+{
+    int ret = socket_pool_global_init();
+    if (ret < 0)
+        return -1;
+    return 0;
+}
+
+void http_global_free(void)
+{
+    socket_pool_global_free();
+}
 
 // Rename the memory function
 static void* client_memfunc(HTTP_MemoryFuncTag tag, void *ptr, int len, void *data) {
@@ -113,6 +127,7 @@ int http_client_get_builder(HTTP_Client *client, HTTP_RequestBuilder *builder)
     while (client->conns[i].state != CLIENT_CONNECTION_FREE)
         i++;
 
+    client->conns[i].sock = -1;
     client->conns[i].user_data = NULL;
     client->conns[i].trace = false;
     client->conns[i].state = CLIENT_CONNECTION_INIT;
@@ -134,6 +149,8 @@ int http_client_wait(HTTP_Client *client, HTTP_Response **result, void **user_da
             case SOCKET_EVENT_DIED:
             {
                 ClientConnection *conn = event.user_data;
+                conn->state = CLIENT_CONNECTION_DONE;
+
                 int tail = (client->ready_head + client->ready_count) % CLIENT_MAX_CONNS;
                 client->ready[tail] = conn - client->conns;
                 client->ready_count++;
@@ -143,6 +160,9 @@ int http_client_wait(HTTP_Client *client, HTTP_Response **result, void **user_da
             case SOCKET_EVENT_READY:
             {
                 ClientConnection *conn = event.user_data;
+
+                if (conn->sock == -1)
+                    conn->sock = event.handle;
 
                 HTTP_EngineState engine_state;
                 engine_state = http_engine_state(&conn->eng);
@@ -203,6 +223,8 @@ int http_client_wait(HTTP_Client *client, HTTP_Response **result, void **user_da
         http_engine_free(&conn->eng);
         conn->state = CLIENT_CONNECTION_FREE;
         client->num_conns--;
+    } else {
+        result2->context = client;
     }
 
     return 0;
@@ -261,7 +283,7 @@ void http_request_builder_line(HTTP_RequestBuilder builder, HTTP_Method method, 
     HTTP_URL parsed_url;
     int ret = http_parse_url(url.ptr, url.len, &parsed_url);
     if (ret != url.len) {
-        // TODO
+        conn->state = CLIENT_CONNECTION_INIT_ERROR;
         return;
     }
 
@@ -269,7 +291,7 @@ void http_request_builder_line(HTTP_RequestBuilder builder, HTTP_Method method, 
     if (http_streq(parsed_url.scheme, HTTP_STR("https"))) {
         secure = true;
     } else if (!http_streq(parsed_url.scheme, HTTP_STR("http"))) {
-        // TODO
+        conn->state = CLIENT_CONNECTION_INIT_ERROR;
         return;
     }
 
@@ -282,12 +304,14 @@ void http_request_builder_line(HTTP_RequestBuilder builder, HTTP_Method method, 
     }
 
     switch (parsed_url.authority.host.mode) {
-        case HTTP_HOST_MODE_IPV4: socket_pool_connect_ipv4(client->socket_pool, secure, parsed_url.authority.host.ipv4, port, conn->user_data); break;
-        case HTTP_HOST_MODE_IPV6: socket_pool_connect_ipv6(client->socket_pool, secure, parsed_url.authority.host.ipv6, port, conn->user_data); break;
-        case HTTP_HOST_MODE_NAME: socket_pool_connect     (client->socket_pool, secure, parsed_url.authority.host.name, port, conn->user_data); break;
+        case HTTP_HOST_MODE_IPV4: ret = socket_pool_connect_ipv4(client->socket_pool, secure, parsed_url.authority.host.ipv4, port, conn); break;
+        case HTTP_HOST_MODE_IPV6: ret = socket_pool_connect_ipv6(client->socket_pool, secure, parsed_url.authority.host.ipv6, port, conn); break;
+        case HTTP_HOST_MODE_NAME: ret = socket_pool_connect     (client->socket_pool, secure, parsed_url.authority.host.name, port, conn); break;
+        case HTTP_HOST_MODE_VOID: ret = -1; return;
+    }
 
-        case HTTP_HOST_MODE_VOID:
-        // TODO
+    if (ret < 0) {
+        conn->state = CLIENT_CONNECTION_INIT_ERROR;
         return;
     }
 
@@ -318,20 +342,34 @@ void http_request_builder_body(HTTP_RequestBuilder handle, HTTP_String str)
 
 void http_request_builder_submit(HTTP_RequestBuilder handle)
 {
+    HTTP_Client *client = handle.data0;
     ClientConnection *conn = builder2conn(handle);
     if (conn == NULL)
         return;
-    if (conn->state != CLIENT_CONNECTION_INIT)
+    if (conn->state != CLIENT_CONNECTION_INIT &&
+        conn->state != CLIENT_CONNECTION_INIT_ERROR)
         return;
 
     // TODO: invalidate the handle
 
-    http_engine_done(&conn->eng);
-    conn->state = CLIENT_CONNECTION_WAIT;
+    if (conn->state == CLIENT_CONNECTION_INIT_ERROR) {
+
+        conn->state = CLIENT_CONNECTION_DONE;
+
+        int tail = (client->ready_head + client->ready_count) % CLIENT_MAX_CONNS;
+        client->ready[tail] = conn - client->conns;
+        client->ready_count++;
+
+    } else {
+        http_engine_done(&conn->eng);
+        conn->state = CLIENT_CONNECTION_WAIT;
+    }
 }
 
-void http_response_free(HTTP_Client *client, HTTP_Response *res)
+void http_response_free(HTTP_Response *res)
 {
+    HTTP_Client *client = res->context;
+
     ClientConnection *conn = NULL;
     for (int i = 0, j = 0; j < client->num_conns; i++) {
 

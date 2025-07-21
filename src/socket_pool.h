@@ -24,6 +24,9 @@ typedef struct {
     void *user_data;
 } SocketEvent;
 
+int  socket_pool_global_init(void);
+void socket_pool_global_free(void);
+
 SocketPool *socket_pool_init(HTTP_String addr,
     uint16_t port, uint16_t secure_port, int max_socks,
     bool reuse_addr, int backlog, HTTP_String cert_file,

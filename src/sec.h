@@ -33,6 +33,9 @@ typedef struct {
 
 #endif
 
+void secure_context_global_init(void);
+void secure_context_global_free(void);
+
 int secure_context_init_as_client(SecureContext *sec);
 
 int secure_context_init_as_server(SecureContext *sec,

@@ -25,12 +25,20 @@ struct SocketPool {
     Socket socks[];
 };
 
-void socket_pool_global_init(void)
+int socket_pool_global_init(void)
 {
+    int ret = socket_raw_global_init();
+    if (ret < 0)
+        return -1;
+
+    secure_context_global_init();
+    return 0;
 }
 
 void socket_pool_global_free(void)
 {
+    secure_context_global_free();
+    socket_raw_global_free();
 }
 
 SocketPool *socket_pool_init(HTTP_String addr,
@@ -87,6 +95,9 @@ SocketPool *socket_pool_init(HTTP_String addr,
         }
 #endif
     }
+
+    for (int i = 0; i < max_socks; i++)
+        pool->socks[i].state = SOCKET_STATE_FREE;
 
     return pool;
 }

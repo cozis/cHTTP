@@ -1020,21 +1020,3 @@ int http_parse_response(char *src, int len, HTTP_Response *res)
 		return s.cur;
 	return ret;
 }
-
-HTTP_String http_getqueryparam(HTTP_Request *req, HTTP_String name)
-{
-    // TODO
-	return (HTTP_String) {NULL, 0};
-}
-
-HTTP_String http_getbodyparam(HTTP_Request *req, HTTP_String name)
-{
-	// TODO
-	return (HTTP_String) {NULL, 0};
-}
-
-HTTP_String http_getcookie(HTTP_Request *req, HTTP_String name)
-{
-	// TODO
-	return (HTTP_String) {NULL, 0};
-}

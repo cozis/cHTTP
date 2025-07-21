@@ -40,6 +40,9 @@ typedef struct {
 
 #endif
 
+void secure_context_global_init(void);
+void secure_context_global_free(void);
+
 int secure_context_init_as_client(SecureContext *sec);
 
 int secure_context_init_as_server(SecureContext *sec,
@@ -85,6 +88,9 @@ void secure_context_free(SecureContext *sec);
 #ifndef HTTP_AMALGAMATION
 #include "basic.h"
 #endif
+
+int  socket_raw_global_init(void);
+void socket_raw_global_free(void);
 
 int set_socket_blocking(RAW_SOCKET sock, bool value);
 
@@ -203,6 +209,9 @@ typedef struct {
     SocketHandle handle;
     void *user_data;
 } SocketEvent;
+
+int  socket_pool_global_init(void);
+void socket_pool_global_free(void);
 
 SocketPool *socket_pool_init(HTTP_String addr,
     uint16_t port, uint16_t secure_port, int max_socks,
@@ -1371,24 +1380,6 @@ int http_parse_response(char *src, int len, HTTP_Response *res)
 	return ret;
 }
 
-HTTP_String http_getqueryparam(HTTP_Request *req, HTTP_String name)
-{
-    // TODO
-	return (HTTP_String) {NULL, 0};
-}
-
-HTTP_String http_getbodyparam(HTTP_Request *req, HTTP_String name)
-{
-	// TODO
-	return (HTTP_String) {NULL, 0};
-}
-
-HTTP_String http_getcookie(HTTP_Request *req, HTTP_String name)
-{
-	// TODO
-	return (HTTP_String) {NULL, 0};
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/engine.c
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -1472,12 +1463,6 @@ static int
 byte_queue_error(HTTP_ByteQueue *queue)
 {
 	return queue->flags & BYTE_QUEUE_ERROR;
-}
-
-static void
-byte_queue_setlimit(HTTP_ByteQueue *queue, unsigned int value)
-{
-	queue->limit = value;
 }
 
 static int
@@ -2572,6 +2557,14 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 
 #ifndef HTTPS_ENABLED
 
+void secure_context_global_init(void)
+{
+}
+
+void secure_context_global_free(void)
+{
+}
+
 int secure_context_init_as_client(SecureContext *sec)
 {
     (void) sec;
@@ -2610,6 +2603,19 @@ void secure_context_free(SecureContext *sec)
 }
 
 #else
+
+void secure_context_global_init(void)
+{
+    SSL_library_init();
+    SSL_load_error_strings();
+    OpenSSL_add_all_algorithms();
+}
+
+void secure_context_global_free(void)
+{
+    EVP_cleanup();
+    ERR_free_strings();
+}
 
 int secure_context_init_as_client(SecureContext *sec)
 {
@@ -2791,6 +2797,24 @@ int secure_context_add_cert(SecureContext *sec,
 #ifndef HTTP_AMALGAMATION
 #include "socket_raw.h"
 #endif
+
+int socket_raw_global_init(void)
+{
+#ifdef _WIN32
+    WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (result != 0)
+        return 1;
+#endif
+    return 0;
+}
+
+void socket_raw_global_free(void)
+{
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}
 
 int set_socket_blocking(RAW_SOCKET sock, bool value)
 {
@@ -2994,7 +3018,9 @@ void socket_connect(Socket *sock, SecureContext *sec,
     hints.ai_socktype = SOCK_STREAM;
 
     struct addrinfo *res = NULL;
-    if (getaddrinfo(pending_connect->hostname, portstr, &hints, &res) != 0) {
+    int ret = getaddrinfo(pending_connect->hostname, portstr, &hints, &res);
+    if (ret != 0) {
+        printf("ret=%d\n", ret); // TODO: remove
         pending_connect_free(pending_connect);
         sock->state = SOCKET_STATE_DIED;
         sock->events = 0;
@@ -3016,6 +3042,7 @@ void socket_connect(Socket *sock, SecureContext *sec,
     sock->state = SOCKET_STATE_PENDING;
     sock->events = 0;
 
+    sock->raw = BAD_SOCKET;
     sock->user_data = user_data;
     sock->pending_connect = pending_connect;
     sock->sec = sec;
@@ -3266,7 +3293,7 @@ void socket_update(Socket *sock)
             // ready for output. This means the operation is complete.
 
             int err = 0;
-            int len = sizeof(err);
+            socklen_t len = sizeof(err);
 
             if (getsockopt(sock->raw, SOL_SOCKET, SO_ERROR, (void*) &err, &len) < 0 || err != 0) {
 
@@ -3635,12 +3662,20 @@ struct SocketPool {
     Socket socks[];
 };
 
-void socket_pool_global_init(void)
+int socket_pool_global_init(void)
 {
+    int ret = socket_raw_global_init();
+    if (ret < 0)
+        return -1;
+
+    secure_context_global_init();
+    return 0;
 }
 
 void socket_pool_global_free(void)
 {
+    secure_context_global_free();
+    socket_raw_global_free();
 }
 
 SocketPool *socket_pool_init(HTTP_String addr,
@@ -3697,6 +3732,9 @@ SocketPool *socket_pool_init(HTTP_String addr,
         }
 #endif
     }
+
+    for (int i = 0; i < max_socks; i++)
+        pool->socks[i].state = SOCKET_STATE_FREE;
 
     return pool;
 }
@@ -3969,6 +4007,7 @@ int socket_pool_write(SocketPool *pool, SocketHandle handle, char *src, int len)
 typedef enum {
     CLIENT_CONNECTION_FREE,
     CLIENT_CONNECTION_INIT,
+    CLIENT_CONNECTION_INIT_ERROR,
     CLIENT_CONNECTION_WAIT,
     CLIENT_CONNECTION_DONE,
 } ClientConnectionState;
@@ -3993,6 +4032,19 @@ struct HTTP_Client {
     int ready_count;
     int ready[CLIENT_MAX_CONNS];
 };
+
+int http_global_init(void)
+{
+    int ret = socket_pool_global_init();
+    if (ret < 0)
+        return -1;
+    return 0;
+}
+
+void http_global_free(void)
+{
+    socket_pool_global_free();
+}
 
 // Rename the memory function
 static void* client_memfunc(HTTP_MemoryFuncTag tag, void *ptr, int len, void *data) {
@@ -4057,6 +4109,7 @@ int http_client_get_builder(HTTP_Client *client, HTTP_RequestBuilder *builder)
     while (client->conns[i].state != CLIENT_CONNECTION_FREE)
         i++;
 
+    client->conns[i].sock = -1;
     client->conns[i].user_data = NULL;
     client->conns[i].trace = false;
     client->conns[i].state = CLIENT_CONNECTION_INIT;
@@ -4078,6 +4131,8 @@ int http_client_wait(HTTP_Client *client, HTTP_Response **result, void **user_da
             case SOCKET_EVENT_DIED:
             {
                 ClientConnection *conn = event.user_data;
+                conn->state = CLIENT_CONNECTION_DONE;
+
                 int tail = (client->ready_head + client->ready_count) % CLIENT_MAX_CONNS;
                 client->ready[tail] = conn - client->conns;
                 client->ready_count++;
@@ -4087,6 +4142,9 @@ int http_client_wait(HTTP_Client *client, HTTP_Response **result, void **user_da
             case SOCKET_EVENT_READY:
             {
                 ClientConnection *conn = event.user_data;
+
+                if (conn->sock == -1)
+                    conn->sock = event.handle;
 
                 HTTP_EngineState engine_state;
                 engine_state = http_engine_state(&conn->eng);
@@ -4147,6 +4205,8 @@ int http_client_wait(HTTP_Client *client, HTTP_Response **result, void **user_da
         http_engine_free(&conn->eng);
         conn->state = CLIENT_CONNECTION_FREE;
         client->num_conns--;
+    } else {
+        result2->context = client;
     }
 
     return 0;
@@ -4205,7 +4265,7 @@ void http_request_builder_line(HTTP_RequestBuilder builder, HTTP_Method method, 
     HTTP_URL parsed_url;
     int ret = http_parse_url(url.ptr, url.len, &parsed_url);
     if (ret != url.len) {
-        // TODO
+        conn->state = CLIENT_CONNECTION_INIT_ERROR;
         return;
     }
 
@@ -4213,7 +4273,7 @@ void http_request_builder_line(HTTP_RequestBuilder builder, HTTP_Method method, 
     if (http_streq(parsed_url.scheme, HTTP_STR("https"))) {
         secure = true;
     } else if (!http_streq(parsed_url.scheme, HTTP_STR("http"))) {
-        // TODO
+        conn->state = CLIENT_CONNECTION_INIT_ERROR;
         return;
     }
 
@@ -4226,12 +4286,14 @@ void http_request_builder_line(HTTP_RequestBuilder builder, HTTP_Method method, 
     }
 
     switch (parsed_url.authority.host.mode) {
-        case HTTP_HOST_MODE_IPV4: socket_pool_connect_ipv4(client->socket_pool, secure, parsed_url.authority.host.ipv4, port, conn->user_data); break;
-        case HTTP_HOST_MODE_IPV6: socket_pool_connect_ipv6(client->socket_pool, secure, parsed_url.authority.host.ipv6, port, conn->user_data); break;
-        case HTTP_HOST_MODE_NAME: socket_pool_connect     (client->socket_pool, secure, parsed_url.authority.host.name, port, conn->user_data); break;
+        case HTTP_HOST_MODE_IPV4: ret = socket_pool_connect_ipv4(client->socket_pool, secure, parsed_url.authority.host.ipv4, port, conn); break;
+        case HTTP_HOST_MODE_IPV6: ret = socket_pool_connect_ipv6(client->socket_pool, secure, parsed_url.authority.host.ipv6, port, conn); break;
+        case HTTP_HOST_MODE_NAME: ret = socket_pool_connect     (client->socket_pool, secure, parsed_url.authority.host.name, port, conn); break;
+        case HTTP_HOST_MODE_VOID: ret = -1; return;
+    }
 
-        case HTTP_HOST_MODE_VOID:
-        // TODO
+    if (ret < 0) {
+        conn->state = CLIENT_CONNECTION_INIT_ERROR;
         return;
     }
 
@@ -4262,20 +4324,34 @@ void http_request_builder_body(HTTP_RequestBuilder handle, HTTP_String str)
 
 void http_request_builder_submit(HTTP_RequestBuilder handle)
 {
+    HTTP_Client *client = handle.data0;
     ClientConnection *conn = builder2conn(handle);
     if (conn == NULL)
         return;
-    if (conn->state != CLIENT_CONNECTION_INIT)
+    if (conn->state != CLIENT_CONNECTION_INIT &&
+        conn->state != CLIENT_CONNECTION_INIT_ERROR)
         return;
 
     // TODO: invalidate the handle
 
-    http_engine_done(&conn->eng);
-    conn->state = CLIENT_CONNECTION_WAIT;
+    if (conn->state == CLIENT_CONNECTION_INIT_ERROR) {
+
+        conn->state = CLIENT_CONNECTION_DONE;
+
+        int tail = (client->ready_head + client->ready_count) % CLIENT_MAX_CONNS;
+        client->ready[tail] = conn - client->conns;
+        client->ready_count++;
+
+    } else {
+        http_engine_done(&conn->eng);
+        conn->state = CLIENT_CONNECTION_WAIT;
+    }
 }
 
-void http_response_free(HTTP_Client *client, HTTP_Response *res)
+void http_response_free(HTTP_Response *res)
 {
+    HTTP_Client *client = res->context;
+
     ClientConnection *conn = NULL;
     for (int i = 0, j = 0; j < client->num_conns; i++) {
 
@@ -4752,7 +4828,7 @@ void http_router_func(HTTP_Router *router, HTTP_Method method,
 	if (router->num_routes == router->max_routes)
 		abort();
 	Route *route = &router->routes[router->num_routes++];
-	// TODO: Don't ignore the method
+	(void) method; // TODO: Don't ignore the method
 	route->type = ROUTE_DYNAMIC;
 	route->endpoint = endpoint;
 	route->func = func;

@@ -4,6 +4,14 @@
 
 #ifndef HTTPS_ENABLED
 
+void secure_context_global_init(void)
+{
+}
+
+void secure_context_global_free(void)
+{
+}
+
 int secure_context_init_as_client(SecureContext *sec)
 {
     (void) sec;
@@ -42,6 +50,19 @@ void secure_context_free(SecureContext *sec)
 }
 
 #else
+
+void secure_context_global_init(void)
+{
+    SSL_library_init();
+    SSL_load_error_strings();
+    OpenSSL_add_all_algorithms();
+}
+
+void secure_context_global_free(void)
+{
+    EVP_cleanup();
+    ERR_free_strings();
+}
 
 int secure_context_init_as_client(SecureContext *sec)
 {

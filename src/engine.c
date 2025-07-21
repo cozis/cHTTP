@@ -78,12 +78,6 @@ byte_queue_error(HTTP_ByteQueue *queue)
 	return queue->flags & BYTE_QUEUE_ERROR;
 }
 
-static void
-byte_queue_setlimit(HTTP_ByteQueue *queue, unsigned int value)
-{
-	queue->limit = value;
-}
-
 static int
 byte_queue_empty(HTTP_ByteQueue *queue)
 {

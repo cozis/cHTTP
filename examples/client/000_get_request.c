@@ -16,7 +16,7 @@ int main(void)
     // Perform the request. This will block the thread
     // until an error occurs or the request completes.
     HTTP_Response *res = http_get(
-        HTTP_STR("http://example.com/index.html"),
+        HTTP_STR("http://coz.is/index.html"),
         headers, HTTP_COUNT(headers)
     );
 
@@ -45,7 +45,7 @@ int main(void)
 
     // When we are done reading from the response object
     // we must free the request's resources.
-    http_request_free(res);
+    http_response_free(res);
 
     // All done. Deinitialize the library.
     http_global_free();

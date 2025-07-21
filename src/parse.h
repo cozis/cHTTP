@@ -74,6 +74,7 @@ typedef struct {
 } HTTP_Request;
 
 typedef struct {
+    void*       context;
 	int         minor;
 	int         status;
 	HTTP_String reason;
@@ -89,8 +90,5 @@ int         http_parse_request  (char *src, int len, HTTP_Request  *req);
 int         http_parse_response (char *src, int len, HTTP_Response *res);
 
 int         http_find_header    (HTTP_Header *headers, int num_headers, HTTP_String name);
-HTTP_String http_getqueryparam  (HTTP_Request *req, HTTP_String name);
-HTTP_String http_getbodyparam   (HTTP_Request *req, HTTP_String name);
-HTTP_String http_getcookie      (HTTP_Request *req, HTTP_String name);
 
 #endif // PARSE_INCLUDED

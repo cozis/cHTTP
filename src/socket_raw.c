@@ -14,6 +14,24 @@
 #include "socket_raw.h"
 #endif
 
+int socket_raw_global_init(void)
+{
+#ifdef _WIN32
+    WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (result != 0)
+        return 1;
+#endif
+    return 0;
+}
+
+void socket_raw_global_free(void)
+{
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}
+
 int set_socket_blocking(RAW_SOCKET sock, bool value)
 {
 #ifdef _WIN32

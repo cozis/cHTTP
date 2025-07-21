@@ -12,7 +12,7 @@
 // cHTTP tries to avoid global state. What this function
 // does is call the global initialization functions of
 // its dependencies (OpenSSL and Winsock)
-void http_global_init(void);
+int http_global_init(void);
 
 // Free the global state of cHTTP.
 void http_global_free(void);
@@ -71,7 +71,7 @@ void http_request_builder_submit(HTTP_RequestBuilder builder);
 // after the request has completed.
 //
 // TODO: allow aborting pending requests
-void http_response_free(HTTP_Client *client, HTTP_Response *res);
+void http_response_free(HTTP_Response *res);
 
 // Wait for the completion of one request associated to
 // the client. The handle of the resolved request is returned
