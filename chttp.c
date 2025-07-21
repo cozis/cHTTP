@@ -3174,10 +3174,10 @@ connect_failed_because_or_peer_2(int err)
         || err == WSAENETUNREACH
         || err == WSAEHOSTUNREACH;
 #else
-    return errno == ECONNREFUSED
-        || errno == ETIMEDOUT
-        || errno == ENETUNREACH
-        || errno == EHOSTUNREACH;
+    return err == ECONNREFUSED
+        || err == ETIMEDOUT
+        || err == ENETUNREACH
+        || err == EHOSTUNREACH;
 #endif
 }
 
