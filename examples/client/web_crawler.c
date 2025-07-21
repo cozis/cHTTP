@@ -139,31 +139,26 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    HTTP_RequestHandle req;
-    int ret = http_client_request(client, &req);
+    HTTP_RequestBuilder builder;
+    int ret = http_client_get_builder(client, &builder);
     if (ret < 0) {
         printf("Couldn't start request\n");
         http_client_free(client);
         return -1;
     }
-    http_request_line(req, HTTP_METHOD_GET, start_url);
-    http_request_header(req, HTTP_STR("User-Agent: Simple crawler"));
-    http_request_submit(req);
+    http_request_builder_line(builder, HTTP_METHOD_GET, start_url);
+    http_request_builder_header(builder, HTTP_STR("User-Agent: Simple crawler"));
+    http_request_builder_submit(builder);
 
     for (;;) {
 
-        HTTP_RequestHandle req;
-        ret = http_client_wait(client, &req);
+        HTTP_Response *res;
+        ret = http_client_wait(client, &res, NULL);
         if (ret < 0) {
             // TODO
             return -1;
         }
 
-        HTTP_Response *res = http_request_result(req);
-        if (res == NULL) {
-            http_request_free(req);
-            continue; // Request didn't complete
-        }
         HTTP_String body = res->body;
 
         int cursor = 0;
@@ -180,14 +175,14 @@ int main(int argc, char **argv)
             printf("Fetching " GRN "%.*s" RST "\n", HTTP_UNPACK(url));
             add_to_crawled_list(url);
 
-            HTTP_RequestHandle req;
-            ret = http_client_request(client, &req);
+            HTTP_RequestBuilder builder;
+            ret = http_client_get_builder(client, &builder);
             if (ret < 0)
                 continue;
 
-            http_request_line(req, HTTP_METHOD_GET, url);
-            http_request_header(req, HTTP_STR("User-Agent: Simple crawler"));
-            http_request_submit(req);
+            http_request_builder_line(builder, HTTP_METHOD_GET, url);
+            http_request_builder_header(builder, HTTP_STR("User-Agent: Simple crawler"));
+            http_request_builder_submit(builder);
         }
     }
 

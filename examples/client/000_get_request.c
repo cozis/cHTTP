@@ -13,17 +13,11 @@ int main(void)
         HTTP_STR("User-Agent: cHTTP"),
     };
 
-    // Request handle that will be necessary to
-    // free the request's resources when we are
-    // done with the result.
-    HTTP_RequestHandle handle;
-
     // Perform the request. This will block the thread
     // until an error occurs or the request completes.
     HTTP_Response *res = http_get(
         HTTP_STR("http://example.com/index.html"),
-        headers, HTTP_COUNT(headers),
-        &handle
+        headers, HTTP_COUNT(headers)
     );
 
     // The http_get function returns NULL if the request
@@ -51,7 +45,7 @@ int main(void)
 
     // When we are done reading from the response object
     // we must free the request's resources.
-    http_request_free(handle);
+    http_request_free(res);
 
     // All done. Deinitialize the library.
     http_global_free();

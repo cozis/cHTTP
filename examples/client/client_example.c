@@ -12,40 +12,30 @@ int main(int argc, char **argv) {
     http_global_init();
     HTTP_Client *client = http_client_init();
 
-    HTTP_RequestHandle reqs[100];
-    
     for (int i = 1; i < argc; i++) {
         int k = i-1;
-        if (http_client_request(client, &reqs[k]) < 0) {
+        HTTP_RequestBuilder builder;
+        if (http_client_get_builder(client, &builder) < 0) {
             printf("request creation error\n");
             return -1;
         }
-        http_request_line(reqs[k], HTTP_METHOD_GET, (HTTP_String) { argv[i], strlen(argv[i]) });
-        http_request_submit(reqs[k]);
+        http_request_builer_line(builder, HTTP_METHOD_GET, (HTTP_String) { argv[i], strlen(argv[i]) });
+        http_request_builder_submit(builder);
         printf("request submitted\n");
     }
 
-    for (int i = 1; i < argc; i++)
-        if (http_client_wait(client, NULL) < 0) {
+    for (int i = 1; i < argc; i++) {
+
+        HTTP_Response *res;
+        if (http_client_wait(client, &res, NULL) < 0) {
             printf("request wait error\n");
             return -1;
         }
 
-    printf("all requests completed\n");
+        printf("Status: %d\n", res->status);
+        printf("Body: %.*s\n", HTTP_UNPACK(res->body));
 
-    for (int i = 1; i < argc; i++) {
-
-        HTTP_Response *result = http_request_result(reqs[i-1]);
-        if (!result) {
-            fprintf(stderr, "No result from HTTP request\n");
-            http_request_free(reqs[i-1]);
-            return 1;
-        }
-
-        printf("Status: %d\n", result->status);
-        printf("Body: %.*s\n", HTTP_UNPACK(result->body));
-
-        http_request_free(reqs[i-1]);
+        http_request_free(res);
     }
 
     http_client_free(client);

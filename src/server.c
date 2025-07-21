@@ -5,24 +5,22 @@
 
 #ifndef HTTP_AMALGAMATION
 #include "engine.h"
-#include "socket.h"
 #include "server.h"
+#include "socket_pool.h"
 #endif
 
 #define MAX_CONNS (1<<10)
 
 typedef struct {
-    bool        used;
-    uint16_t    gen;
-    Socket      socket;
-    HTTP_Engine engine;
+    bool         used;
+    uint16_t     gen;
+    HTTP_Engine  engine;
+    SocketHandle sock;
 } Connection;
 
 struct HTTP_Server {
-    SocketGroup group;
 
-    SOCKET_TYPE listen_fd;
-    SOCKET_TYPE secure_fd;
+    SocketPool *socket_pool;
 
     int num_conns;
     Connection conns[MAX_CONNS];
@@ -38,7 +36,7 @@ HTTP_Server *http_server_init(HTTP_String addr, uint16_t port)
 }
 
 HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
-    uint16_t secure_port, HTTP_String cert_key, HTTP_String private_key)
+    uint16_t secure_port, HTTP_String cert_file, HTTP_String key_file)
 {
     HTTP_Server *server = malloc(sizeof(HTTP_Server));
     if (server == NULL)
@@ -46,42 +44,13 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
 
     int backlog = 32;
     bool reuse_addr = true;
-
-    if (port == 0 && secure_port == 0) {
-        // You must have at least one!
+    SocketPool *socket_pool = socket_pool_init(addr, port, secure_port, MAX_CONNS, reuse_addr, backlog, cert_file, key_file);
+    if (socket_pool == NULL) {
         free(server);
         return NULL;
     }
 
-    if (port == 0)
-        server->listen_fd = BAD_SOCKET;
-    else {
-        server->listen_fd = listen_socket(addr, port, reuse_addr, backlog);
-        if (server->listen_fd == BAD_SOCKET) {
-            free(server);
-            return NULL;
-        }
-    }
-
-    if (secure_port == 0)
-        server->secure_fd = BAD_SOCKET;
-    else {
-
-        if (socket_group_init_server(&server->group, cert_key, private_key) < 0) {
-            CLOSE_SOCKET(server->listen_fd);
-            free(server);
-            return NULL;
-        }
-
-        server->secure_fd = listen_socket(addr, secure_port, reuse_addr, backlog);
-        if (server->secure_fd == BAD_SOCKET) {
-            socket_group_free(&server->group);
-            CLOSE_SOCKET(server->listen_fd);
-            free(server);
-            return NULL;
-        }
-    }
-
+    server->socket_pool = socket_pool;
     server->num_conns = 0;
     server->ready_head = 0;
     server->ready_count = 0;
@@ -105,16 +74,13 @@ void http_server_free(HTTP_Server *server)
         // TODO
     }
 
-    CLOSE_SOCKET(server->secure_fd);
-    CLOSE_SOCKET(server->listen_fd);
-    if (server->secure_fd != BAD_SOCKET)
-        socket_group_free(&server->group);
+    socket_pool_free(server->socket_pool);
     free(server);
 }
 
 int http_server_add_website(HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
-    return socket_group_add_domain(&server->group, domain, cert_file, key_file);
+    return socket_pool_add_cert(server->socket_pool, domain.ptr, domain.len, cert_file.ptr, cert_file.len, key_file.ptr, key_file.len);
 }
 
 static void* server_memfunc(HTTP_MemoryFuncTag tag, void *ptr, int len, void *data) {
@@ -133,143 +99,95 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
 {
     while (server->ready_count == 0) {
 
-        int num_polled = 0;
-        struct pollfd polled[MAX_CONNS+2];
-        int          indices[MAX_CONNS+2];
+        SocketEvent event = socket_pool_wait(server->socket_pool);
+        switch (event.type) {
 
-        if (server->num_conns < MAX_CONNS) {
+            case SOCKET_EVENT_DIED:
+            {
+                Connection *conn = event.user_data;
+                HTTP_ASSERT(conn);
 
-            if (server->listen_fd != BAD_SOCKET) {
-                polled[num_polled].fd = server->listen_fd;
-                polled[num_polled].events = POLLIN;
-                polled[num_polled].revents = 0;
-                indices[num_polled] = -1;
-                num_polled++;
+                http_engine_free(&conn->engine);
+                conn->used = false;
+                conn->gen++;
+                server->num_conns--;
             }
+            break;
 
-            if (server->secure_fd != BAD_SOCKET) {
-                polled[num_polled].fd = server->secure_fd;
-                polled[num_polled].events = POLLIN;
-                polled[num_polled].revents = 0;
-                indices[num_polled] = -1;
-                num_polled++;
-            }
-        }
+            case SOCKET_EVENT_READY:
+            {
+                Connection *conn = event.user_data;
+                if (conn == NULL) {
 
-        for (int i = 0, j = 0; i < server->num_conns; i++) {
+                    // Connection was just accepted
 
-            Connection *conn = &server->conns[i];
-
-            if (!conn->used)
-                continue;
-            j++;
-
-            int events = 0;
-            switch (conn->socket.event) {
-                case SOCKET_WANT_NONE: events = 0; break;
-                case SOCKET_WANT_READ: events = POLLIN; break;
-                case SOCKET_WANT_WRITE: events = POLLOUT; break;
-            }
-
-            if (events) {
-                polled[num_polled].fd = conn->socket.fd;
-                polled[num_polled].events = events;
-                polled[num_polled].revents = 0;
-                indices[num_polled] = i;
-                num_polled++;
-            }
-        }
-
-        int timeout = -1;
-        POLL(polled, num_polled, timeout);
-
-        for (int i = 0; i < num_polled; i++) {
-
-            if (polled[i].fd == server->listen_fd || polled[i].fd == server->secure_fd) {
-
-                bool secure = false;
-                if (polled[i].fd == server->secure_fd)
-                    secure = true;
-
-                if ((polled[i].revents & POLLIN) && server->num_conns < MAX_CONNS) {
-
-                    SOCKET_TYPE new_fd = accept(polled[i].fd, NULL, NULL);
-                    if (new_fd == BAD_SOCKET) {
-                        // TODO
+                    if (server->num_conns == MAX_CONNS) {
+                        socket_pool_close(server->socket_pool, event.handle);
+                        break;
                     }
 
-                    int k = 0;
-                    while (server->conns[k].used)
-                        k++;
+                    int i = 0;
+                    while (server->conns[i].used)
+                        i++;
 
-                    server->conns[k].used = true;
-                    socket_accept(&server->conns[k].socket, secure ? &server->group : NULL, new_fd);
-
-                    http_engine_init(&server->conns[k].engine, 0, server_memfunc, NULL);
+                    conn = &server->conns[i];
+                    conn->used = true;
+                    conn->sock = event.handle;
+                    http_engine_init(&conn->engine, 0, server_memfunc, NULL);
+                    socket_pool_set_user_data(server->socket_pool, event.handle, conn);
                     server->num_conns++;
                 }
 
-            } else {
+                switch (http_engine_state(&conn->engine)) {
 
-                int connidx = indices[i];
-                Connection *conn = &server->conns[connidx];
+                    int len;
+                    char *buf;
 
-                socket_update(&conn->socket);
-
-                if (socket_state(&conn->socket) == SOCKET_STATE_ESTABLISHED_READY) {
-
-                    switch (http_engine_state(&conn->engine)) {
-
-                        int len;
-                        char *buf;
-
-                        case HTTP_ENGINE_STATE_SERVER_RECV_BUF:
-                        buf = http_engine_recvbuf(&conn->engine, &len);
-                        if (buf) {
-                            int ret = socket_read(&conn->socket, buf, len);
-                            http_engine_recvack(&conn->engine, ret);
-                        }
-                        break;
-
-                        case HTTP_ENGINE_STATE_SERVER_SEND_BUF:
-                        buf = http_engine_sendbuf(&conn->engine, &len);
-                        if (buf) {
-                            int ret = socket_write(&conn->socket, buf, len);
-                            http_engine_sendack(&conn->engine, ret);
-                        }
-                        break;
-
-                        default:
-                        break;
+                    case HTTP_ENGINE_STATE_SERVER_RECV_BUF:
+                    buf = http_engine_recvbuf(&conn->engine, &len);
+                    if (buf) {
+                        int ret = socket_pool_read(server->socket_pool, conn->sock, buf, len);
+                        http_engine_recvack(&conn->engine, ret);
                     }
+                    break;
 
-                    switch (http_engine_state(&conn->engine)) {
-
-                        int tail;
-
-                        case HTTP_ENGINE_STATE_SERVER_PREP_STATUS:
-                        tail = (server->ready_head + server->ready_count) % MAX_CONNS;
-                        server->ready[tail] = connidx;
-                        server->ready_count++;
-                        break;
-
-                        case HTTP_ENGINE_STATE_SERVER_CLOSED:
-                        socket_close(&conn->socket);
-                        break;
-
-                        default:
-                        break;
-
+                    case HTTP_ENGINE_STATE_SERVER_SEND_BUF:
+                    buf = http_engine_sendbuf(&conn->engine, &len);
+                    if (buf) {
+                        int ret = socket_pool_write(server->socket_pool, conn->sock, buf, len);
+                        http_engine_sendack(&conn->engine, ret);
                     }
+                    break;
+
+                    default:
+                    break;
                 }
 
-                if (socket_state(&conn->socket) == SOCKET_STATE_DIED) {
-                    socket_free(&conn->socket);
-                    http_engine_free(&conn->engine);
-                    conn->used = false;
-                    server->num_conns--;
+                switch (http_engine_state(&conn->engine)) {
+
+                    int tail;
+
+                    case HTTP_ENGINE_STATE_SERVER_PREP_STATUS:
+                    tail = (server->ready_head + server->ready_count) % MAX_CONNS;
+                    server->ready[tail] = conn - server->conns;
+                    server->ready_count++;
+                    break;
+
+                    case HTTP_ENGINE_STATE_SERVER_CLOSED:
+                    socket_pool_close(server->socket_pool, conn->sock);
+                    break;
+
+                    default:
+                    break;
                 }
             }
+            break;
+
+            case SOCKET_EVENT_ERROR:
+            return -1;
+
+            case SOCKET_EVENT_SIGNAL:
+            return 1;
         }
     }
 
@@ -382,9 +300,6 @@ void http_response_done(HTTP_ResponseHandle res)
         server->ready_count++;
     }
 
-    if (state == HTTP_ENGINE_STATE_SERVER_CLOSED) {
-        socket_close(&conn->socket);
-        http_engine_free(&conn->engine);
-        server->num_conns--;
-    }
+    if (state == HTTP_ENGINE_STATE_SERVER_CLOSED)
+        socket_pool_close(server->socket_pool, conn->sock);
 }
