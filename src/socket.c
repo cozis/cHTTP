@@ -260,6 +260,42 @@ bool socket_died(Socket *sock)
 
 // TODO: when is the pending_connect data freed?
 
+static bool connect_pending(void)
+{
+#ifdef _WIN32
+    return WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+    return errno == EINPROGRESS;
+#endif
+}
+
+static bool
+connect_failed_because_or_peer_2(int err)
+{
+#ifdef _WIN32
+    return err == WSAECONNREFUSED
+        || err == WSAETIMEDOUT
+        || err == WSAENETUNREACH
+        || err == WSAEHOSTUNREACH;
+#else
+    return errno == ECONNREFUSED
+        || errno == ETIMEDOUT
+        || errno == ENETUNREACH
+        || errno == EHOSTUNREACH;
+#endif
+}
+
+static bool
+connect_failed_because_or_peer(void)
+{
+#ifdef _WIN32
+    int err = WSAGetLastError();
+#else
+    int err = errno;
+#endif
+    return connect_failed_because_or_peer_2(err);
+}
+
 // Processes the socket until it's either ready, died, or would block
 void socket_update(Socket *sock)
 {
@@ -367,8 +403,8 @@ void socket_update(Socket *sock)
                 again = true;
                 break;
             }
-            
-            if (ret < 0 && errno == EINPROGRESS) { // TODO: I'm pretty sure all the error numbers need to be changed for windows
+
+            if (connect_pending()) { // TODO: I'm pretty sure all the error numbers need to be changed for windows
                 // Connection pending
                 sock->raw = raw;
                 sock->state = SOCKET_STATE_CONNECTING;
@@ -379,7 +415,7 @@ void socket_update(Socket *sock)
             // Connect failed
 
             // If remote peer not working, try next address
-            if (errno == ECONNREFUSED || errno == ETIMEDOUT || errno == ENETUNREACH || errno == EHOSTUNREACH) {
+            if (connect_failed_because_or_peer()) {
                 sock->state = SOCKET_STATE_PENDING;
                 sock->events = 0;
                 again = true;
@@ -402,7 +438,7 @@ void socket_update(Socket *sock)
             if (getsockopt(sock->raw, SOL_SOCKET, SO_ERROR, (void*) &err, &len) < 0 || err != 0) {
 
                 // If remote peer not working, try next address
-                if (err == ECONNREFUSED || err == ETIMEDOUT || err == ENETUNREACH || err == EHOSTUNREACH) {
+                if (connect_failed_because_or_peer_2(err)) {
                     sock->state = SOCKET_STATE_PENDING;
                     sock->events = 0;
                     again = true;
@@ -592,6 +628,25 @@ void socket_update(Socket *sock)
     } while (again);
 }
 
+static bool would_block(void)
+{
+#ifdef _WIN32
+    int err = WSAGetLastError();
+    return err == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
+static bool interrupted(void)
+{
+#ifdef _WIN32
+    return false;
+#else
+    return errno == EINTR;
+#endif
+}
+
 int socket_read(Socket *sock, char *dst, int max)
 {
     // If not ESTABLISHED, set state to DIED and return
@@ -608,11 +663,11 @@ int socket_read(Socket *sock, char *dst, int max)
             sock->events = 0;
         } else {
             if (ret < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (would_block()) {
                     sock->state  = SOCKET_STATE_ESTABLISHED_WAIT;
                     sock->events = POLLIN;
                 } else {
-                    if (errno != EINTR) {
+                    if (!interrupted()) {
                         sock->state  = SOCKET_STATE_DIED;
                         sock->events = 0;
                     }
@@ -660,11 +715,11 @@ int socket_write(Socket *sock, char *src, int len)
     if (!socket_secure(sock)) {
         int ret = send(sock->raw, src, len, 0);
         if (ret < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (would_block()) {
                 sock->state  = SOCKET_STATE_ESTABLISHED_WAIT;
                 sock->events = POLLOUT;
             } else {
-                if (errno != EINTR) {
+                if (!interrupted()) {
                     sock->state = SOCKET_STATE_DIED;
                     sock->events = 0;
                 }
