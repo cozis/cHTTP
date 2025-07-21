@@ -1,6 +1,11 @@
 #ifndef SEC_INCLUDED
 #define SEC_INCLUDED
 
+
+#ifndef HTTP_AMALGAMATION
+#include "basic.h"
+#endif
+
 #ifndef HTTPS_ENABLED
 
 typedef struct {
@@ -39,12 +44,11 @@ void secure_context_global_free(void);
 int secure_context_init_as_client(SecureContext *sec);
 
 int secure_context_init_as_server(SecureContext *sec,
-    char *cert_file, int cert_file_len,
-    char *key_file, int key_file_len);
+    HTTP_String cert_file, HTTP_String key_file);
 
 int secure_context_add_cert(SecureContext *sec,
-    char *domain, int domain_len, char *cert_file,
-    int cert_file_len, char *key_file, int key_file_len);
+    HTTP_String domain, HTTP_String cert_file,
+    HTTP_String key_file);
 
 void secure_context_free(SecureContext *sec);
 

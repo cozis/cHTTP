@@ -96,6 +96,17 @@ SocketPool *socket_pool_init(HTTP_String addr,
 #endif
     }
 
+#ifdef HTTPS_ENABLED
+    if (port == 0 && secure_port == 0) {
+        if (secure_context_init_as_client(&pool->sec) < 0) {
+            if (pool->listen_sock != BAD_SOCKET) CLOSE_SOCKET(pool->listen_sock);
+            if (pool->secure_sock != BAD_SOCKET) CLOSE_SOCKET(pool->secure_sock);
+            free(pool);
+            return NULL;
+        }
+    }
+#endif
+
     for (int i = 0; i < max_socks; i++)
         pool->socks[i].state = SOCKET_STATE_FREE;
 
@@ -121,10 +132,9 @@ void socket_pool_free(SocketPool *pool)
     if (pool->listen_sock != BAD_SOCKET) CLOSE_SOCKET(pool->listen_sock);
 }
 
-int socket_pool_add_cert(SocketPool *pool, char *domain, int domain_len,
-    char *cert_file, int cert_file_len, char *key_file, int key_file_len)
+int socket_pool_add_cert(SocketPool *pool, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
-    return secure_context_add_cert(&pool->sec, domain, domain_len, cert_file, cert_file_len, key_file, key_file_len);
+    return secure_context_add_cert(&pool->sec, domain, cert_file, key_file);
 }
 
 void socket_pool_set_user_data(SocketPool *pool, SocketHandle handle, void *user_data)

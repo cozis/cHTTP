@@ -8,6 +8,11 @@
 #ifndef SEC_INCLUDED
 #define SEC_INCLUDED
 
+
+#ifndef HTTP_AMALGAMATION
+#include "basic.h"
+#endif
+
 #ifndef HTTPS_ENABLED
 
 typedef struct {
@@ -46,12 +51,11 @@ void secure_context_global_free(void);
 int secure_context_init_as_client(SecureContext *sec);
 
 int secure_context_init_as_server(SecureContext *sec,
-    char *cert_file, int cert_file_len,
-    char *key_file, int key_file_len);
+    HTTP_String cert_file, HTTP_String key_file);
 
 int secure_context_add_cert(SecureContext *sec,
-    char *domain, int domain_len, char *cert_file,
-    int cert_file_len, char *key_file, int key_file_len);
+    HTTP_String domain, HTTP_String cert_file,
+    HTTP_String key_file);
 
 void secure_context_free(SecureContext *sec);
 
@@ -220,7 +224,7 @@ SocketPool *socket_pool_init(HTTP_String addr,
 
 void socket_pool_free(SocketPool *pool);
 
-int socket_pool_add_cert(SocketPool *pool, char *domain, int domain_len, char *cert_file, int cert_file_len, char *key_file, int key_file_len);
+int socket_pool_add_cert(SocketPool *pool, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
 
 SocketEvent socket_pool_wait(SocketPool *pool);
 
@@ -2465,9 +2469,15 @@ static X509 *create_certificate(EVP_PKEY *pkey, HTTP_String C, HTTP_String O, HT
     return x509;
 }
 
-static int save_private_key(EVP_PKEY *pkey, const char *filename)
+static int save_private_key(EVP_PKEY *pkey, HTTP_String file)
 {
-    FILE *fp = fopen(filename, "wb");
+    char copy[1<<10];
+    if (file.len >= (int) sizeof(copy))
+        return -1;
+    memcpy(copy, file.ptr, file.len);
+    copy[file.len] = '\0';
+
+    FILE *fp = fopen(copy, "wb");
     if (!fp)
         return -1;
 
@@ -2481,23 +2491,25 @@ static int save_private_key(EVP_PKEY *pkey, const char *filename)
     return 0;
 }
 
-static int cert_save(X509 *x509, const char *filename)
+static int save_certificate(X509 *x509, HTTP_String file)
 {
-    FILE *fp = fopen(filename, "wb");
-    if (!fp) {
-        fprintf(stderr, "Error opening file for certificate: %s\n", filename);
+    char copy[1<<10];
+    if (file.len >= (int) sizeof(copy))
         return -1;
-    }
+    memcpy(copy, file.ptr, file.len);
+    copy[file.len] = '\0';
+
+    FILE *fp = fopen(copy, "wb");
+    if (!fp)
+        return -1;
 
     // Write certificate in PEM format
     if (!PEM_write_X509(fp, x509)) {
-        fprintf(stderr, "Error writing certificate\n");
         fclose(fp);
         return -1;
     }
 
     fclose(fp);
-    printf("Certificate saved to: %s\n", filename);
     return 0;
 }
 
@@ -2508,7 +2520,7 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
     if (pkey == NULL)
         return -1;
 
-    X509 *x509 = create_certificate(pkey, C, O, CN, 1)
+    X509 *x509 = create_certificate(pkey, C, O, CN, 1);
     if (x509 == NULL) {
         EVP_PKEY_free(pkey);
         return -1;
@@ -2572,28 +2584,22 @@ int secure_context_init_as_client(SecureContext *sec)
 }
 
 int secure_context_init_as_server(SecureContext *sec,
-    char *cert_file, int cert_file_len,
-    char *key_file, int key_file_len)
+    HTTP_String cert_file, HTTP_String key_file)
 {
     (void) sec;
     (void) cert_file;
-    (void) cert_file_len;
     (void) key_file;
-    (void) key_file_len;
     return 0;
 }
 
 int secure_context_add_cert(SecureContext *sec,
-    char *domain, int domain_len, char *cert_file,
-    int cert_file_len, char *key_file, int key_file_len)
+    HTTP_String domain, HTTP_String cert_file,
+    HTTP_String key_file)
 {
     (void) sec;
     (void) domain;
-    (void) domain_len;
     (void) cert_file;
-    (void) cert_file_len;
     (void) key_file;
-    (void) key_file_len;
     return -1;
 }
 
@@ -2614,7 +2620,6 @@ void secure_context_global_init(void)
 void secure_context_global_free(void)
 {
     EVP_cleanup();
-    ERR_free_strings();
 }
 
 int secure_context_init_as_client(SecureContext *sec)
@@ -2627,9 +2632,10 @@ int secure_context_init_as_client(SecureContext *sec)
     
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     
-    if (SSL_CTX_set_default_verify_paths(ctx) != 1)
+    if (SSL_CTX_set_default_verify_paths(ctx) != 1) {
         SSL_CTX_free(ctx);
         return -1;
+    }
 
     sec->is_server = false;
     sec->ctx = ctx;
@@ -2640,6 +2646,8 @@ int secure_context_init_as_client(SecureContext *sec)
 static int servername_callback(SSL *ssl, int *ad, void *arg)
 {
     SecureContext *sec = arg;
+
+    (void) ad; // TODO: use this?
 
     const char *servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
     if (servername == NULL)
@@ -2657,8 +2665,7 @@ static int servername_callback(SSL *ssl, int *ad, void *arg)
 }
 
 int secure_context_init_as_server(SecureContext *sec,
-    char *cert_file, int cert_file_len,
-    char *key_file, int key_file_len)
+    HTTP_String cert_file, HTTP_String key_file)
 {
     SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
     if (!ctx)
@@ -2667,21 +2674,21 @@ int secure_context_init_as_server(SecureContext *sec,
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     
     static char cert_buffer[1024];
-    if (cert_file_len >= (int) sizeof(cert_buffer)) {
+    if (cert_file.len >= (int) sizeof(cert_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
     }
-    memcpy(cert_buffer, cert_file, cert_file_len);
-    cert_buffer[cert_file_len] = '\0';
+    memcpy(cert_buffer, cert_file.ptr, cert_file.len);
+    cert_buffer[cert_file.len] = '\0';
     
     // Copy private key file path to static buffer
     static char key_buffer[1024];
-    if (key_file_len >= (int) sizeof(key_buffer)) {
+    if (key_file.len >= (int) sizeof(key_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
     }
-    memcpy(key_buffer, key_file, key_file_len);
-    key_buffer[key_file_len] = '\0';
+    memcpy(key_buffer, key_file.ptr, key_file.len);
+    key_buffer[key_file.len] = '\0';
     
     // Load certificate and private key
     if (SSL_CTX_use_certificate_file(ctx, cert_buffer, SSL_FILETYPE_PEM) != 1) {
@@ -2717,8 +2724,8 @@ void secure_context_free(SecureContext *sec)
 }
 
 int secure_context_add_cert(SecureContext *sec,
-    char *domain, int domain_len, char *cert_file,
-    int cert_file_len, char *key_file, int key_file_len)
+    HTTP_String domain, HTTP_String cert_file,
+    HTTP_String key_file)
 {
     if (!sec->is_server)
         return -1;
@@ -2733,20 +2740,20 @@ int secure_context_add_cert(SecureContext *sec,
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     
     static char cert_buffer[1024];
-    if (cert_file_len >= (int) sizeof(cert_buffer)) {
+    if (cert_file.len >= (int) sizeof(cert_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
     }
-    memcpy(cert_buffer, cert_file, cert_file_len);
-    cert_buffer[cert_file_len] = '\0';
+    memcpy(cert_buffer, cert_file.ptr, cert_file.len);
+    cert_buffer[cert_file.len] = '\0';
     
     static char key_buffer[1024];
-    if (key_file_len >= (int) sizeof(key_buffer)) {
+    if (key_file.len >= (int) sizeof(key_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
     }
-    memcpy(key_buffer, key_file, key_file_len);
-    key_buffer[key_file_len] = '\0';
+    memcpy(key_buffer, key_file.ptr, key_file.len);
+    key_buffer[key_file.len] = '\0';
     
     if (SSL_CTX_use_certificate_file(ctx, cert_buffer, SSL_FILETYPE_PEM) != 1) {
         SSL_CTX_free(ctx);
@@ -2764,12 +2771,12 @@ int secure_context_add_cert(SecureContext *sec,
     }
 
     CertData *cert = &sec->certs[sec->num_certs];
-    if (domain_len >= (int) sizeof(cert->domain)) {
+    if (domain.len >= (int) sizeof(cert->domain)) {
         SSL_CTX_free(ctx);
         return -1;
     }
-    memcpy(cert->domain, domain, domain_len);
-    cert->domain[domain_len] = '\0';
+    memcpy(cert->domain, domain.ptr, domain.len);
+    cert->domain[domain.len] = '\0';
     cert->ctx = ctx;
     sec->num_certs++;
     return 0;
@@ -3367,9 +3374,10 @@ void socket_update(Socket *sock)
 #ifdef HTTPS_ENABLED
                 // Start SSL handshake
 
-                if (!sock->ssl) {
+                if (sock->ssl == NULL) {
                     sock->ssl = SSL_new(sock->sec->ctx);
                     if (sock->ssl == NULL) {
+                        ERR_print_errors_fp(stderr); // TODO: remove
                         sock->state  = SOCKET_STATE_DIED;
                         sock->events = 0;
                         break;
@@ -3788,6 +3796,17 @@ SocketPool *socket_pool_init(HTTP_String addr,
 #endif
     }
 
+#ifdef HTTPS_ENABLED
+    if (port == 0 && secure_port == 0) {
+        if (secure_context_init_as_client(&pool->sec) < 0) {
+            if (pool->listen_sock != BAD_SOCKET) CLOSE_SOCKET(pool->listen_sock);
+            if (pool->secure_sock != BAD_SOCKET) CLOSE_SOCKET(pool->secure_sock);
+            free(pool);
+            return NULL;
+        }
+    }
+#endif
+
     for (int i = 0; i < max_socks; i++)
         pool->socks[i].state = SOCKET_STATE_FREE;
 
@@ -3813,10 +3832,9 @@ void socket_pool_free(SocketPool *pool)
     if (pool->listen_sock != BAD_SOCKET) CLOSE_SOCKET(pool->listen_sock);
 }
 
-int socket_pool_add_cert(SocketPool *pool, char *domain, int domain_len,
-    char *cert_file, int cert_file_len, char *key_file, int key_file_len)
+int socket_pool_add_cert(SocketPool *pool, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
-    return secure_context_add_cert(&pool->sec, domain, domain_len, cert_file, cert_file_len, key_file, key_file_len);
+    return secure_context_add_cert(&pool->sec, domain, cert_file, key_file);
 }
 
 void socket_pool_set_user_data(SocketPool *pool, SocketHandle handle, void *user_data)
@@ -4573,7 +4591,7 @@ void http_server_free(HTTP_Server *server)
 
 int http_server_add_website(HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
-    return socket_pool_add_cert(server->socket_pool, domain.ptr, domain.len, cert_file.ptr, cert_file.len, key_file.ptr, key_file.len);
+    return socket_pool_add_cert(server->socket_pool, domain, cert_file, key_file);
 }
 
 static void* server_memfunc(HTTP_MemoryFuncTag tag, void *ptr, int len, void *data) {

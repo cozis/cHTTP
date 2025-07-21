@@ -16,7 +16,7 @@ int main(void)
     // Perform the request. This will block the thread
     // until an error occurs or the request completes.
     HTTP_Response *res = http_get(
-        HTTP_STR("http://coz.is/index.html"),
+        HTTP_STR("http://example.com/index.html"),
         headers, HTTP_COUNT(headers)
     );
 

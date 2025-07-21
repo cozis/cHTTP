@@ -471,9 +471,10 @@ void socket_update(Socket *sock)
 #ifdef HTTPS_ENABLED
                 // Start SSL handshake
 
-                if (!sock->ssl) {
+                if (sock->ssl == NULL) {
                     sock->ssl = SSL_new(sock->sec->ctx);
                     if (sock->ssl == NULL) {
+                        ERR_print_errors_fp(stderr); // TODO: remove
                         sock->state  = SOCKET_STATE_DIED;
                         sock->events = 0;
                         break;

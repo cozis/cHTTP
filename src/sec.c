@@ -19,28 +19,22 @@ int secure_context_init_as_client(SecureContext *sec)
 }
 
 int secure_context_init_as_server(SecureContext *sec,
-    char *cert_file, int cert_file_len,
-    char *key_file, int key_file_len)
+    HTTP_String cert_file, HTTP_String key_file)
 {
     (void) sec;
     (void) cert_file;
-    (void) cert_file_len;
     (void) key_file;
-    (void) key_file_len;
     return 0;
 }
 
 int secure_context_add_cert(SecureContext *sec,
-    char *domain, int domain_len, char *cert_file,
-    int cert_file_len, char *key_file, int key_file_len)
+    HTTP_String domain, HTTP_String cert_file,
+    HTTP_String key_file)
 {
     (void) sec;
     (void) domain;
-    (void) domain_len;
     (void) cert_file;
-    (void) cert_file_len;
     (void) key_file;
-    (void) key_file_len;
     return -1;
 }
 
@@ -61,7 +55,6 @@ void secure_context_global_init(void)
 void secure_context_global_free(void)
 {
     EVP_cleanup();
-    ERR_free_strings();
 }
 
 int secure_context_init_as_client(SecureContext *sec)
@@ -74,9 +67,10 @@ int secure_context_init_as_client(SecureContext *sec)
     
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     
-    if (SSL_CTX_set_default_verify_paths(ctx) != 1)
+    if (SSL_CTX_set_default_verify_paths(ctx) != 1) {
         SSL_CTX_free(ctx);
         return -1;
+    }
 
     sec->is_server = false;
     sec->ctx = ctx;
@@ -87,6 +81,8 @@ int secure_context_init_as_client(SecureContext *sec)
 static int servername_callback(SSL *ssl, int *ad, void *arg)
 {
     SecureContext *sec = arg;
+
+    (void) ad; // TODO: use this?
 
     const char *servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
     if (servername == NULL)
@@ -104,8 +100,7 @@ static int servername_callback(SSL *ssl, int *ad, void *arg)
 }
 
 int secure_context_init_as_server(SecureContext *sec,
-    char *cert_file, int cert_file_len,
-    char *key_file, int key_file_len)
+    HTTP_String cert_file, HTTP_String key_file)
 {
     SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
     if (!ctx)
@@ -114,21 +109,21 @@ int secure_context_init_as_server(SecureContext *sec,
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     
     static char cert_buffer[1024];
-    if (cert_file_len >= (int) sizeof(cert_buffer)) {
+    if (cert_file.len >= (int) sizeof(cert_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
     }
-    memcpy(cert_buffer, cert_file, cert_file_len);
-    cert_buffer[cert_file_len] = '\0';
+    memcpy(cert_buffer, cert_file.ptr, cert_file.len);
+    cert_buffer[cert_file.len] = '\0';
     
     // Copy private key file path to static buffer
     static char key_buffer[1024];
-    if (key_file_len >= (int) sizeof(key_buffer)) {
+    if (key_file.len >= (int) sizeof(key_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
     }
-    memcpy(key_buffer, key_file, key_file_len);
-    key_buffer[key_file_len] = '\0';
+    memcpy(key_buffer, key_file.ptr, key_file.len);
+    key_buffer[key_file.len] = '\0';
     
     // Load certificate and private key
     if (SSL_CTX_use_certificate_file(ctx, cert_buffer, SSL_FILETYPE_PEM) != 1) {
@@ -164,8 +159,8 @@ void secure_context_free(SecureContext *sec)
 }
 
 int secure_context_add_cert(SecureContext *sec,
-    char *domain, int domain_len, char *cert_file,
-    int cert_file_len, char *key_file, int key_file_len)
+    HTTP_String domain, HTTP_String cert_file,
+    HTTP_String key_file)
 {
     if (!sec->is_server)
         return -1;
@@ -180,20 +175,20 @@ int secure_context_add_cert(SecureContext *sec,
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     
     static char cert_buffer[1024];
-    if (cert_file_len >= (int) sizeof(cert_buffer)) {
+    if (cert_file.len >= (int) sizeof(cert_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
     }
-    memcpy(cert_buffer, cert_file, cert_file_len);
-    cert_buffer[cert_file_len] = '\0';
+    memcpy(cert_buffer, cert_file.ptr, cert_file.len);
+    cert_buffer[cert_file.len] = '\0';
     
     static char key_buffer[1024];
-    if (key_file_len >= (int) sizeof(key_buffer)) {
+    if (key_file.len >= (int) sizeof(key_buffer)) {
         SSL_CTX_free(ctx);
         return -1;
     }
-    memcpy(key_buffer, key_file, key_file_len);
-    key_buffer[key_file_len] = '\0';
+    memcpy(key_buffer, key_file.ptr, key_file.len);
+    key_buffer[key_file.len] = '\0';
     
     if (SSL_CTX_use_certificate_file(ctx, cert_buffer, SSL_FILETYPE_PEM) != 1) {
         SSL_CTX_free(ctx);
@@ -211,12 +206,12 @@ int secure_context_add_cert(SecureContext *sec,
     }
 
     CertData *cert = &sec->certs[sec->num_certs];
-    if (domain_len >= (int) sizeof(cert->domain)) {
+    if (domain.len >= (int) sizeof(cert->domain)) {
         SSL_CTX_free(ctx);
         return -1;
     }
-    memcpy(cert->domain, domain, domain_len);
-    cert->domain[domain_len] = '\0';
+    memcpy(cert->domain, domain.ptr, domain.len);
+    cert->domain[domain.len] = '\0';
     cert->ctx = ctx;
     sec->num_certs++;
     return 0;

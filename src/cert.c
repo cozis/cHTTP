@@ -82,9 +82,15 @@ static X509 *create_certificate(EVP_PKEY *pkey, HTTP_String C, HTTP_String O, HT
     return x509;
 }
 
-static int save_private_key(EVP_PKEY *pkey, const char *filename)
+static int save_private_key(EVP_PKEY *pkey, HTTP_String file)
 {
-    FILE *fp = fopen(filename, "wb");
+    char copy[1<<10];
+    if (file.len >= (int) sizeof(copy))
+        return -1;
+    memcpy(copy, file.ptr, file.len);
+    copy[file.len] = '\0';
+
+    FILE *fp = fopen(copy, "wb");
     if (!fp)
         return -1;
 
@@ -98,23 +104,25 @@ static int save_private_key(EVP_PKEY *pkey, const char *filename)
     return 0;
 }
 
-static int cert_save(X509 *x509, const char *filename)
+static int save_certificate(X509 *x509, HTTP_String file)
 {
-    FILE *fp = fopen(filename, "wb");
-    if (!fp) {
-        fprintf(stderr, "Error opening file for certificate: %s\n", filename);
+    char copy[1<<10];
+    if (file.len >= (int) sizeof(copy))
         return -1;
-    }
+    memcpy(copy, file.ptr, file.len);
+    copy[file.len] = '\0';
+
+    FILE *fp = fopen(copy, "wb");
+    if (!fp)
+        return -1;
 
     // Write certificate in PEM format
     if (!PEM_write_X509(fp, x509)) {
-        fprintf(stderr, "Error writing certificate\n");
         fclose(fp);
         return -1;
     }
 
     fclose(fp);
-    printf("Certificate saved to: %s\n", filename);
     return 0;
 }
 
@@ -125,7 +133,7 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
     if (pkey == NULL)
         return -1;
 
-    X509 *x509 = create_certificate(pkey, C, O, CN, 1)
+    X509 *x509 = create_certificate(pkey, C, O, CN, 1);
     if (x509 == NULL) {
         EVP_PKEY_free(pkey);
         return -1;

@@ -34,7 +34,7 @@ SocketPool *socket_pool_init(HTTP_String addr,
 
 void socket_pool_free(SocketPool *pool);
 
-int socket_pool_add_cert(SocketPool *pool, char *domain, int domain_len, char *cert_file, int cert_file_len, char *key_file, int key_file_len);
+int socket_pool_add_cert(SocketPool *pool, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
 
 SocketEvent socket_pool_wait(SocketPool *pool);
 

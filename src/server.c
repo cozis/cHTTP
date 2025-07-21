@@ -80,7 +80,7 @@ void http_server_free(HTTP_Server *server)
 
 int http_server_add_website(HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
-    return socket_pool_add_cert(server->socket_pool, domain.ptr, domain.len, cert_file.ptr, cert_file.len, key_file.ptr, key_file.len);
+    return socket_pool_add_cert(server->socket_pool, domain, cert_file, key_file);
 }
 
 static void* server_memfunc(HTTP_MemoryFuncTag tag, void *ptr, int len, void *data) {
