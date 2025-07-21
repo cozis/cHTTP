@@ -64,7 +64,7 @@ int main(void)
         if (ret < 0) return -1;
 
         http_response_status(res, 200);
-        http_response_header(res, "Content-Type: text/plain");
+        http_response_header(res, HTTP_STR("Content-Type: text/plain"));
         http_response_body(res, HTTP_STR("Hello"));
         http_response_body(res, HTTP_STR(", world!"));
         http_response_done(res);

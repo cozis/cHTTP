@@ -3,23 +3,6 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <winsock2.h>
-#define POLL WSAPoll
-#define CLOSE_SOCKET closesocket
-#endif
-
-#ifdef __linux__
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <poll.h>
-#define POLL poll
-#define CLOSE_SOCKET close
-#endif
-
 #ifndef HTTP_AMALGAMATION
 #include "engine.h"
 #include "socket.h"
@@ -38,8 +21,8 @@ typedef struct {
 struct HTTP_Server {
     SocketGroup group;
 
-    int listen_fd;
-    int secure_fd;
+    SOCKET_TYPE listen_fd;
+    SOCKET_TYPE secure_fd;
 
     int num_conns;
     Connection conns[MAX_CONNS];
@@ -48,59 +31,6 @@ struct HTTP_Server {
     int ready_count;
     int ready[MAX_CONNS];
 };
-
-static int listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int backlog)
-{
-    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_fd < 0)
-        return -1;
-
-    {
-        int flags = fcntl(listen_fd, F_GETFL, 0);
-        if (flags < 0) {
-            CLOSE_SOCKET(listen_fd);
-            return -1;
-        }
-
-        if (fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-            CLOSE_SOCKET(listen_fd);
-            return -1;
-        }
-    }
-
-    if (reuse_addr) {
-        int one = 1;
-        setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    }
-
-    struct in_addr addr_buf;
-    if (addr.len == 0)
-        addr_buf.s_addr = htonl(INADDR_ANY);
-    else {
-
-        _Static_assert(sizeof(struct in_addr) == sizeof(HTTP_IPv4));
-        if (http_parse_ipv4(addr.ptr, addr.len, (HTTP_IPv4*) &addr_buf) < 0) {
-            CLOSE_SOCKET(listen_fd);
-            return -1;
-        }
-    }
-
-    struct sockaddr_in bind_buf;
-    bind_buf.sin_family = AF_INET;
-    bind_buf.sin_addr   = addr_buf;
-    bind_buf.sin_port   = htons(port);
-    if (bind(listen_fd, (struct sockaddr*) &bind_buf, sizeof(bind_buf)) < 0) {
-        CLOSE_SOCKET(listen_fd);
-        return -1;
-    }
-
-    if (listen(listen_fd, backlog) < 0) {
-        CLOSE_SOCKET(listen_fd);
-        return -1;
-    }
-
-    return listen_fd;
-}
 
 HTTP_Server *http_server_init(HTTP_String addr, uint16_t port)
 {
@@ -124,17 +54,17 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
     }
 
     if (port == 0)
-        server->listen_fd = -1;
+        server->listen_fd = BAD_SOCKET;
     else {
         server->listen_fd = listen_socket(addr, port, reuse_addr, backlog);
-        if (server->listen_fd < 0) {
+        if (server->listen_fd == BAD_SOCKET) {
             free(server);
             return NULL;
         }
     }
 
     if (secure_port == 0)
-        server->secure_fd = -1;
+        server->secure_fd = BAD_SOCKET;
     else {
 
         if (socket_group_init_server(&server->group, cert_key, private_key) < 0) {
@@ -144,7 +74,7 @@ HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
         }
 
         server->secure_fd = listen_socket(addr, secure_port, reuse_addr, backlog);
-        if (server->secure_fd < 0) {
+        if (server->secure_fd == BAD_SOCKET) {
             socket_group_free(&server->group);
             CLOSE_SOCKET(server->listen_fd);
             free(server);
@@ -177,7 +107,7 @@ void http_server_free(HTTP_Server *server)
 
     CLOSE_SOCKET(server->secure_fd);
     CLOSE_SOCKET(server->listen_fd);
-    if (server->secure_fd != -1)
+    if (server->secure_fd != BAD_SOCKET)
         socket_group_free(&server->group);
     free(server);
 }
@@ -209,7 +139,7 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
 
         if (server->num_conns < MAX_CONNS) {
 
-            if (server->listen_fd != -1) {
+            if (server->listen_fd != BAD_SOCKET) {
                 polled[num_polled].fd = server->listen_fd;
                 polled[num_polled].events = POLLIN;
                 polled[num_polled].revents = 0;
@@ -217,7 +147,7 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
                 num_polled++;
             }
 
-            if (server->secure_fd != -1) {
+            if (server->secure_fd != BAD_SOCKET) {
                 polled[num_polled].fd = server->secure_fd;
                 polled[num_polled].events = POLLIN;
                 polled[num_polled].revents = 0;
@@ -263,7 +193,10 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandl
 
                 if ((polled[i].revents & POLLIN) && server->num_conns < MAX_CONNS) {
 
-                    int new_fd = accept(polled[i].fd, NULL, NULL);
+                    SOCKET_TYPE new_fd = accept(polled[i].fd, NULL, NULL);
+                    if (new_fd == BAD_SOCKET) {
+                        // TODO
+                    }
 
                     int k = 0;
                     while (server->conns[k].used)
@@ -372,16 +305,13 @@ void http_response_status(HTTP_ResponseHandle res, int status)
 	http_engine_status(&conn->engine, status);
 }
 
-void http_response_header(HTTP_ResponseHandle res, const char *fmt, ...)
+void http_response_header(HTTP_ResponseHandle res, HTTP_String str)
 {
 	Connection *conn = handle2conn(res);
 	if (conn == NULL)
 		return;
 
-	va_list args;
-	va_start(args, fmt);
-	http_engine_header_fmt2(&conn->engine, fmt, args);
-	va_end(args);
+	http_engine_header(&conn->engine, str);
 }
 
 void http_response_body(HTTP_ResponseHandle res, HTTP_String str)

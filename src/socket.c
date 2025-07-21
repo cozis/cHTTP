@@ -9,11 +9,15 @@
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <ws2tcpip.h>
+#define POLL WSAPoll
 #endif
 
 #ifdef __linux__
 #include <poll.h>
 #include <netdb.h>
+#include <fcntl.h>
+#define POLL poll
 #endif
 
 #ifdef HTTPS_ENABLED
@@ -28,6 +32,71 @@
 #ifndef HTTP_AMALGAMATION
 #include "socket.h"
 #endif
+
+static int set_socket_blocking(SOCKET_TYPE sock, bool value)
+{
+#ifdef _WIN32
+    u_long mode = !value;
+    if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR)
+        return -1;
+#endif
+
+#ifdef __linux__
+    int flags = fcntl(listen_fd, F_GETFL, 0);
+    if (flags < 0)
+        return -1;
+    if (fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK) < 0)
+        return BAD_SOCKET;
+#endif
+    
+    return 0;
+}
+
+SOCKET_TYPE listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int backlog)
+{
+    SOCKET_TYPE listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd == BAD_SOCKET)
+        return BAD_SOCKET;
+
+    if (set_socket_blocking(listen_fd, false) < 0) {
+        CLOSE_SOCKET(listen_fd);
+        return BAD_SOCKET;
+    }
+
+    if (reuse_addr) {
+        int one = 1;
+        setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, (void*) &one, sizeof(one));
+    }
+
+    struct in_addr addr_buf;
+    if (addr.len == 0)
+        addr_buf.s_addr = htonl(INADDR_ANY);
+    else {
+
+        _Static_assert(sizeof(struct in_addr) == sizeof(HTTP_IPv4));
+        if (http_parse_ipv4(addr.ptr, addr.len, (HTTP_IPv4*) &addr_buf) < 0) {
+            CLOSE_SOCKET(listen_fd);
+            return BAD_SOCKET;
+        }
+    }
+
+    struct sockaddr_in bind_buf;
+    bind_buf.sin_family = AF_INET;
+    bind_buf.sin_addr   = addr_buf;
+    bind_buf.sin_port   = htons(port);
+    if (bind(listen_fd, (struct sockaddr*) &bind_buf, sizeof(bind_buf)) < 0) { // TODO: how does bind fail on windows?
+        CLOSE_SOCKET(listen_fd);
+        return BAD_SOCKET;
+    }
+
+    if (listen(listen_fd, backlog) < 0) { // TODO: how does listen fail on windows?
+        CLOSE_SOCKET(listen_fd);
+        return BAD_SOCKET;
+    }
+
+    return listen_fd;
+}
+
 
 void socket_global_init(void)
 {
@@ -282,7 +351,7 @@ SocketState socket_state(Socket *sock)
     return sock->state;
 }
 
-void socket_accept(Socket *sock, SocketGroup *group, int fd)
+void socket_accept(Socket *sock, SocketGroup *group, SOCKET_TYPE fd)
 {
 #ifdef HTTPS_ENABLED
     sock->ssl = NULL;
@@ -303,13 +372,12 @@ void socket_accept(Socket *sock, SocketGroup *group, int fd)
     sock->addr_cursor = 0;
     sock->hostname = NULL;
     sock->port = 0;
-    
-    // Set non-blocking mode for the accepted socket
-    int flags = fcntl(fd, F_GETFL, 0); // TODO: fail on error
-    if (flags >= 0) {
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    if (set_socket_blocking(fd, false) < 0) {
+        sock->state = SOCKET_STATE_DIED;
+        return;
     }
-    
+
     // Start the TLS handshake process
     socket_update(sock);
 }
@@ -464,8 +532,8 @@ void socket_update(Socket *sock)
             }
 #endif
 
-            if (sock->fd != -1)
-                close(sock->fd);
+            if (sock->fd != BAD_SOCKET)
+                CLOSE_SOCKET(sock->fd);
 
             // If cursor reached the end, die
             if (sock->addr_cursor >= sock->addr_count) {
@@ -477,8 +545,8 @@ void socket_update(Socket *sock)
             // Take current address
             AddrInfo *ai = &sock->addr_list[sock->addr_cursor];
             int family = ai->is_ipv6 ? AF_INET6 : AF_INET;
-            int fd = socket(family, SOCK_STREAM, 0);
-            if (fd < 0) {
+            SOCKET_TYPE fd = socket(family, SOCK_STREAM, 0);
+            if (fd == BAD_SOCKET) {
                 // Try next address
                 sock->addr_cursor++;
                 sock->event = SOCKET_WANT_NONE;
@@ -487,9 +555,12 @@ void socket_update(Socket *sock)
                 break;
             }
 
-            // Set non-blocking
-            int flags = fcntl(fd, F_GETFL, 0);
-            if (flags >= 0) fcntl(fd, F_SETFL, flags | O_NONBLOCK); // TODO: Handle error by setting the socket to DIED
+            if (set_socket_blocking(fd, false) < 0) {
+                CLOSE_SOCKET(fd);
+                sock->event = SOCKET_WANT_NONE;
+                sock->state = SOCKET_STATE_DIED;
+                break;
+            }
 
             // Prepare sockaddr
             int ret;
@@ -516,7 +587,7 @@ void socket_update(Socket *sock)
                 break;
             }
             
-            if (ret < 0 && errno == EINPROGRESS) {
+            if (ret < 0 && errno == EINPROGRESS) { // TODO: I'm pretty sure all the error numbers need to be changed for windows
                 // Connection pending
                 sock->fd = fd;
                 sock->event = SOCKET_WANT_WRITE;
@@ -543,7 +614,7 @@ void socket_update(Socket *sock)
             // Check connect result
             int err = 0;
             socklen_t len = sizeof(err);
-            if (getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0) {
+            if (getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, (void*) &err, &len) < 0 || err != 0) {
                 close(sock->fd);
                 // If remote peer not working, try next address
                 if (err == ECONNREFUSED || err == ETIMEDOUT || err == ENETUNREACH || err == EHOSTUNREACH) {
@@ -820,9 +891,9 @@ void socket_free(Socket *sock)
         SSL_free(sock->ssl);
 #endif
 
-    if (sock->fd >= 0) {
-        close(sock->fd);
-        sock->fd = -1;
+    if (sock->fd != BAD_SOCKET) {
+        CLOSE_SOCKET(sock->fd);
+        sock->fd = BAD_SOCKET;
     }
 
     if (sock->hostname) {
@@ -862,7 +933,7 @@ int socket_wait(Socket **socks, int num_socks) // TODO: is this used?
             polled[i].revents = 0;
         }
 
-        int ret = poll(polled, num_socks, -1);
+        int ret = POLL(polled, num_socks, -1);
         if (ret < 0)
             return -1;
 

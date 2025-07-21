@@ -55,6 +55,27 @@
 
 #include <stdint.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#define SOCKET_TYPE SOCKET
+#define BAD_SOCKET INVALID_SOCKET
+#define POLL WSAPoll
+#define CLOSE_SOCKET closesocket
+#endif
+
+#ifdef __linux__
+#include <unistd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <poll.h>
+#define SOCKET_TYPE int
+#define BAD_SOCKET -1
+#define POLL poll
+#define CLOSE_SOCKET close
+#endif
+
+
 #ifdef HTTPS_ENABLED
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -93,7 +114,7 @@ typedef enum {
 typedef struct {
     SocketState state;
     SocketWantEvent event;
-    int fd;
+    SOCKET_TYPE fd;
 #if HTTPS_ENABLED
     SSL *ssl;
     SSL_CTX *ssl_ctx;
@@ -121,6 +142,9 @@ typedef struct {
 #endif
 } SocketGroup;
 
+SOCKET_TYPE listen_socket(HTTP_String addr, uint16_t port, bool reuse_addr, int backlog);
+
+
 void        socket_global_init  (void);
 void        socket_global_free  (void);
 int         socket_group_init   (SocketGroup *group);
@@ -128,7 +152,7 @@ int         socket_group_init_server(SocketGroup *group, HTTP_String cert_file, 
 int         socket_group_add_domain(SocketGroup *group, HTTP_String domain, HTTP_String cert_key, HTTP_String private_key);
 void        socket_group_free   (SocketGroup *group);
 SocketState socket_state        (Socket *sock);
-void        socket_accept       (Socket *sock, SocketGroup *group, int fd);
+void        socket_accept       (Socket *sock, SocketGroup *group, SOCKET_TYPE fd);
 void        socket_connect      (Socket *sock, SocketGroup *group, HTTP_String host, uint16_t port);
 void        socket_connect_ipv4 (Socket *sock, SocketGroup *group, HTTP_IPv4   addr, uint16_t port);
 void        socket_connect_ipv6 (Socket *sock, SocketGroup *group, HTTP_IPv6   addr, uint16_t port);

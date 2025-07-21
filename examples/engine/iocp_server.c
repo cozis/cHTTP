@@ -207,7 +207,7 @@ int main(void)
 			// See blocking_server_with_engine.c to learn about how to
 			// build a response
 			http_engine_status(&engs[key], 200);
-			http_engine_body(&engs[key], "Hello, world!", -1);
+			http_engine_body(&engs[key], HTTP_STR("Hello, world!"));
 			http_engine_done(&engs[key]);
 		}
 

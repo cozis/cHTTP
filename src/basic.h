@@ -6,7 +6,7 @@
 // String type used throughout cHTTP.
 typedef struct {
 	char *ptr;
-	long  len;
+	int   len;
 } HTTP_String;
 
 // Compare two strings and return true iff they have
@@ -22,6 +22,9 @@ bool http_streqcase(HTTP_String s1, HTTP_String s2);
 // a string. This doesn't change the original string and
 // the new one references the contents of the original one.
 HTTP_String http_trim(HTTP_String s);
+
+// TODO: comment
+void print_bytes(HTTP_String prefix, HTTP_String src);
 
 // Macro to simplify converting string literals to
 // HTTP_String.

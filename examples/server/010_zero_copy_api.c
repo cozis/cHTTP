@@ -23,7 +23,7 @@ int main(void)
         if (ret < 0) return -1;
 
         http_response_status(res, 200);
-        http_response_header(res, "Content-Type: text/plain");
+        http_response_header(res, HTTP_STR("Content-Type: text/plain"));
 
         // The previous example used the *_body function to
         // write the response body in chunks:

@@ -71,7 +71,7 @@ int main(void)
         http_response_status(res, 200);
 
         // Then zero or more headers
-        http_response_header(res, "Content-Type: text/plain");
+        http_response_header(res, HTTP_STR("Content-Type: text/plain"));
 
         // Then you can write zero or more chunks of the response body
         http_response_body(res, HTTP_STR("Hello"));

@@ -16,7 +16,7 @@
 // String type used throughout cHTTP.
 typedef struct {
 	char *ptr;
-	long  len;
+	int   len;
 } HTTP_String;
 
 // Compare two strings and return true iff they have
@@ -32,6 +32,9 @@ bool http_streqcase(HTTP_String s1, HTTP_String s2);
 // a string. This doesn't change the original string and
 // the new one references the contents of the original one.
 HTTP_String http_trim(HTTP_String s);
+
+// TODO: comment
+void print_bytes(HTTP_String prefix, HTTP_String src);
 
 // Macro to simplify converting string literals to
 // HTTP_String.
@@ -491,7 +494,7 @@ void         http_server_free        (HTTP_Server *server);
 int          http_server_wait        (HTTP_Server *server, HTTP_Request **req, HTTP_ResponseHandle *handle);
 int          http_server_add_website (HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
 void         http_response_status    (HTTP_ResponseHandle res, int status);
-void         http_response_header    (HTTP_ResponseHandle res, const char *fmt, ...);
+void         http_response_header    (HTTP_ResponseHandle res, HTTP_String str);
 void         http_response_body      (HTTP_ResponseHandle res, HTTP_String str);
 void         http_response_bodycap   (HTTP_ResponseHandle res, int mincap);
 char*        http_response_bodybuf   (HTTP_ResponseHandle res, int *cap);

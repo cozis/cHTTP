@@ -21,7 +21,7 @@ int main(void)
         // Say we are building a request..
 
         http_response_status(res, 200);
-        http_response_header(res, "Content-Type: text/plain");
+        http_response_header(res, HTTP_STR("Content-Type: text/plain"));
 
         // .. and in the middle of building an error condition
         // occurs. Maybe a file was missing or an allocation fails.
@@ -39,7 +39,7 @@ int main(void)
 
             // Now we are back to setting the status code
             http_response_status(res, 500);
-            http_response_header(res, "Content-Type: text/plain");
+            http_response_header(res, HTTP_STR("Content-Type: text/plain"));
             http_response_body(res, HTTP_STR("An error occurred!"));
             http_response_done(res);
 

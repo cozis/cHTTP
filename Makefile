@@ -1,7 +1,7 @@
 
 CC = gcc
 CFLAGS = -I. -Wall -Wextra -O0 -g3
-LFLAGS = -lssl -lcrypto
+LFLAGS =
 AR = ar
 
 CFILES = $(shell find src -name "*.c")
@@ -15,8 +15,10 @@ STATIC_LIB = lib$(LIBNAME).a
 # Detect OS and set executable extension
 ifeq ($(OS),Windows_NT)
     EXT = .exe
+	LFLAGS = -lws2_32
 else
     EXT = .out
+	LFLAGS += -lssl -lcrypto
 endif
 
 # Installation directories
