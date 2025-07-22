@@ -16,20 +16,16 @@ make libchttp.a
 If you used the amalgamated files, this are the flags required to build a project with cHTTP:
 
 ```bash
-# Linux (no HTTPS)
+# Linux
 gcc your_app.c chttp.c
 
-# Windows (no HTTPS)
+# Windows
 gcc your_app.c chttp.c -lws2_32
-
-# Linux (with HTTPS)
-gcc your_app.c chttp.c -DHTTPS_ENABLED -lssl -lcrypto
-
-# Windows (with HTTPS)
-gcc your_app.c chttp.c -DHTTPS_ENABLED -lssl -lcrypto -lws2_32
 ```
 
-Ff you are using the static library, instead if adding `chttp.c`, you will need to add the `-lchttp` flag.
+If you are using the static library, instead if adding `chttp.c`, you will need to add the `-lchttp` flag.
+
+By defalt the library is build without HTTPS. To enable it, add the flags `-DHTTPS_ENABLED -lssl -lcrypto`.
 
 ## Features & Limitations
 
