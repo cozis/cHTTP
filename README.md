@@ -1,5 +1,5 @@
 # cHTTP
-cHTTP is an HTTP client and server library for C with minimal dependencies and distributed as a single chttp.c file.
+cHTTP is an HTTP **client and server** library for C with minimal dependencies and **distributed as a single chttp.c** file.
 
 ## Example
 
@@ -59,7 +59,7 @@ int main(void)
 
 * HTTP 1.1 client and server
 * Fully non-blocking
-* Cross-Plafrorm (Windows & Linux)
+* Cross-Platform (Windows & Linux)
 * HTTPS support (using OpenSSL)
 * Virtual Hosts
 * Single-threaded
