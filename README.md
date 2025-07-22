@@ -57,12 +57,13 @@ int main(void)
 
 # Features & Limitations
 
-* HTTP 1.1
+* HTTP 1.1 client and server
 * Fully non-blocking
 * Cross-Plafrorm (Windows & Linux)
-* TLS support (OpenSSL)
+* HTTPS support (using OpenSSL)
 * Virtual Hosts
 * Single-threaded
+* Zero-copy interface
 
 ## Scalability
 
