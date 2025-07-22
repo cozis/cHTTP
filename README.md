@@ -4,12 +4,13 @@ cHTTP is an HTTP **client and server** library for C with minimal dependencies a
 Here is a list of features:
 
 * HTTP 1.1 client and server
-* Fully non-blocking
-* Cross-Platform (Windows & Linux)
-* HTTPS support (using OpenSSL)
+* Non-blocking
+* Cross-Platform
+* Minimal dependencies
+* HTTPS support
 * Virtual Hosts
 * Single-threaded
-* Zero-copy interface
+* Ergonomic API
 
 ## Getting Started
 
