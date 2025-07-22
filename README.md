@@ -106,7 +106,7 @@ int main(void)
 cHTTP officially supports Linux and Windows.
 
 ## HTTPS support
-Currently, HTTPS is implemented using OpenSSL. If you are on Windows, you'll need to install it manually.
+Currently, HTTPS is implemented using OpenSSL. If you are on Windows, you'll need to install it manually or disabling it by not defining `HTTPS_ENABLED`.
 
 ## Scalability
 cHTTP is designed to reach moderate scale to allow a compact and easy to work with implementation. The non-blocking I/O is based on `poll()` which I would say works up to about 500 concurrent connections. If you have more than that, you should consider APIs like epoll, io_uring, and I/O completion ports. If you do go that route, you can still reuse the cHTTP I/O independent core (see HTTP_Engine) to handle the HTTP protocol for you, both for client and server.

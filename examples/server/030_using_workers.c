@@ -19,7 +19,12 @@ typedef pthread_mutex_t    Mutex;
 typedef pthread_cond_t     Condvar;
 #endif
 
-// NOTE: This example doesn't work yet!
+// !!! WARNING !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! //
+//                                                                //
+// This example is just a proof of concept for now as the library //
+// still isn't thread-safe.                                       //
+//                                                                //
+// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! //
 
 // This example shows how to delegate the response creation
 // process to other threads.
