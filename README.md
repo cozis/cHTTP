@@ -1,6 +1,36 @@
 # cHTTP
 cHTTP is an HTTP **client and server** library for C with minimal dependencies and **distributed as a single chttp.c** file.
 
+## Getting Started
+
+The library is distributed in a single amalgamated `chttp.c` file or as a static library, so you can:
+
+1) Download `chttp.c` and `chttp.h` from the repository (no need to close the project)
+
+2) or clone the project and build the static library my running
+
+```
+make libchttp.a
+```
+
+If you used the amalgamated files, this are the flags required to build a project with cHTTP:
+
+```bash
+# Linux (no HTTPS)
+gcc your_app.c chttp.c
+
+# Windows (no HTTPS)
+gcc your_app.c chttp.c -lws2_32
+
+# Linux (with HTTPS)
+gcc your_app.c chttp.c -DHTTPS_ENABLED -lssl -lcrypto
+
+# Windows (with HTTPS)
+gcc your_app.c chttp.c -DHTTPS_ENABLED -lssl -lcrypto -lws2_32
+```
+
+Ff you are using the static library, instead if adding `chttp.c`, you will need to add the `-lchttp` flag.
+
 ## Features & Limitations
 
 * HTTP 1.1 client and server
@@ -69,8 +99,8 @@ int main(void)
 cHTTP officially supports Linux and Windows.
 
 ## HTTPS support
-Currently, HTTPS is implemented using OpenSSL which comes preinstalled on Linux but not Windows. It must be enabled by passing the `-DHTTPS_ENABLED` flag to gcc when building.
+Currently, HTTPS is implemented using OpenSSL which comes preinstalled on Linux but not Windows. It must be enabled by passing the `-DHTTPS_ENABLED` flag to gcc when building your program:
 
 ## Scalability
 cHTTP is designed to reach moderate scale to allow a compact and easy to work with implementation. The non-blocking I/O is based on `poll()` which I would say works up to about 500 concurrent connections. If you have more than that, you should consider APIs like epoll, io_uring,
-and I/O completion ports. If you do go that route, you can still reuse the cHTTP I/O independant core (see HTTP_Engine) to handle the HTTP protocol for you, both for client and server.
+and I/O completion ports. If you do go that route, you can still reuse the cHTTP I/O independent core (see HTTP_Engine) to handle the HTTP protocol for you, both for client and server.
