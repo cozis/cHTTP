@@ -215,6 +215,8 @@ int socket_pool_connect_ipv6(SocketPool *pool, bool secure,
     return 0;
 }
 
+#include <stdio.h> // TODO: remove
+
 SocketEvent socket_pool_wait(SocketPool *pool)
 {
     for (;;) {
@@ -233,6 +235,7 @@ SocketEvent socket_pool_wait(SocketPool *pool)
             if (socket_died(sock)) {
                 void *user_data = socket_get_user_data(sock);
                 socket_free(sock);
+                pool->num_socks--;
                 return (SocketEvent) { SOCKET_EVENT_DIED, -1, user_data };
             }
 
