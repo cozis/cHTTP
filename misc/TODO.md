@@ -7,3 +7,4 @@ add discussion on string management
 add discussion on error management
 check that virtual hosts over HTTPS work
 add examples for the router
+make it easy to switch on and off HTTPS when building

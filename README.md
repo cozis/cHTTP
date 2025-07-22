@@ -1,6 +1,16 @@
 # cHTTP
 cHTTP is an HTTP **client and server** library for C with minimal dependencies and **distributed as a single chttp.c** file.
 
+## Features & Limitations
+
+* HTTP 1.1 client and server
+* Fully non-blocking
+* Cross-Platform (Windows & Linux)
+* HTTPS support (using OpenSSL)
+* Virtual Hosts
+* Single-threaded
+* Zero-copy interface
+
 ## Example
 
 Here is a client performing a GET request:
@@ -55,17 +65,12 @@ int main(void)
 }
 ```
 
-# Features & Limitations
+## Platform Support
+cHTTP officially supports Linux and Windows.
 
-* HTTP 1.1 client and server
-* Fully non-blocking
-* Cross-Platform (Windows & Linux)
-* HTTPS support (using OpenSSL)
-* Virtual Hosts
-* Single-threaded
-* Zero-copy interface
+## HTTPS support
+Currently, HTTPS is implemented using OpenSSL which comes preinstalled on Linux but not Windows. It must be enabled by passing the `-DHTTPS_ENABLED` flag to gcc when building.
 
 ## Scalability
-
 cHTTP is designed to reach moderate scale to allow a compact and easy to work with implementation. The non-blocking I/O is based on `poll()` which I would say works up to about 500 concurrent connections. If you have more than that, you should consider APIs like epoll, io_uring,
 and I/O completion ports. If you do go that route, you can still reuse the cHTTP I/O independant core (see HTTP_Engine) to handle the HTTP protocol for you, both for client and server.
