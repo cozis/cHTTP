@@ -1,8 +1,7 @@
 # cHTTP
+cHTTP is an HTTP client and server library for C with minimal dependencies and distributed as a single chttp.c file.
 
-This is an HTTP client and server library for C.
-
-Here are some examples of how it looks like on the client and server. If you want to learn more, go through the files in `examples/` (they are intended to be skimmed in order).
+## Example
 
 Here is a client performing a GET request:
 ```c
@@ -29,7 +28,7 @@ int main(void)
 }
 ```
 
-And this is an HTTP server:
+And this is a server:
 ```c
 #include <chttp.h>
 
@@ -56,20 +55,16 @@ int main(void)
 }
 ```
 
-## Use Cases
+# Features & Limitations
 
-cHTTP is perfect for tooling or production environments of limited scale (up to about 1000 concurrent connections). To scale it further, users can take cHTTP's I/O independant HTTP state machine and use it in conjunction with more scalable I/O solutions (see examples/engine).
-
-## Why another HTTP library?
-
-This is my attempt at solving the "HTTP problem" for the C language. Writing C programs that behave as or interact with web services is always more painful than necessary in C. You either need to use `libcurl` which is overkill in most situations or link a large scale web servers to serve simple pages. This library targets smaller scale use-cases and tries to be as nice as possible to work with. Even then, it is fast. No performance is left on the table unless there is a specific reason. And if you do want to work at larger scales by using more sophisticate I/O systems (io_uring, I/O completion ports, etc) you can reuse the core state machine of the library that is I/O independant.
-
-## Features & Limitations
-* HTTP/1.1 server & client
-* Cross-platform (Windows & Linux)
-* TLS (HTTPS) support using OpenSSL
-* Minimal dependencies (libc and OpenSSL)
-* Non-blocking design based on `poll()`
-* I/O independant core reusable with more sophisticated I/O models
-* Virtual hosts
+* HTTP 1.1
+* Fully non-blocking
+* Cross-Plafrorm (Windows & Linux)
+* TLS support (OpenSSL)
+* Virtual Hosts
 * Single-threaded
+
+## Scalability
+
+cHTTP is designed to reach moderate scale to allow a compact and easy to work with implementation. The non-blocking I/O is based on `poll()` which I would say works up to about 500 concurrent connections. If you have more than that, you should consider APIs like epoll, io_uring,
+and I/O completion ports. If you do go that route, you can still reuse the cHTTP I/O independant core (see HTTP_Engine) to handle the HTTP protocol for you, both for client and server.

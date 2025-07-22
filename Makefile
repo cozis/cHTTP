@@ -1,6 +1,6 @@
 
 CC = gcc
-CFLAGS = -I. -Wall -Wextra -O0 -g3 -DHTTPS_ENABLED
+CFLAGS = -I. -Wall -Wextra -O0 -g3
 LFLAGS =
 AR = ar
 
@@ -39,7 +39,7 @@ all: chttp.c chttp.h examples lib
 lib: $(STATIC_LIB)
 
 chttp.c chttp.h: $(HFILES) $(CFILES)
-	python amalg.py
+	python misc/amalg.py
 
 # Object files from source files
 %.o: %.c $(HFILES)
