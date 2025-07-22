@@ -12,6 +12,8 @@ Here is a list of features:
 * Single-threaded
 * Ergonomic API
 
+Note: This library is beta-quality software as some essential features are still being implemented.
+
 ## Getting Started
 
 The library is distributed as a single amalgamated `chttp.c` file or as a static library, so you can:

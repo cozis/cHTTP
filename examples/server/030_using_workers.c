@@ -2,23 +2,6 @@
 #include <stdbool.h>
 #include <chttp.h>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-typedef void*              Thread;
-typedef unsigned long      ThreadReturn;
-typedef CRITICAL_SECTION   Mutex;
-typedef CONDITION_VARIABLE Condvar;
-#endif
-
-#ifdef __linux__
-#include <pthread.h>
-typedef pthread_t          Thread;
-typedef void*              ThreadReturn;
-typedef pthread_mutex_t    Mutex;
-typedef pthread_cond_t     Condvar;
-#endif
-
 // !!! WARNING !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! //
 //                                                                //
 // This example is just a proof of concept for now as the library //
@@ -41,6 +24,23 @@ typedef pthread_cond_t     Condvar;
 // In the mean time, the main thread can process the next request.
 // When the thread has finished, it can just call the usual
 // functions to produce a response.
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+typedef void*              Thread;
+typedef unsigned long      ThreadReturn;
+typedef CRITICAL_SECTION   Mutex;
+typedef CONDITION_VARIABLE Condvar;
+#endif
+
+#ifdef __linux__
+#include <pthread.h>
+typedef pthread_t          Thread;
+typedef void*              ThreadReturn;
+typedef pthread_mutex_t    Mutex;
+typedef pthread_cond_t     Condvar;
+#endif
 
 // The following types are used to describe a job the worker
 // needs to work on.
