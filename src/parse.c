@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <string.h>
 #include <assert.h>
+#include <stdlib.h>
+#include <limits.h>
 
 #ifndef HTTP_AMALGAMATION
 #include "parse.h"
@@ -9,43 +11,43 @@
 #endif
 
 // From RFC 9112
-	//   request-target = origin-form
-	//                  / absolute-form
-	//                  / authority-form
-	//                  / asterisk-form
-	//   origin-form    = absolute-path [ "?" query ]
-	//   absolute-form  = absolute-URI
-	//   authority-form = uri-host ":" port
-	//   asterisk-form  = "*"
-	//
-	// From RFC 9110
-	//  URI-reference = <URI-reference, see [URI], Section 4.1>
-	//  absolute-URI  = <absolute-URI, see [URI], Section 4.3>
-	//  relative-part = <relative-part, see [URI], Section 4.2>
-	//  authority     = <authority, see [URI], Section 3.2>
-	//  uri-host      = <host, see [URI], Section 3.2.2>
-	//  port          = <port, see [URI], Section 3.2.3>
-	//  path-abempty  = <path-abempty, see [URI], Section 3.3>
-	//  segment       = <segment, see [URI], Section 3.3>
-	//  query         = <query, see [URI], Section 3.4>
-	//
-	//  absolute-path = 1*( "/" segment )
-	//  partial-URI   = relative-part [ "?" query ]
-	//
-	// From RFC 3986:
-	//   segment       = *pchar
-	//   pchar         = unreserved / pct-encoded / sub-delims / ":" / "@"
-	//   pct-encoded   = "%" HEXDIG HEXDIG
-	//   sub-delims    = "!" / "$" / "&" / "'" / "(" / ")"
-    //                 / "*" / "+" / "," / ";" / "="
-	//   unreserved    = ALPHA / DIGIT / "-" / "." / "_" / "~"
-	//   query         = *( pchar / "/" / "?" )
-	//   absolute-URI  = scheme ":" hier-part [ "?" query ]
-	//   hier-part     = "//" authority path-abempty
-	//                 / path-absolute
-	//                 / path-rootless
-	//                 / path-empty
-	//   scheme      = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+//   request-target = origin-form
+//                  / absolute-form
+//                  / authority-form
+//                  / asterisk-form
+//   origin-form    = absolute-path [ "?" query ]
+//   absolute-form  = absolute-URI
+//   authority-form = uri-host ":" port
+//   asterisk-form  = "*"
+//
+// From RFC 9110
+//   URI-reference = <URI-reference, see [URI], Section 4.1>
+//   absolute-URI  = <absolute-URI, see [URI], Section 4.3>
+//   relative-part = <relative-part, see [URI], Section 4.2>
+//   authority     = <authority, see [URI], Section 3.2>
+//   uri-host      = <host, see [URI], Section 3.2.2>
+//   port          = <port, see [URI], Section 3.2.3>
+//   path-abempty  = <path-abempty, see [URI], Section 3.3>
+//   segment       = <segment, see [URI], Section 3.3>
+//   query         = <query, see [URI], Section 3.4>
+//
+//   absolute-path = 1*( "/" segment )
+//   partial-URI   = relative-part [ "?" query ]
+//
+// From RFC 3986:
+//   segment       = *pchar
+//   pchar         = unreserved / pct-encoded / sub-delims / ":" / "@"
+//   pct-encoded   = "%" HEXDIG HEXDIG
+//   sub-delims    = "!" / "$" / "&" / "'" / "(" / ")"
+//                 / "*" / "+" / "," / ";" / "="
+//   unreserved    = ALPHA / DIGIT / "-" / "." / "_" / "~"
+//   query         = *( pchar / "/" / "?" )
+//   absolute-URI  = scheme ":" hier-part [ "?" query ]
+//   hier-part     = "//" authority path-abempty
+//                 / path-absolute
+//                 / path-rootless
+//                 / path-empty
+//   scheme      = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
 
 typedef struct {
 	char *src;
@@ -109,6 +111,10 @@ static int is_vchar(char c)
 	return c >= ' ' && c <= '~';
 }
 
+#define CONSUME_OPTIONAL_SEQUENCE(scanner, func)                                        \
+    while ((scanner)->cur < (scanner)->len && (func)((scanner)->src[(scanner)->cur]))   \
+        (scanner)->cur++;
+
 static int
 consume_absolute_path(Scanner *s)
 {
@@ -118,8 +124,7 @@ consume_absolute_path(Scanner *s)
 
 	for (;;) {
 
-		while (s->cur < s->len && is_pchar(s->src[s->cur]))
-			s->cur++;
+        CONSUME_OPTIONAL_SEQUENCE(s, is_pchar);
 
 		if (s->cur == s->len || s->src[s->cur] != '/')
 			break;
@@ -156,8 +161,7 @@ static int parse_path(Scanner *s, HTTP_String *path, int abempty)
 			s->cur++;
 			for (;;) {
 
-				while (s->cur < s->len && is_pchar(s->src[s->cur]))
-					s->cur++;
+                CONSUME_OPTIONAL_SEQUENCE(s, is_pchar);
 
 				if (s->cur == s->len || s->src[s->cur] != '/')
 					break;
@@ -171,8 +175,7 @@ static int parse_path(Scanner *s, HTTP_String *path, int abempty)
 		s->cur++;
 		for (;;) {
 
-			while (s->cur < s->len && is_pchar(s->src[s->cur]))
-				s->cur++;
+            CONSUME_OPTIONAL_SEQUENCE(s, is_pchar)
 
 			if (s->cur == s->len || s->src[s->cur] != '/')
 				break;
@@ -452,8 +455,9 @@ static int parse_authority(Scanner *s, HTTP_Authority *authority)
 	HTTP_String userinfo;
 	{
 		int start = s->cur;
-		while (s->cur < s->len && is_userinfo(s->src[s->cur]))
-			s->cur++;
+
+        CONSUME_OPTIONAL_SEQUENCE(s, is_userinfo);
+
 		if (s->cur < s->len && s->src[s->cur] == '@') {
 			userinfo = (HTTP_String) {
 				s->src + start,
@@ -651,6 +655,21 @@ static int parse_request_target(Scanner *s, HTTP_URL *url)
 	return -1;
 }
 
+bool consume_str(Scanner *scan, HTTP_String token)
+{
+    HTTP_ASSERT(token.len > 0);
+
+    if (token.len > scan->len - scan->cur)
+        return false;
+
+    for (int i = 0; i < token.len; i++)
+        if (scan->src[scan->cur + i] != token.ptr[i])
+            return false;
+
+    scan->cur += token.len;
+    return true;
+}
+
 static int is_header_body(char c)
 {
 	return is_vchar(c) || c == ' ' || c == '\t';
@@ -659,16 +678,9 @@ static int is_header_body(char c)
 static int parse_headers(Scanner *s, HTTP_Header *headers, int max_headers)
 {
 	int num_headers = 0;
-	for (;;) {
+    while (!consume_str(s, HTTP_STR("\r\n"))) {
 
-		if (s->len - s->cur > 1
-			&& s->src[s->cur+0] == '\r'
-			&& s->src[s->cur+1] == '\n') {
-			s->cur += 2;
-			break;
-		}
-
-		// RFC 9112:
+        // RFC 9112:
 		//   field-line = field-name ":" OWS field-value OWS
 		//
 		// RFC 9110:
@@ -692,196 +704,354 @@ static int parse_headers(Scanner *s, HTTP_Header *headers, int max_headers)
 			return -1; // ERROR
 		s->cur++;
 
-		start = s->cur;
-		while (s->cur < s->len && is_header_body(s->src[s->cur]))
-			s->cur++;
+        start = s->cur;
+        CONSUME_OPTIONAL_SEQUENCE(s, is_header_body);
 		HTTP_String body = { s->src + start, s->cur - start };
 		body = http_trim(body);
 
-		if (s->len - s->cur < 2
-			|| s->src[s->cur+0] != '\r'
-			|| s->src[s->cur+1] != '\n')
-			return -1; // ERROR
-		s->cur += 2;
+        if (num_headers < max_headers)
+            headers[num_headers++] = (HTTP_Header) { name, body };
 
-		if (num_headers < max_headers)
-			headers[num_headers++] = (HTTP_Header) { name, body };
-	}
+        if (!consume_str(s, HTTP_STR("\r\n"))) {
+            return -1;
+        }
+    }
 
-	return num_headers;
+    return num_headers;
+}
+
+typedef enum {
+    TRANSFER_ENCODING_OPTION_CHUNKED,
+    TRANSFER_ENCODING_OPTION_COMPRESS,
+    TRANSFER_ENCODING_OPTION_DEFLATE,
+    TRANSFER_ENCODING_OPTION_GZIP,
+} TransferEncodingOption;
+
+static bool is_space(char c)
+{
+    return c == ' ' || c == '\t';
 }
 
 static int
-parse_content_length(const char *src, int len, unsigned long long *out)
+parse_transfer_encoding(HTTP_String src, TransferEncodingOption *dst, int max)
 {
-	int cur = 0;
-	while (cur < len && (src[cur] == ' ' || src[cur] == '\t'))
-		cur++;
+    Scanner s = { src.ptr, src.len, 0 };
 
-	if (cur == len || !is_digit(src[cur]))
-		return -1;
+    int num = 0;
+    for (;;) {
+        
+        CONSUME_OPTIONAL_SEQUENCE(&s, is_space);
 
-	unsigned long long buf = 0;
-	do {
-		int d = src[cur++] - '0';
-		if (buf > (UINT64_MAX - d) / 10)
-			return -1;
-		buf = buf * 10 + d;
-	} while (cur < len && is_digit(src[cur]));
+        TransferEncodingOption opt;
+        if (0) {}
+        else if (consume_str(&s, HTTP_STR("chunked")))  opt = TRANSFER_ENCODING_OPTION_CHUNKED;
+        else if (consume_str(&s, HTTP_STR("compress"))) opt = TRANSFER_ENCODING_OPTION_COMPRESS;
+        else if (consume_str(&s, HTTP_STR("deflate")))  opt = TRANSFER_ENCODING_OPTION_DEFLATE;
+        else if (consume_str(&s, HTTP_STR("gzip")))     opt = TRANSFER_ENCODING_OPTION_GZIP;
+        else return -1; // Invalid option
 
-	*out = buf;
-	return 0;
+        if (num == max)
+            return -1; // Too many options
+        dst[num++] = opt;
+
+        CONSUME_OPTIONAL_SEQUENCE(&s, is_space);
+
+        if (s.cur == s.len)
+            break;
+
+        if (s.src[s.cur] != ',')
+            return -1; // Missing comma separator
+    }
+
+    return num;
+}
+
+static int
+parse_content_length(const char *src, int len, uint64_t *out)
+{
+    int cur = 0;
+    while (cur < len && (src[cur] == ' ' || src[cur] == '\t'))
+        cur++;
+
+    if (cur == len || !is_digit(src[cur]))
+        return -1;
+
+    uint64_t buf = 0;
+    do {
+        int d = src[cur++] - '0';
+        if (buf > (UINT64_MAX - d) / 10)
+            return -1;
+        buf = buf * 10 + d;
+    } while (cur < len && is_digit(src[cur]));
+
+    *out = buf;
+    return 0;
+}
+
+static int parse_body(Scanner *s,
+    HTTP_Header *headers, int num_headers,
+    HTTP_String *body, bool body_expected)
+{
+
+    // RFC 9112 section 6:
+    //   The presence of a message body in a request is signaled by a Content-Length or
+    //   Transfer-Encoding header field. Request message framing is independent of method
+    //   semantics.
+
+    int header_index = http_find_header(headers, num_headers, HTTP_STR("Transfer-Encoding"));
+    if (header_index != -1) {
+
+        // RFC 9112 section 6.1:
+        //   A server MAY reject a request that contains both Content-Length and Transfer-Encoding
+        //   or process such a request in accordance with the Transfer-Encoding alone. Regardless,
+        //   the server MUST close the connection after responding to such a request to avoid the
+        //   potential attacks.
+        if (http_find_header(headers, num_headers, HTTP_STR("Content-Length")) != -1)
+            return -1;
+
+        HTTP_String value = headers[header_index].value;
+
+        // RFC 9112 section 6.1:
+        //   If any transfer coding other than chunked is applied to a request's content, the
+        //   sender MUST apply chunked as the final transfer coding to ensure that the message
+        //   is properly framed. If any transfer coding other than chunked is applied to a
+        //   response's content, the sender MUST either apply chunked as the final transfer
+        //   coding or terminate the message by closing the connection.
+
+        TransferEncodingOption opts[8];
+        int num = parse_transfer_encoding(value, opts, HTTP_COUNT(opts));
+        if (num != 1 || opts[0] != TRANSFER_ENCODING_OPTION_CHUNKED)
+            return -1;
+
+        HTTP_String chunks_maybe[128];
+        HTTP_String *chunks = chunks_maybe;
+        int num_chunks = 0;
+        int max_chunks = HTTP_COUNT(chunks_maybe);
+
+        #define FREE_CHUNK_LIST         \
+            if (chunks != chunks_maybe) \
+                free(chunks);
+
+        char *content_start = s->src + s->cur;
+
+        for (;;) {
+
+            // RFC 9112 section 7.1:
+            //   The chunked transfer coding wraps content in order to transfer it as a series of chunks,
+            //   each with its own size indicator, followed by an OPTIONAL trailer section containing
+            //   trailer fields.
+
+            if (s->cur == s->len) {
+                FREE_CHUNK_LIST
+                return 0; // Incomplete request
+            }
+
+            if (!is_hex_digit(s->src[s->cur])) {
+                FREE_CHUNK_LIST
+                return -1;
+            }
+
+            int chunk_len = 0;
+
+            do {
+                char c = s->src[s->cur++];
+                int  n = hex_digit_to_int(c);
+                if (chunk_len > (INT_MAX - n) / 16) {
+                    FREE_CHUNK_LIST
+                    return -1; // overflow
+                }
+                chunk_len = chunk_len * 16 + n;
+            } while (s->cur < s->len && is_hex_digit(s->src[s->cur]));
+
+            if (s->cur == s->len) {
+                FREE_CHUNK_LIST
+                return 0; // Incomplete request
+            }
+            if (s->src[s->cur] != '\r') {
+                FREE_CHUNK_LIST
+                return -1;
+            }
+            s->cur++;
+
+            if (s->cur == s->len) {
+                FREE_CHUNK_LIST
+                return 0;
+            }
+            if (s->src[s->cur] != '\n') {
+                FREE_CHUNK_LIST
+                return -1;
+            }
+            s->cur++;
+
+            char *chunk_ptr = s->src + s->cur;
+
+            if (chunk_len > s->len - s->cur) {
+                FREE_CHUNK_LIST
+                return 0; // Incomplete request
+            }
+            s->cur += chunk_len;
+
+            if (s->cur == s->len)
+                return 0; // Incomplete request
+            if (s->src[s->cur] != '\r') {
+                FREE_CHUNK_LIST
+                return -1;
+            }
+            s->cur++;
+
+            if (s->cur == s->len) {
+                FREE_CHUNK_LIST
+                return 0; // Incomplete request
+            }
+            if (s->src[s->cur] != '\n') {
+                FREE_CHUNK_LIST
+                return -1;
+            }
+            s->cur++;
+
+            if (chunk_len == 0)
+                break;
+
+            if (num_chunks == max_chunks) {
+
+                max_chunks *= 2;
+
+                HTTP_String *new_chunks = malloc(max_chunks * sizeof(HTTP_String));
+                if (new_chunks == NULL) {
+                    if (chunks != chunks_maybe)
+                        free(chunks);
+                    return -1;
+                }
+
+                for (int i = 0; i < num_chunks; i++)
+                    new_chunks[i] = chunks[i];
+
+                if (chunks != chunks_maybe)
+                    free(chunks);
+
+                chunks = new_chunks;
+            }
+            chunks[num_chunks++] = (HTTP_String) { chunk_ptr, chunk_len };
+        }
+
+        char *content_ptr = content_start;
+        for (int i = 0; i < num_chunks; i++) {
+            memmove(content_ptr, chunks[i].ptr, chunks[i].len);
+            content_ptr += chunks[i].len;
+        }
+
+        *body = (HTTP_String) {
+            content_start,
+            content_ptr - content_start
+        };
+
+        if (chunks != chunks_maybe)
+            free(chunks);
+
+        return 1;
+    }
+
+    // RFC 9112 section 6.3:
+    //   If a valid Content-Length header field is present without Transfer-Encoding,
+    //   its decimal value defines the expected message body length in octets.
+
+    header_index = http_find_header(headers, num_headers, HTTP_STR("Content-Length"));
+    if (header_index != -1) {
+
+        // Have Content-Length
+        HTTP_String value = headers[header_index].value;
+
+        uint64_t tmp;
+        if (parse_content_length(value.ptr, value.len, &tmp) < 0)
+            return -1;
+        if (tmp > INT_MAX)
+            return -1;
+        int len = (int) tmp;
+
+        if (len > s->len - s->cur)
+            return 0; // Incomplete request
+
+        *body = (HTTP_String) { s->src + s->cur, len };
+
+        s->cur += len;
+        return 1;
+    }
+
+    // No Content-Length or Transfer-Encoding
+    if (body_expected) return -1;
+
+    *body = (HTTP_String) { NULL, 0 };
+    return 1;
 }
 
 static int contains_head(char *src, int len)
 {
-	int cur = 0;
-	while (len - cur > 3) {
-		if (src[cur+0] == '\r' &&
-			src[cur+1] == '\n' &&
-			src[cur+2] == '\r' &&
-			src[cur+3] == '\n')
-			return 1;
-		cur++;
-	}
-	return 0;
+    int cur = 0;
+    while (len - cur > 3) {
+        if (src[cur+0] == '\r' &&
+            src[cur+1] == '\n' &&
+            src[cur+2] == '\r' &&
+            src[cur+3] == '\n')
+            return 1;
+        cur++;
+    }
+    return 0;
 }
 
 static int parse_request(Scanner *s, HTTP_Request *req)
 {
-	if (!contains_head(s->src + s->cur, s->len - s->cur))
-		return 0;
+    if (!contains_head(s->src + s->cur, s->len - s->cur))
+        return 0;
 
-	if (s->len - s->cur >= 3
-		&& s->src[s->cur+0] == 'G'
-		&& s->src[s->cur+1] == 'E'
-		&& s->src[s->cur+2] == 'T') {
-		s->cur += 3;
-		req->method = HTTP_METHOD_GET;
-	} else if (s->len - s->cur >= 4
-		&& s->src[s->cur+0] == 'P'
-		&& s->src[s->cur+1] == 'O'
-		&& s->src[s->cur+2] == 'S'
-		&& s->src[s->cur+3] == 'T') {
-		s->cur += 4;
-		req->method = HTTP_METHOD_POST;
-	} else if (s->len - s->cur >= 3
-		&& s->src[s->cur+0] == 'P'
-		&& s->src[s->cur+1] == 'U'
-		&& s->src[s->cur+2] == 'T') {
-		s->cur += 3;
-		req->method = HTTP_METHOD_PUT;
-	} else if (s->len - s->cur >= 4
-		&& s->src[s->cur+0] == 'H'
-		&& s->src[s->cur+1] == 'E'
-		&& s->src[s->cur+2] == 'A'
-		&& s->src[s->cur+3] == 'D') {
-		s->cur += 4;
-		req->method = HTTP_METHOD_HEAD;
-	} else if (s->len - s->cur >= 6
-		&& s->src[s->cur+0] == 'D'
-		&& s->src[s->cur+1] == 'E'
-		&& s->src[s->cur+2] == 'L'
-		&& s->src[s->cur+3] == 'E'
-		&& s->src[s->cur+4] == 'T'
-		&& s->src[s->cur+5] == 'E') {
-		s->cur += 6;
-		req->method = HTTP_METHOD_DELETE;
-	} else if (s->len - s->cur >= 7
-		&& s->src[s->cur+0] == 'C'
-		&& s->src[s->cur+1] == 'O'
-		&& s->src[s->cur+2] == 'N'
-		&& s->src[s->cur+3] == 'N'
-		&& s->src[s->cur+4] == 'E'
-		&& s->src[s->cur+5] == 'C'
-		&& s->src[s->cur+6] == 'T') {
-		s->cur += 7;
-		req->method = HTTP_METHOD_CONNECT;
-	} else if (s->len - s->cur >= 7
-		&& s->src[s->cur+0] == 'O'
-		&& s->src[s->cur+1] == 'P'
-		&& s->src[s->cur+2] == 'T'
-		&& s->src[s->cur+3] == 'I'
-		&& s->src[s->cur+4] == 'O'
-		&& s->src[s->cur+5] == 'N'
-		&& s->src[s->cur+6] == 'S') {
-		s->cur += 7;
-		req->method = HTTP_METHOD_OPTIONS;
-	} else if (s->len - s->cur >= 5
-		&& s->src[s->cur+0] == 'T'
-		&& s->src[s->cur+1] == 'R'
-		&& s->src[s->cur+2] == 'A'
-		&& s->src[s->cur+3] == 'C'
-		&& s->src[s->cur+4] == 'E') {
-		s->cur += 5;
-		req->method = HTTP_METHOD_TRACE;
-	} else if (s->len - s->cur >= 5
-		&& s->src[s->cur+0] == 'P'
-		&& s->src[s->cur+1] == 'A'
-		&& s->src[s->cur+2] == 'T'
-		&& s->src[s->cur+3] == 'C'
-		&& s->src[s->cur+4] == 'H') {
-		s->cur += 5;
-		req->method = HTTP_METHOD_PATCH;
-	} else {
-		return -1;
-	}
+    if (0) {}
+    else if (consume_str(s, HTTP_STR("GET ")))     req->method = HTTP_METHOD_GET;
+    else if (consume_str(s, HTTP_STR("POST ")))    req->method = HTTP_METHOD_POST;
+    else if (consume_str(s, HTTP_STR("PUT ")))     req->method = HTTP_METHOD_PUT;
+    else if (consume_str(s, HTTP_STR("HEAD ")))    req->method = HTTP_METHOD_HEAD;
+    else if (consume_str(s, HTTP_STR("DELETE ")))  req->method = HTTP_METHOD_DELETE;
+    else if (consume_str(s, HTTP_STR("CONNECT "))) req->method = HTTP_METHOD_CONNECT;
+    else if (consume_str(s, HTTP_STR("OPTIONS "))) req->method = HTTP_METHOD_OPTIONS;
+    else if (consume_str(s, HTTP_STR("TRACE ")))   req->method = HTTP_METHOD_TRACE;
+    else if (consume_str(s, HTTP_STR("PATCH ")))   req->method = HTTP_METHOD_PATCH;
+    else return -1;
 
-	if (s->cur == s->len || s->src[s->cur] != ' ')
-		return -1;
-	s->cur++;
+    if (s->cur == s->len || s->src[s->cur] != ' ')
+        return -1;
+    s->cur++;
 
-	{
-		Scanner s2 = *s;
-		int peek = s->cur;
-		while (peek < s->len && s->src[peek] != ' ')
-			peek++;
-		if (peek == s->len)
-			return -1;
-		s2.len = peek;
+    {
+        Scanner s2 = *s;
+        int peek = s->cur;
+        while (peek < s->len && s->src[peek] != ' ')
+            peek++;
+        if (peek == s->len)
+            return -1;
+        s2.len = peek;
 
-		int ret = parse_request_target(&s2, &req->url);
-		if (ret < 0) return ret;
+        int ret = parse_request_target(&s2, &req->url);
+        if (ret < 0) return ret;
 
-		s->cur = s2.cur;
-	}
+        s->cur = s2.cur;
+    }
 
-	{
-		if (s->len - s->cur < 7
-			|| s->src[s->cur+0] != ' '
-			|| s->src[s->cur+1] != 'H'
-			|| s->src[s->cur+2] != 'T'
-			|| s->src[s->cur+3] != 'T'
-			|| s->src[s->cur+4] != 'P'
-			|| s->src[s->cur+5] != '/'
-			|| s->src[s->cur+6] != '1')
-			return -1; // ERROR
-		s->cur += 7;
+    if (consume_str(s, HTTP_STR(" HTTP/1.1\r\n"))) {
+        req->minor = 1;
+    } else if (consume_str(s, HTTP_STR(" HTTP/1.0\r\n")) || consume_str(s, HTTP_STR(" HTTP/1\r\n"))) {
+        req->minor = 0;
+    } else {
+        return -1;
+    }
 
-		if (s->cur == s->len || s->src[s->cur] != '.')
-			req->minor = 0;
-		else {
-			s->cur++;
-			if (s->cur == s->len || !is_digit(s->src[s->cur]))
-				return -1; // ERROR;
-			req->minor = s->src[s->cur] - '0';
-			s->cur++;
-		}
+    int num_headers = parse_headers(s, req->headers, HTTP_MAX_HEADERS);
+    if (num_headers < 0)
+        return num_headers;
+    req->num_headers = num_headers;
 
-		if (s->len - s->cur < 2
-			|| s->src[s->cur+0] != '\r'
-			|| s->src[s->cur+1] != '\n')
-			return -1; // ERROR
-		s->cur += 2;
-	}
+    bool body_expected = true;
+    if (req->method == HTTP_METHOD_GET || req->method == HTTP_METHOD_DELETE) // TODO: maybe other methods?
+        body_expected = false;
 
-	int num_headers = parse_headers(s, req->headers, HTTP_MAX_HEADERS);
-	if (num_headers < 0)
-		return num_headers;
-	req->num_headers = num_headers;
-
-	// TODO
-	return 1;
+    return parse_body(s, req->headers, req->num_headers, &req->body, body_expected);
 }
 
 int http_find_header(HTTP_Header *headers, int num_headers, HTTP_String name)
@@ -897,126 +1067,89 @@ static int parse_response(Scanner *s, HTTP_Response *res)
 	if (!contains_head(s->src + s->cur, s->len - s->cur))
 		return 0;
 
-	if (s->len - s->cur < 6
-		|| s->src[s->cur+0] != 'H'
-		|| s->src[s->cur+1] != 'T'
-		|| s->src[s->cur+2] != 'T'
-		|| s->src[s->cur+3] != 'P'
-		|| s->src[s->cur+4] != '/'
-		|| s->src[s->cur+5] != '1')
-		return -1; // ERROR
-	s->cur += 6;
+    if (consume_str(s, HTTP_STR("HTTP/1.1 "))) {
+        res->minor = 1;
+    } else if (consume_str(s, HTTP_STR("HTTP/1.0 ")) || consume_str(s, HTTP_STR("HTTP/1 "))) {
+        res->minor = 0;
+    } else {
+        return -1;
+    }
 
-	if (s->cur == s->len || s->src[s->cur] != '.')
-		res->minor = 0;
-	else {
-		s->cur++;
-		if (s->cur == s->len || !is_digit(s->src[s->cur]))
-			return -1; // ERROR
-		res->minor = s->src[s->cur] - '0';
-		s->cur++;
-	}
+    if (s->len - s->cur < 5
+        || s->src[s->cur+0] != ' '
+        || !is_digit(s->src[s->cur+1])
+        || !is_digit(s->src[s->cur+2])
+        || !is_digit(s->src[s->cur+3])
+        || s->src[s->cur+4] != ' ')
+        return -1;
+    s->cur += 5;
 
-	if (s->len - s->cur < 5
-		|| s->src[s->cur+0] != ' '
-		|| !is_digit(s->src[s->cur+1])
-		|| !is_digit(s->src[s->cur+2])
-		|| !is_digit(s->src[s->cur+3])
-		|| s->src[s->cur+4] != ' ')
-		return -1;
-	s->cur += 5;
+    res->status =
+        (s->src[s->cur-2] - '0') * 1 +
+        (s->src[s->cur-3] - '0') * 10 +
+        (s->src[s->cur-4] - '0') * 100;
 
-	res->status =
-		(s->src[s->cur-2] - '0') * 1 +
-		(s->src[s->cur-3] - '0') * 10 +
-		(s->src[s->cur-4] - '0') * 100;
+    while (s->cur < s->len && (
+        s->src[s->cur] == '\t' ||
+        s->src[s->cur] == ' ' ||
+        is_vchar(s->src[s->cur]))) // TODO: obs-text
+        s->cur++;
 
-	while (s->cur < s->len && (
-		s->src[s->cur] == '\t' ||
-		s->src[s->cur] == ' ' ||
-		is_vchar(s->src[s->cur]))) // TODO: obs-text
-		s->cur++;
+    if (s->len - s->cur < 2
+        || s->src[s->cur+0] != '\r'
+        || s->src[s->cur+1] != '\n')
+        return -1;
+    s->cur += 2;
 
-	if (s->len - s->cur < 2
-		|| s->src[s->cur+0] != '\r'
-		|| s->src[s->cur+1] != '\n')
-		return -1;
-	s->cur += 2;
+    int num_headers = parse_headers(s, res->headers, HTTP_MAX_HEADERS);
+    if (num_headers < 0)
+        return num_headers;
+    res->num_headers = num_headers;
 
-	int num_headers = parse_headers(s, res->headers, HTTP_MAX_HEADERS);
-	if (num_headers < 0)
-		return num_headers;
-	res->num_headers = num_headers;
+    bool body_expected = true; // TODO
 
-	int content_length_index = http_find_header(
-		res->headers, res->num_headers,
-		HTTP_STR("Content-Length"));
-	if (content_length_index == -1) {
-		res->body.ptr = NULL;
-		res->body.len = 0;
-		return 1;
-	}
-
-	// TODO: transfer-encoding
-
-	HTTP_String content_length_str = res->headers[content_length_index].value;
-
-	unsigned long long content_length;
-	if (parse_content_length(content_length_str.ptr, content_length_str.len, &content_length) < 0) {
-		HTTP_ASSERT(0); // TODO
-	}
-
-	if (content_length > 1<<20) {
-		HTTP_ASSERT(0); // TODO
-	}
-
-	if (content_length > (unsigned long long) (s->len - s->cur))
-		return 0;
-
-	res->body.ptr = s->src + s->cur;
-	res->body.len = content_length;
-	return 1;
+    return parse_body(s, res->headers, res->num_headers, &res->body, body_expected);
 }
 
 int http_parse_ipv4(char *src, int len, HTTP_IPv4 *ipv4)
 {
-	Scanner s = {src, len, 0};
-	int ret = parse_ipv4(&s, ipv4);
-	if (ret < 0) return ret;
-	return s.cur;
+    Scanner s = {src, len, 0};
+    int ret = parse_ipv4(&s, ipv4);
+    if (ret < 0) return ret;
+    return s.cur;
 }
 
 int http_parse_ipv6(char *src, int len, HTTP_IPv6 *ipv6)
 {
-	Scanner s = {src, len, 0};
-	int ret = parse_ipv6(&s, ipv6);
-	if (ret < 0) return ret;
-	return s.cur;
+    Scanner s = {src, len, 0};
+    int ret = parse_ipv6(&s, ipv6);
+    if (ret < 0) return ret;
+    return s.cur;
 }
 
 int http_parse_url(char *src, int len, HTTP_URL *url)
 {
-	Scanner s = {src, len, 0};
-	int ret = parse_uri(&s, url, 1);
-	if (ret == 1)
-		return s.cur;
-	return ret;
+    Scanner s = {src, len, 0};
+    int ret = parse_uri(&s, url, 1);
+    if (ret == 1)
+        return s.cur;
+    return ret;
 }
 
 int http_parse_request(char *src, int len, HTTP_Request *req)
 {
-	Scanner s = {src, len, 0};
-	int ret = parse_request(&s, req);
-	if (ret == 1)
-		return s.cur;
-	return ret;
+    Scanner s = {src, len, 0};
+    int ret = parse_request(&s, req);
+    if (ret == 1)
+        return s.cur;
+    return ret;
 }
 
 int http_parse_response(char *src, int len, HTTP_Response *res)
 {
-	Scanner s = {src, len, 0};
-	int ret = parse_response(&s, res);
-	if (ret == 1)
-		return s.cur;
-	return ret;
+    Scanner s = {src, len, 0};
+    int ret = parse_response(&s, res);
+    if (ret == 1)
+        return s.cur;
+    return ret;
 }

@@ -10,3 +10,4 @@ coverage_report
 *.o
 *.a
 *.so
+*.pem

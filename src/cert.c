@@ -33,7 +33,7 @@ static EVP_PKEY *generate_rsa_key_pair(int key_bits)
         return NULL;
     }
 
-    EVP_PKEY *pkey;
+    EVP_PKEY *pkey = NULL;
     if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
         EVP_PKEY_CTX_free(ctx);
         return NULL;

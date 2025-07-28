@@ -368,6 +368,9 @@ void http_request_builder_submit(HTTP_RequestBuilder handle)
 
 void http_response_free(HTTP_Response *res)
 {
+    if (res == NULL)
+        return;
+
     HTTP_Client *client = res->context;
 
     ClientConnection *conn = NULL;

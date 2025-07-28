@@ -21,6 +21,12 @@ else
 	LFLAGS += -lssl -lcrypto
 endif
 
+HTTPS = 1
+ifeq ($(HTTPS),1)
+	CFLAGS += -DHTTPS_ENABLED
+	LFLAGS += -lssl -lcrypto
+endif
+
 # Installation directories
 PREFIX ?= /usr/local
 LIBDIR = $(PREFIX)/lib
