@@ -350,3 +350,8 @@ int socket_pool_write(SocketPool *pool, SocketHandle handle, char *src, int len)
 {
     return socket_write(&pool->socks[handle], src, len);
 }
+
+bool socket_pool_secure(SocketPool *pool, SocketHandle handle)
+{
+    return socket_secure(&pool->socks[handle]);
+}

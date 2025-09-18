@@ -55,4 +55,6 @@ int socket_pool_read(SocketPool *pool, SocketHandle handle, char *dst, int len);
 
 int socket_pool_write(SocketPool *pool, SocketHandle handle, char *src, int len);
 
+bool socket_pool_secure(SocketPool *pool, SocketHandle handle);
+
 #endif // SOCKET_POOL_INCLUDED

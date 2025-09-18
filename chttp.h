@@ -162,6 +162,7 @@ typedef struct {
 } HTTP_Header;
 
 typedef struct {
+    bool        secure;
 	HTTP_Method method;
 	HTTP_URL    url;
 	int         minor;

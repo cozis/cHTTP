@@ -245,6 +245,8 @@ int socket_pool_read(SocketPool *pool, SocketHandle handle, char *dst, int len);
 
 int socket_pool_write(SocketPool *pool, SocketHandle handle, char *src, int len);
 
+bool socket_pool_secure(SocketPool *pool, SocketHandle handle);
+
 #endif // SOCKET_POOL_INCLUDED
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -1366,6 +1368,8 @@ static int parse_request(Scanner *s, HTTP_Request *req)
     if (!contains_head(s->src + s->cur, s->len - s->cur))
         return 0;
 
+    req->secure = false;
+
     if (0) {}
     else if (consume_str(s, HTTP_STR("GET ")))     req->method = HTTP_METHOD_GET;
     else if (consume_str(s, HTTP_STR("POST ")))    req->method = HTTP_METHOD_POST;
@@ -1377,10 +1381,6 @@ static int parse_request(Scanner *s, HTTP_Request *req)
     else if (consume_str(s, HTTP_STR("TRACE ")))   req->method = HTTP_METHOD_TRACE;
     else if (consume_str(s, HTTP_STR("PATCH ")))   req->method = HTTP_METHOD_PATCH;
     else return -1;
-
-    if (s->cur == s->len || s->src[s->cur] != ' ')
-        return -1;
-    s->cur++;
 
     {
         Scanner s2 = *s;
@@ -4178,6 +4178,11 @@ int socket_pool_write(SocketPool *pool, SocketHandle handle, char *src, int len)
     return socket_write(&pool->socks[handle], src, len);
 }
 
+bool socket_pool_secure(SocketPool *pool, SocketHandle handle)
+{
+    return socket_secure(&pool->socks[handle]);
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/client.c
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -4840,6 +4845,8 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuild
     server->ready_count--;
 
     *req = http_engine_getreq(&server->conns[index].engine);
+    (*req)->secure = socket_pool_secure(server->socket_pool, server->conns[index].sock);
+
     *builder = (HTTP_ResponseBuilder) { server, index, server->conns[index].gen };
     return 0;
 }

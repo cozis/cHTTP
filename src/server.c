@@ -196,6 +196,8 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuild
     server->ready_count--;
 
     *req = http_engine_getreq(&server->conns[index].engine);
+    (*req)->secure = socket_pool_secure(server->socket_pool, server->conns[index].sock);
+
     *builder = (HTTP_ResponseBuilder) { server, index, server->conns[index].gen };
     return 0;
 }
