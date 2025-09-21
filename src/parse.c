@@ -1151,3 +1151,156 @@ int http_parse_response(char *src, int len, HTTP_Response *res)
         return s.cur;
     return ret;
 }
+
+HTTP_String http_get_cookie(HTTP_Request *req, HTTP_String name)
+{
+    // TODO: best-effort implementation
+
+    for (int i = 0; i < req->num_headers; i++) {
+
+        if (!http_streqcase(req->headers[i].name, HTTP_STR("Cookie")))
+            continue;
+
+        char *src = req->headers[i].value.ptr;
+        int   len = req->headers[i].value.len;
+        int   cur = 0;
+
+        // Cookie: name1=value1; name2=value2; name3=value3
+
+        for (;;) {
+
+            while (cur < len && src[cur] == ' ')
+                cur++;
+
+            int off = cur;
+            while (cur < len && src[cur] != '=')
+                cur++;
+
+            HTTP_String cookie_name = { src + off, cur - off };
+
+            if (cur == len)
+                break;
+            cur++;
+
+            off = cur;
+            while (cur < len && src[cur] != ';')
+                cur++;
+
+            HTTP_String cookie_value = { src + off, cur - off };
+
+            if (http_streq(name, cookie_name))
+                return cookie_value;
+
+            if (cur == len)
+                break;
+            cur++;
+        }
+    }
+
+    return HTTP_STR("");
+}
+
+HTTP_String http_get_param(HTTP_String body, HTTP_String str, char *mem, int cap)
+{
+    // This is just a best-effort implementation
+
+    char *src = body.ptr;
+    int   len = body.len;
+    int   cur = 0;
+
+    if (cur < len && src[cur] == '?')
+        cur++;
+
+    while (cur < len) {
+
+        HTTP_String name;
+        {
+            int off = cur;
+            while (cur < len && src[cur] != '=' && src[cur] != '&')
+                cur++;
+            name = (HTTP_String) { src + off, cur - off };
+        }
+
+        HTTP_String body = HTTP_STR("");
+        if (cur < len) {
+            cur++;
+            if (src[cur-1] == '=') {
+                int off = cur;
+                while (cur < len && src[cur] != '&')
+                    cur++;
+                body = (HTTP_String) { src + off, cur - off };
+
+                if (cur < len)
+                    cur++;
+            }
+        }
+
+        if (http_streq(str, name)) {
+
+            bool percent_encoded = false;
+            for (int i = 0; i < body.len; i++)
+                if (body.ptr[i] == '+' || body.ptr[i] == '%') {
+                    percent_encoded = true;
+                    break;
+                }
+
+            if (!percent_encoded)
+                return body;
+
+            if (body.len > cap)
+                return (HTTP_String) { NULL, 0 };
+
+            HTTP_String decoded = { mem, 0 };
+            for (int i = 0; i < body.len; i++) {
+
+                char c = body.ptr[i];
+                if (c == '+')
+                    c = ' ';
+                else {
+                    if (body.ptr[i] == '%') {
+                        if (body.len - i < 3
+                            || !is_hex_digit(body.ptr[i+1])
+                            || !is_hex_digit(body.ptr[i+2]))
+                            return (HTTP_String) { NULL, 0 };
+
+                        int h = hex_digit_to_int(body.ptr[i+1]);
+                        int l = hex_digit_to_int(body.ptr[i+2]);
+                        c = (h << 4) | l;
+
+                        i += 2;
+                    }
+                }
+
+                decoded.ptr[decoded.len++] = c;
+            }
+
+            return decoded;
+        }
+    }
+
+    return HTTP_STR("");
+}
+
+static bool is_digit(char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+int http_get_param_i(HTTP_String body, HTTP_String str)
+{
+    char buf[128];
+    HTTP_String out = http_get_param(body, str, buf, SIZEOF(buf));
+    if (out.len == 0 || !is_digit(out.ptr[0]))
+        return -1;
+
+    int cur = 0;
+    int res = 0;
+    do {
+        int d = out.ptr[cur++] - '0';
+        if (res > (INT_MAX - d) / 10)
+            return -1;
+        res = res * 10 + d;
+    } while (cur < out.len && is_digit(out.ptr[cur]));
+
+    return res;
+}
