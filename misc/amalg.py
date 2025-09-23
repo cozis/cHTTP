@@ -40,7 +40,10 @@ header.append_text("#endif // HTTP_AMALGAMATION\n")
 header.save("chttp.h")
 
 source = Amalgamator()
+
+source.append_text("#ifndef HTTP_NOINCLUDE\n")
 source.append_text("#include \"chttp.h\"\n")
+source.append_text("#endif\n")
 
 source.append_file("src/sec.h")
 source.append_file("src/socket_raw.h")
