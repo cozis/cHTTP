@@ -189,6 +189,11 @@ int         http_parse_response (char *src, int len, HTTP_Response *res);
 
 int         http_find_header    (HTTP_Header *headers, int num_headers, HTTP_String name);
 
+HTTP_String http_get_cookie     (HTTP_Request *req, HTTP_String name);
+HTTP_String http_get_param      (HTTP_String body, HTTP_String str, char *mem, int cap);
+int         http_get_param_i    (HTTP_String body, HTTP_String str);
+
+
 #endif // PARSE_INCLUDED
 
 ////////////////////////////////////////////////////////////////////////////////////////
