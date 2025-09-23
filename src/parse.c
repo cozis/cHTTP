@@ -1281,11 +1281,6 @@ HTTP_String http_get_param(HTTP_String body, HTTP_String str, char *mem, int cap
     return HTTP_STR("");
 }
 
-static bool is_digit(char c)
-{
-    return c >= '0' && c <= '9';
-}
-
 int http_get_param_i(HTTP_String body, HTTP_String str)
 {
     char buf[128];
