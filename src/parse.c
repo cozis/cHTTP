@@ -1284,7 +1284,7 @@ HTTP_String http_get_param(HTTP_String body, HTTP_String str, char *mem, int cap
 int http_get_param_i(HTTP_String body, HTTP_String str)
 {
     char buf[128];
-    HTTP_String out = http_get_param(body, str, buf, SIZEOF(buf));
+    HTTP_String out = http_get_param(body, str, buf, (int) sizeof(buf));
     if (out.len == 0 || !is_digit(out.ptr[0]))
         return -1;
 
