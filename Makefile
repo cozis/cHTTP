@@ -21,10 +21,14 @@ else
 	LFLAGS += -lssl -lcrypto
 endif
 
-HTTPS = 1
-ifeq ($(HTTPS),1)
-	CFLAGS += -DHTTPS_ENABLED
-	LFLAGS += -lssl -lcrypto
+HTTPS ?= 0
+ifneq ($(HTTPS),0)
+	ifeq ($(OS),Windows_NT)
+		$(error "HTTPS not supported on Windows")
+	else
+		CFLAGS += -DHTTPS_ENABLED
+		LFLAGS += -lssl -lcrypto
+	endif
 endif
 
 # Installation directories
