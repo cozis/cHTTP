@@ -10,6 +10,16 @@ int main(void)
 {
     http_global_init();
 
+    // To test this program you need to add the following
+    // lines to your hosts file:
+    //
+    //   127.0.0.1    websiteA.com
+    //   127.0.0.1    websiteB.com
+    //   127.0.0.1    websiteC.com
+    //
+    // That you can find at /etc/hosts on Linux and
+    // C:\Windows\System32\drivers\etc\hosts on Windows
+
     // First, create three certificates for the domains:
     //
     //   websiteA.com
