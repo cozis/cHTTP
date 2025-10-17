@@ -4,6 +4,5 @@ Find a way to compile OpenSSL on windows
 handle 3xx client redirections
 add discussion on string management
 add discussion on error management
-check that virtual hosts over HTTPS work
 add timers
 add debug and release builds

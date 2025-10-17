@@ -365,6 +365,7 @@ void print_bytes(HTTP_String prefix, HTTP_String src)
 ////////////////////////////////////////////////////////////////////////////////////////
 
 #line 1 "src/parse.c"
+#include <stdio.h> // snprintf
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -1665,6 +1666,22 @@ int http_get_param_i(HTTP_String body, HTTP_String str)
     } while (cur < out.len && is_digit(out.ptr[cur]));
 
     return res;
+}
+
+bool http_match_host(HTTP_Request *req, HTTP_String domain, int port)
+{
+    int idx = http_find_header(req->headers, req->num_headers, HTTP_STR("Host"));
+    HTTP_ASSERT(idx != -1); // Requests without the host header are always rejected
+
+    char tmp[1<<8];
+    if (port > -1 && port != 80) {
+        int ret = snprintf(tmp, sizeof(tmp), "%.*s:%d", domain.len, domain.ptr, port);
+        HTTP_ASSERT(ret > 0);
+        domain = (HTTP_String) { tmp, ret };
+    }
+
+    HTTP_String host = req->headers[idx].value;
+    return http_streq(host, domain);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////

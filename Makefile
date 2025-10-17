@@ -23,12 +23,8 @@ endif
 
 HTTPS ?= 0
 ifneq ($(HTTPS),0)
-	ifeq ($(OS),Windows_NT)
-		$(error "HTTPS not supported on Windows")
-	else
-		CFLAGS += -DHTTPS_ENABLED
-		LFLAGS += -lssl -lcrypto
-	endif
+	CFLAGS += -DHTTPS_ENABLED
+	LFLAGS += -lssl -lcrypto
 endif
 
 # Installation directories

@@ -92,17 +92,15 @@ int main(void)
         if (ret < 0)
             break;
 
-        int idx = http_find_header(req->headers, req->num_headers, HTTP_STR("Host"));
-        HTTP_ASSERT(idx != -1); // Requests without the host header are always rejected
-        HTTP_String host = req->headers[idx].value;
-
-        if (http_streq(host, HTTP_STR("websiteB.com"))) {
+        if (http_match_host(req, HTTP_STR("websiteB.com"), 8080) ||
+            http_match_host(req, HTTP_STR("websiteB.com"), 8443)) {
 
             http_response_builder_status(builder, 200);
             http_response_builder_body(builder, HTTP_STR("Hello from websiteB.com!"));
             http_response_builder_done(builder);
 
-        } else if (http_streq(host, HTTP_STR("websiteC.com"))) {
+        } else if (http_match_host(req, HTTP_STR("websiteC.com"), 8080) ||
+                   http_match_host(req, HTTP_STR("websiteC.com"), 8443)) {
 
             http_response_builder_status(builder, 200);
             http_response_builder_body(builder, HTTP_STR("Hello from websiteC.com!"));

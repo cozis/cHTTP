@@ -193,6 +193,9 @@ HTTP_String http_get_cookie     (HTTP_Request *req, HTTP_String name);
 HTTP_String http_get_param      (HTTP_String body, HTTP_String str, char *mem, int cap);
 int         http_get_param_i    (HTTP_String body, HTTP_String str);
 
+// Checks whether the request was meant for the host with the given
+// domain an port. If port is -1, the default value of 80 is assumed.
+bool http_match_host(HTTP_Request *req, HTTP_String domain, int port);
 
 #endif // PARSE_INCLUDED
 
