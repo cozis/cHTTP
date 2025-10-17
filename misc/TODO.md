@@ -5,7 +5,6 @@ handle 3xx client redirections
 add discussion on string management
 add discussion on error management
 check that virtual hosts over HTTPS work
-add examples for the router
 
 add timers
 add debug and release builds

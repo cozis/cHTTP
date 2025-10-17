@@ -105,12 +105,12 @@ int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuild
             case SOCKET_EVENT_DIED:
             {
                 Connection *conn = event.user_data;
-                HTTP_ASSERT(conn);
-
-                http_engine_free(&conn->engine);
-                conn->used = false;
-                conn->gen++;
-                server->num_conns--;
+                if (conn) {
+                    http_engine_free(&conn->engine);
+                    conn->used = false;
+                    conn->gen++;
+                    server->num_conns--;
+                }
             }
             break;
 
