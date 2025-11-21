@@ -804,6 +804,9 @@ typedef struct {
     // Data being sent to the server
     ByteQueue output;
 
+    // HTTP method for the request
+    HTTP_Method method;
+
     // Parsed URL for connection establishment
     HTTP_URL url;
 
@@ -874,9 +877,10 @@ typedef struct {
 int http_client_get_builder(HTTP_Client *client,
     HTTP_Response *response, HTTP_RequestBuilder *builder);
 
-// Set the URL of the current request. This is the first
+// Set the method and URL of the current request. This is the first
 // function of the request builder that the user must call.
-void http_request_builder_url(HTTP_RequestBuilder builder, HTTP_String url);
+void http_request_builder_url(HTTP_RequestBuilder builder,
+    HTTP_Method method, HTTP_String url);
 
 // After the URL, the user may set zero or more headers.
 void http_request_builder_header(HTTP_RequestBuilder builder, HTTP_String str);

@@ -435,7 +435,7 @@ static int is_scheme_body(char c)
 // Note: percent-encoded characters (%XX) are not currently validated
 static int is_userinfo(char c)
 {
-	return is_unreserved(c) || is_sub_delim(c) || c == ':' || c == '%';
+	return is_unreserved(c) || is_sub_delim(c) || c == ':';
 }
 
 // authority = [ userinfo "@" ] host [ ":" port ]

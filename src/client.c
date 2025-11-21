@@ -117,15 +117,11 @@ int http_client_get_builder(HTTP_Client *client,
             return -1;
 
         int i = 0;
-        while (client->conns[i].state != HTTP_CLIENT_CONN_FREE) {
+        while (client->conns[i].state != HTTP_CLIENT_CONN_FREE)
             i++;
-            if (i >= HTTP_CLIENT_CAPACITY)
-                return -1;
-        }
 
         conn = &client->conns[i];
         conn->state = HTTP_CLIENT_CONN_WAIT_LINE;
-        conn->gen = 0;
         conn->handle = SOCKET_HANDLE_INVALID;
         conn->client = client;
         byte_queue_init(&conn->input, client->input_buffer_limit);
@@ -143,7 +139,7 @@ int http_client_get_builder(HTTP_Client *client,
 }
 
 void http_request_builder_url(HTTP_RequestBuilder builder,
-    HTTP_String url)
+    HTTP_Method method, HTTP_String url)
 {
     HTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
@@ -157,15 +153,28 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
     if (http_parse_url(url.ptr, url.len, &parsed_url) != 1)
         return;
 
-    // Store parsed URL for connection establishment
+    // Store method and parsed URL for connection establishment
+    conn->method = method;
     conn->url = parsed_url;
 
-    // Determine HTTP method (default to GET)
-    HTTP_String method = HTTP_STR("GET");
+    // Convert method enum to string
+    const char *method_str;
+    switch (method) {
+        case HTTP_METHOD_GET:     method_str = "GET"; break;
+        case HTTP_METHOD_HEAD:    method_str = "HEAD"; break;
+        case HTTP_METHOD_POST:    method_str = "POST"; break;
+        case HTTP_METHOD_PUT:     method_str = "PUT"; break;
+        case HTTP_METHOD_DELETE:  method_str = "DELETE"; break;
+        case HTTP_METHOD_CONNECT: method_str = "CONNECT"; break;
+        case HTTP_METHOD_OPTIONS: method_str = "OPTIONS"; break;
+        case HTTP_METHOD_TRACE:   method_str = "TRACE"; break;
+        case HTTP_METHOD_PATCH:   method_str = "PATCH"; break;
+        default: return;
+    }
 
     // Build request line: METHOD path HTTP/1.1\r\n
-    byte_queue_write_fmt(&conn->output, "%.*s %.*s HTTP/1.1\r\n",
-        method.len, method.ptr,
+    byte_queue_write_fmt(&conn->output, "%s %.*s HTTP/1.1\r\n",
+        method_str,
         parsed_url.path.len, parsed_url.path.ptr);
 
     // Add Host header automatically
@@ -271,11 +280,20 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
             for (int i = 0; i < 8; i++)
                 target.ipv6.data[i] = conn->url.authority.host.ipv6.data[i];
         } else {
+            // Invalid host mode - clean up connection
+            http_client_conn_free(conn);
+            conn->state = HTTP_CLIENT_CONN_FREE;
+            conn->client->num_conns--;
             return -1;
         }
 
-        if (socket_connect(&conn->client->sockets, 1, &target, secure, conn) < 0)
+        if (socket_connect(&conn->client->sockets, 1, &target, secure, conn) < 0) {
+            // Connection failed - clean up
+            http_client_conn_free(conn);
+            conn->state = HTTP_CLIENT_CONN_FREE;
+            conn->client->num_conns--;
             return -1;
+        }
     }
 
     conn->state = HTTP_CLIENT_CONN_FLUSHING;

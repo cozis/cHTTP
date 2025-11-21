@@ -6,7 +6,7 @@ chttp.c chttp.h: $(wildcard src/*.c src/*.h) misc/amalg.py Makefile
 	python misc/amalg.py
 
 example: main.c chttp.c chttp.h
-	gcc main.c chttp.c -o example -Wfatal-errors -DHTTPS_ENABLED -lcrypto -lssl
+	gcc main.c chttp.c -o example -Wfatal-errors -lws2_32
 
 clean:
 	rm chttp.c chttp.h

@@ -240,7 +240,7 @@ bool http_server_next_request(HTTP_Server *server,
     if (server->num_ready == 0)
         return false;
 
-    HTTP_ServerConn *conn = &server->conns[server->ready_head];
+    HTTP_ServerConn *conn = &server->conns[server->ready[server->ready_head]];
     server->ready_head = (server->ready_head + 1) % HTTP_SERVER_CAPACITY;
     server->num_ready--;
 
