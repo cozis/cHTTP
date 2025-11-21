@@ -1,10 +1,3 @@
-#ifndef CERT_INCLUDED
-#define CERT_INCLUDED
-
-#ifndef HTTP_AMALGAMATION
-#include "basic.h"
-#endif
-
 // This is an utility to create self-signed certificates
 // useful when testing HTTPS servers locally. This is only
 // meant to be used by people starting out with a library
@@ -21,5 +14,3 @@
 // key file with the key used to sign the certificate.
 int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
     HTTP_String cert_file, HTTP_String key_file);
-
-#endif // CERT_INCLUDED

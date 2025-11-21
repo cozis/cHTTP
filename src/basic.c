@@ -1,9 +1,3 @@
-#include <stddef.h>
-#include <string.h>
-
-#ifndef HTTP_AMALGAMATION
-#include "basic.h"
-#endif
 
 bool http_streq(HTTP_String s1, HTTP_String s2)
 {

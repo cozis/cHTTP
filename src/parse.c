@@ -1,16 +1,3 @@
-#include <stdio.h> // snprintf
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>
-#include <assert.h>
-#include <stdlib.h>
-#include <limits.h>
-
-#ifndef HTTP_AMALGAMATION
-#include "parse.h"
-#include "basic.h"
-#endif
-
 // From RFC 9112
 //   request-target = origin-form
 //                  / absolute-form
@@ -514,7 +501,7 @@ static int parse_uri(Scanner *s, HTTP_URL *url, int allow_fragment)
 			s->cur - start,
 		};
 
-		if (s->cur == s->len || s->src[s->cur] != ':') 
+		if (s->cur == s->len || s->src[s->cur] != ':')
 			return -1; // ERROR: Missing ':' after scheme
 		s->cur++;
 	}
@@ -577,7 +564,7 @@ static int parse_uri(Scanner *s, HTTP_URL *url, int allow_fragment)
 static int parse_authority_form(Scanner *s, HTTP_Host *host, int *port)
 {
 	int ret;
-	
+
 	ret = parse_host(s, host);
 	if (ret < 0) return ret;
 
@@ -658,7 +645,7 @@ static int parse_request_target(Scanner *s, HTTP_URL *url)
 
 bool consume_str(Scanner *scan, HTTP_String token)
 {
-    HTTP_ASSERT(token.len > 0);
+    assert(token.len > 0);
 
     if (token.len > scan->len - scan->cur)
         return false;
@@ -692,7 +679,7 @@ static int parse_headers(Scanner *s, HTTP_Header *headers, int max_headers)
 		//   obs-text       = %x80-FF
 
 		int start;
-		
+
 		if (s->cur == s->len || !is_tchar(s->src[s->cur]))
 			return -1; // ERROR
 		start = s->cur;
@@ -740,7 +727,7 @@ parse_transfer_encoding(HTTP_String src, TransferEncodingOption *dst, int max)
 
     int num = 0;
     for (;;) {
-        
+
         CONSUME_OPTIONAL_SEQUENCE(&s, is_space);
 
         TransferEncodingOption opt;
@@ -1304,12 +1291,12 @@ int http_get_param_i(HTTP_String body, HTTP_String str)
 bool http_match_host(HTTP_Request *req, HTTP_String domain, int port)
 {
     int idx = http_find_header(req->headers, req->num_headers, HTTP_STR("Host"));
-    HTTP_ASSERT(idx != -1); // Requests without the host header are always rejected
+    assert(idx != -1); // Requests without the host header are always rejected
 
     char tmp[1<<8];
     if (port > -1 && port != 80) {
         int ret = snprintf(tmp, sizeof(tmp), "%.*s:%d", domain.len, domain.ptr, port);
-        HTTP_ASSERT(ret > 0);
+        assert(ret > 0);
         domain = (HTTP_String) { tmp, ret };
     }
 

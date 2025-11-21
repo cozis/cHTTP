@@ -1,263 +1,223 @@
-#include <stdio.h> // snprintf
-#include <assert.h>
-#include <string.h>
-#include <stdlib.h>
 
+static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b)
+{
 #ifdef _WIN32
-#include <ws2tcpip.h>
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET)
+        return -1;
+
+    // Bind to loopback address with port 0 (dynamic port assignment)
+    struct sockaddr_in addr;
+    int addr_len = sizeof(addr);
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
+    addr.sin_port = 0; // Let system choose port
+
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(sock);
+        return -1;
+    }
+
+    if (getsockname(sock, (struct sockaddr*)&addr, &addr_len) == SOCKET_ERROR) {
+        closesocket(sock);
+        return -1;
+    }
+
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(sock);
+        return -1;
+    }
+
+    // Optional: Set socket to non-blocking mode
+    // This prevents send() from blocking if the receive buffer is full
+    u_long mode = 1;
+    ioctlsocket(sock, FIONBIO, &mode); // TODO: does this fail?
+
+    *a = sock;
+    *b = sock;
+    return 0;
+#else
+    int fds[2];
+    if (pipe(fds) < 0)
+        return -1;
+    *a = fds[0];
+    *b = fds[1];
+    return 0;
+#endif
+}
+
+static int set_socket_blocking(NATIVE_SOCKET sock, bool value)
+{
+#ifdef _WIN32
+    u_long mode = !value;
+    if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR)
+        return -1;
 #endif
 
 #ifdef __linux__
-#include <netdb.h>
-#include <errno.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#endif
-
-#ifdef HTTPS_ENABLED
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#endif
-
-#ifndef HTTP_AMALGAMATION
-#include "basic.h"
-#include "socket.h"
-#endif
-
-typedef struct {
-    bool is_ipv4;
-    union {
-        HTTP_IPv4 ipv4;
-        HTTP_IPv6 ipv6;
-    };
-} PendingConnectAddr;
-
-struct PendingConnect {
-    uint16_t port;
-    int      cursor;
-    int      num_addrs;
-    int      max_addrs;
-    PendingConnectAddr *addrs;
-    char*    hostname; // null-terminated
-    int      hostname_len;
-};
-
-static PendingConnect*
-pending_connect_init(HTTP_String hostname, uint16_t port, int max_addrs)
-{
-    PendingConnect *pending_connect = malloc(sizeof(PendingConnect) + max_addrs * sizeof(PendingConnectAddr) + hostname.len + 1);
-    if (pending_connect == NULL)
-        return NULL;
-    pending_connect->port = port;
-    pending_connect->cursor = 0;
-    pending_connect->num_addrs = 0;
-    pending_connect->max_addrs = max_addrs;
-    pending_connect->addrs = (PendingConnectAddr*) (pending_connect + 1);
-    pending_connect->hostname = (char*) (pending_connect->addrs + max_addrs);
-    memcpy(pending_connect->hostname, hostname.ptr, hostname.len);
-    pending_connect->hostname[hostname.len] = '\0';
-    pending_connect->hostname_len = hostname.len;
-    return pending_connect;
-}
-
-static void
-pending_connect_free(PendingConnect *pending_connect)
-{
-    free(pending_connect);
-}
-
-static void
-pending_connect_add_ipv4(PendingConnect *pending_connect, HTTP_IPv4 ipv4)
-{
-    if (pending_connect->num_addrs == pending_connect->max_addrs)
-        return;
-    pending_connect->addrs[pending_connect->num_addrs++] = (PendingConnectAddr) { .is_ipv4=true, .ipv4=ipv4 };
-}
-
-static void
-pending_connect_add_ipv6(PendingConnect *pending_connect, HTTP_IPv6 ipv6)
-{
-    if (pending_connect->num_addrs == pending_connect->max_addrs)
-        return;
-    pending_connect->addrs[pending_connect->num_addrs++] = (PendingConnectAddr) { .is_ipv4=false, .ipv6=ipv6 };
-}
-
-static int
-next_connect_addr(PendingConnect *pending_connect, PendingConnectAddr *addr)
-{
-    if (pending_connect->cursor == pending_connect->num_addrs)
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0)
         return -1;
-    *addr = pending_connect->addrs[pending_connect->cursor++];
+    if (value) flags &= ~O_NONBLOCK;
+    else       flags |= O_NONBLOCK;
+    if (fcntl(sock, F_SETFL, flags) < 0)
+        return -1;
+#endif
+
     return 0;
 }
 
-// Initializes a FREE socket with the information required to
-// connect to specified host name. The resulting socket state
-// is DIED if an error occurred or PENDING.
-void socket_connect(Socket *sock, SecureContext *sec,
-    HTTP_String hostname, uint16_t port, void *user_data)
+static NATIVE_SOCKET create_listen_socket(String addr,
+    Port port, bool reuse_addr, int backlog)
 {
-    PendingConnect *pending_connect;
+    NATIVE_SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == NATIVE_SOCKET_INVALID)
+        return NATIVE_SOCKET_INVALID;
 
-    int max_addrs = 30;
-    pending_connect = pending_connect_init(hostname, port, max_addrs);
-    if (pending_connect == NULL) {
-        sock->state = SOCKET_STATE_DIED;
-        sock->events = 0;
-        return;
+    if (set_socket_blocking(sock, false) < 0) {
+        CLOSE_NATIVE_SOCKET(sock);
+        return NATIVE_SOCKET_INVALID;
     }
 
-    char portstr[16];
-    int len = snprintf(portstr, sizeof(portstr), "%u", port);
-    if (len < 0 || len >= (int) sizeof(portstr)) {
-        pending_connect_free(pending_connect);
-        sock->state = SOCKET_STATE_DIED;
-        sock->events = 0;
-        return;
+    if (reuse_addr) {
+        int one = 1;
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void*) &one, sizeof(one));
     }
 
-    // DNS query
-    struct addrinfo hints = {0};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
+    struct in_addr addr_buf;
+    if (addr.len == 0)
+        addr_buf.s_addr = htonl(INADDR_ANY);
+    else {
 
-    struct addrinfo *res = NULL;
-    int ret = getaddrinfo(pending_connect->hostname, portstr, &hints, &res);
-    if (ret != 0) {
-        pending_connect_free(pending_connect);
-        sock->state = SOCKET_STATE_DIED;
-        sock->events = 0;
-        return;
-    }
+        char copy[100];
+        if (addr.len >= (int) sizeof(copy)) {
+            CLOSE_NATIVE_SOCKET(sock);
+            return NATIVE_SOCKET_INVALID;
+        }
+        memcpy(copy, addr.ptr, addr.len);
+        copy[addr.len] = '\0';
 
-    for (struct addrinfo *rp = res; rp; rp = rp->ai_next) {
-        if (rp->ai_family == AF_INET) {
-            HTTP_IPv4 *ipv4 = (void*) &((struct sockaddr_in*)rp->ai_addr)->sin_addr;
-            pending_connect_add_ipv4(pending_connect, *ipv4);
-        } else if (rp->ai_family == AF_INET6) {
-            HTTP_IPv6 *ipv6 = (void*) &((struct sockaddr_in6*)rp->ai_addr)->sin6_addr;
-            pending_connect_add_ipv6(pending_connect, *ipv6);
+        if (inet_pton(AF_INET, copy, &addr_buf) < 0) {
+            CLOSE_NATIVE_SOCKET(sock);
+            return NATIVE_SOCKET_INVALID;
         }
     }
 
-    freeaddrinfo(res);
-
-    sock->state = SOCKET_STATE_PENDING;
-    sock->events = 0;
-
-    sock->raw = BAD_SOCKET;
-    sock->user_data = user_data;
-    sock->pending_connect = pending_connect;
-    sock->sec = sec;
-
-#ifdef HTTPS_ENABLED
-    sock->ssl = NULL;
-#endif
-
-    socket_update(sock);
-}
-
-// Just like socket_connect, but the raw IPv4 address is specified
-void socket_connect_ipv4(Socket *sock, SecureContext *sec,
-    HTTP_IPv4 addr, uint16_t port, void *user_data)
-{
-    PendingConnect *pending_connect;
-    
-    pending_connect = pending_connect_init(HTTP_STR(""), port, 1);
-    if (pending_connect == NULL) {
-        sock->state = SOCKET_STATE_DIED;
-        sock->events = 0;
-        return;
+    struct sockaddr_in bind_buf;
+    bind_buf.sin_family = AF_INET;
+    bind_buf.sin_addr   = addr_buf;
+    bind_buf.sin_port   = htons(port);
+    if (bind(sock, (struct sockaddr*) &bind_buf, sizeof(bind_buf)) < 0) { // TODO: how does bind fail on windows?
+        CLOSE_NATIVE_SOCKET(sock);
+        return NATIVE_SOCKET_INVALID;
     }
 
-    pending_connect_add_ipv4(pending_connect, addr);
-
-    sock->state = SOCKET_STATE_PENDING;
-    sock->events = 0;
-
-    sock->raw = BAD_SOCKET;
-    sock->user_data = user_data;
-    sock->pending_connect = pending_connect;
-    sock->sec = sec;
-
-#ifdef HTTPS_ENABLED
-    sock->ssl = NULL;
-#endif
-
-    socket_update(sock);
-}
-
-// Just like socket_connect, but the raw IPv6 address is specified
-void socket_connect_ipv6(Socket *sock, SecureContext *sec,
-    HTTP_IPv6 addr, uint16_t port, void *user_data)
-{
-    PendingConnect *pending_connect;
-    
-    pending_connect = pending_connect_init(HTTP_STR(""), port, 1);
-    if (pending_connect == NULL) {
-        sock->state = SOCKET_STATE_DIED;
-        sock->events = 0;
-        return;
+    if (listen(sock, backlog) < 0) { // TODO: how does listen fail on windows?
+        CLOSE_NATIVE_SOCKET(sock);
+        return NATIVE_SOCKET_INVALID;
     }
 
-    pending_connect_add_ipv6(pending_connect, addr);
-
-    sock->state = SOCKET_STATE_PENDING;
-    sock->events = 0;
-
-    sock->raw = BAD_SOCKET;
-    sock->user_data = user_data;
-    sock->pending_connect = pending_connect;
-    sock->sec = sec;
-
-#ifdef HTTPS_ENABLED
-    sock->ssl = NULL;
-#endif
-
-    socket_update(sock);
+    return sock;
 }
 
-void socket_accept(Socket *sock, SecureContext *sec, RAW_SOCKET raw)
+static void close_socket_pair(NATIVE_SOCKET a, NATIVE_SOCKET b)
 {
-    sock->state = SOCKET_STATE_ACCEPTED;
-    sock->raw = raw;
-    sock->events = 0;
-    sock->user_data = NULL;
-    sock->pending_connect = NULL;
-    sock->sec = sec;
-
-#ifdef HTTPS_ENABLED
-    sock->ssl = NULL;
+#ifdef _WIN32
+    closesocket(a);
+    (void) b;
+#else
+    close(a);
+    close(b);
 #endif
+}
 
-    if (set_socket_blocking(raw, false) < 0) {
-        sock->state  = SOCKET_STATE_DIED;
-        sock->events = 0;
-        return;
+int socket_manager_init(SocketManager *sm, Socket *socks,
+    int num_socks)
+{
+    if (mutex_init(&sm->mutex) < 0)
+        return -1;
+    sm->plain_sock  = NATIVE_SOCKET_INVALID;
+    sm->secure_sock = NATIVE_SOCKET_INVALID;
+    if (create_socket_pair(&sm->wait_sock, &sm->signal_sock) < 0)
+        return -1;
+    sm->at_least_one_secure_connect = false;
+
+    sm->num_used = 0;
+    sm->max_used = num_socks;
+    sm->sockets = socks;
+    return 0;
+}
+
+void socket_manager_free(SocketManager *sm)
+{
+    close_socket_pair(sm->wait_sock, sm->signal_sock);
+
+    if (sm->secure_sock != NATIVE_SOCKET_INVALID)
+        server_secure_context_free(&sm->server_secure_context);
+
+    if (sm->at_least_one_secure_connect)
+        client_secure_context_free(&sm->client_secure_context);
+
+    if (sm->plain_sock  != NATIVE_SOCKET_INVALID)
+        CLOSE_NATIVE_SOCKET(sm->plain_sock);
+
+    if (sm->secure_sock != NATIVE_SOCKET_INVALID)
+        CLOSE_NATIVE_SOCKET(sm->secure_sock);
+
+    mutex_free(&sm->mutex);
+}
+
+int socket_manager_listen_tcp(SocketManager *sm,
+    String addr, Port port)
+{
+    if (sm->plain_sock != NATIVE_SOCKET_INVALID)
+        return -1;
+
+    bool reuse_addr = false;
+    int  backlog = 32;
+    sm->plain_sock = create_listen_socket(addr, port, reuse_addr, backlog);
+    if (sm->plain_sock == NATIVE_SOCKET_INVALID)
+        return -1;
+
+    return 0;
+}
+
+int socket_manager_listen_tls(SocketManager *sm,
+    String addr, Port port, String cert_file_name,
+    String key_file_name)
+{
+    if (sm->secure_sock != NATIVE_SOCKET_INVALID)
+        return -1;
+
+    bool reuse_addr = false;
+    int  backlog = 32;
+    sm->secure_sock = create_listen_socket(addr, port, reuse_addr, backlog);
+    if (sm->secure_sock == NATIVE_SOCKET_INVALID)
+        return -1;
+
+    if (server_secure_context_init(&sm->server_secure_context) < 0) {
+        CLOSE_NATIVE_SOCKET(sm->secure_sock);
+        sm->secure_sock = NATIVE_SOCKET_INVALID;
+        return -1;
     }
 
-    socket_update(sock);
+    return 0;
 }
 
-void socket_close(Socket *sock)
+int socket_manager_add_certificate(SocketManager *sm,
+    String domain, String cert_file, String key_file)
 {
-    // TODO: maybe we don't want to always set to SHUTDOWN. What if the socket is DIED for instance?
-    sock->state  = SOCKET_STATE_SHUTDOWN;
-    sock->events = 0;
-    socket_update(sock);
-}
+    if (sm->secure_sock == NATIVE_SOCKET_INVALID)
+        return -1;
 
-bool socket_ready(Socket *sock)
-{
-    return sock->state == SOCKET_STATE_ESTABLISHED_READY;
-}
+    int ret = server_secure_context_add_certificate(
+        &sm->server_secure_context, domain, cert_file, key_file);
+    if (ret < 0)
+        return -1;
 
-bool socket_died(Socket *sock)
-{
-    return sock->state == SOCKET_STATE_DIED;
+    return 0;
 }
-
-// TODO: when is the pending_connect data freed?
 
 static bool connect_pending(void)
 {
@@ -269,7 +229,18 @@ static bool connect_pending(void)
 }
 
 static bool
-connect_failed_because_or_peer_2(int err)
+connect_failed_because_of_peer(void)
+{
+#ifdef _WIN32
+    int err = WSAGetLastError();
+#else
+    int err = errno;
+#endif
+    return connect_failed_because_of_peer_2(err);
+}
+
+static bool
+connect_failed_because_of_peer_2(int err)
 {
 #ifdef _WIN32
     return err == WSAECONNREFUSED
@@ -284,507 +255,669 @@ connect_failed_because_or_peer_2(int err)
 #endif
 }
 
-static bool
-connect_failed_because_or_peer(void)
+// This function moves the socket state machine
+// to the next state until an I/O event would
+// be required to continue.
+static void socket_update(Socket *socket)
 {
-#ifdef _WIN32
-    int err = WSAGetLastError();
-#else
-    int err = errno;
-#endif
-    return connect_failed_because_or_peer_2(err);
-}
-
-// Processes the socket until it's either ready, died, or would block
-void socket_update(Socket *sock)
-{
-    sock->events = 0;
-
+    // Each case of this switch encodes a state transition.
+    // If the evaluated case requires a given I/O event to
+    // continue, the loop will exit so that the caller can
+    // wait for that event. If the case can continue to a
+    // different case, the again flag is set, which causes
+    // a different case to be evaluated.
     bool again;
     do {
-
         again = false;
-
-        switch (sock->state) {
+        switch (socket->state) {
         case SOCKET_STATE_PENDING:
-        {
-            // In this state we need to pop an address from the pending connect
-            // data and try connect to it. This state is reached when a socket
-            // is initialized using one of the socket_connect functions or by
-            // failing to connect before the established state is reached.
-
-            // If this isn't the first connection attempt we may have old
-            // descriptors that need freeing before trying again.
             {
-#ifdef HTTPS_ENABLED
-                if (sock->ssl) {
-                    SSL_free(sock->ssl);
-                    sock->ssl = NULL;
+                // This point may be reached because
+                //   1. The socket was just created by a connect
+                //      operation.
+                //   2. Connecting to a host failed and now we
+                //      need to try the next one.
+                // If (2) is true, we have some resources
+                // to clean up.
+
+                if (socket->sock != NATIVE_SOCKET_INVALID) {
+                    // This is not the first attempt
+
+                    CLOSE_NATIVE_SOCKET(socket->sock);
+
+                    socket->next_addr++;
+                    if (socket->next_addr == socket->num_addr) {
+                        assert(0); // TODO
+                    }
                 }
-#endif
-                if (sock->raw != BAD_SOCKET)
-                    CLOSE_SOCKET(sock->raw);
+                AddressAndPort addr = socket->addrs[socket->next_addr];
+
+                int family = (addr.is_ipv4 ? AF_INET : AF_INET6);
+                NATIVE_SOCKET sock = socket(family, SOCK_STREAM, 0);
+                if (sock == NATIVE_SOCKET_INVALID) {
+                    assert(0); // TODO
+                }
+
+                if (set_socket_blocking(sock, false) < 0) {
+                    assert(0); // TODO
+                }
+
+                int ret;
+                if (addr.is_ipv4) {
+                    struct sockaddr_in buf;
+                    buf.sin_family = AF_INET;
+                    buf.sin_port = htons(addr.port);
+                    memset(&buf.sin_addr, &addr.ipv4, sizeof(IPv4));
+                    ret = connect(sock, (struct sockaddr*) &connect_buf,
+                        sizeof(connect_buf));
+                } else {
+                    struct sockaddr_in6 buf;
+                    buf.sin6_family = AF_INET6;
+                    buf.sin6_port = htons(addr.port);
+                    memset(&buf.sin6_addr, &addr.ipv6, sizeof(IPv6));
+                    ret = connect(sock, (struct sockaddr*) &connect_buf,
+                        sizeof(connect_buf));
+                }
+
+                if (ret == 0) {
+                    // Connect resolved immediately
+                    socket->sock = sock;
+                    socket->state = SOCKET_STATE_CONNECTED;
+                    socket->events = 0;
+                    again = true;
+                } else if (connect_pending()) {
+                    // Connect is pending, which is expected
+                    socket->sock = sock;
+                    socket->state = SOCKET_STATE_CONNECTING;
+                    socket->events = POLLOUT;
+                } else if (connect_failed_because_of_peer()) {
+                    // Conenct failed due to the peer host
+                    // We should try a different address.
+                    socket->sock = sock;
+                    socket->state = SOCKET_STATE_PENDING;
+                    socket->events = 0;
+                    again = true;
+                } else {
+                    // An error occurred that we can't recover from
+                    socket->sock = sock;
+                    socket->state = SOCKET_STATE_DIED;
+                    socket->events = 0;
+                    again = true;
+                }
             }
-
-            // Pop the next address from the pending connect data
-            PendingConnectAddr addr;
-            if (next_connect_addr(sock->pending_connect, &addr) < 0) {
-                sock->state  = SOCKET_STATE_DIED;
-                sock->events = 0;
-                break;
-            }
-            uint16_t port = sock->pending_connect->port;
-
-            // Create a kernel socket object
-            int family = addr.is_ipv4 ? AF_INET : AF_INET6;
-            RAW_SOCKET raw = socket(family, SOCK_STREAM, 0);
-            if (raw == BAD_SOCKET) {
-                sock->state  = SOCKET_STATE_PENDING;
-                sock->events = 0;
-                again = true;
-                break;
-            }
-
-            // Configure it
-            if (set_socket_blocking(raw, false) < 0) {
-                CLOSE_SOCKET(raw);
-                sock->state  = SOCKET_STATE_DIED;
-                sock->events = 0;
-                break;
-            }
-
-            // Now perform the connect
-
-            struct sockaddr_in  connect_buf_4;
-            struct sockaddr_in6 connect_buf_6;
-            struct sockaddr*    connect_buf;
-            int    connect_buf_len;
-
-            if (addr.is_ipv4) {
-
-                connect_buf = (struct sockaddr*) &connect_buf_4;
-                connect_buf_len = sizeof(connect_buf_4);
-
-                connect_buf_4.sin_family = AF_INET;
-                connect_buf_4.sin_port = htons(port);
-                memcpy(&connect_buf_4.sin_addr, &addr.ipv4, sizeof(HTTP_IPv4));
-
-            } else {
-
-                connect_buf = (struct sockaddr*) &connect_buf_6;
-                connect_buf_len = sizeof(connect_buf_6);
-
-                connect_buf_6.sin6_family = AF_INET6;
-                connect_buf_6.sin6_port = htons(port);
-                memcpy(&connect_buf_6.sin6_addr, &addr.ipv6, sizeof(HTTP_IPv6));
-            }
-
-            int ret = connect(raw, connect_buf, connect_buf_len);
-
-            // We divide the connect() results in four categories:
-            //
-            //   1) The connect resolved immediately. I'm not sure how this can happen,
-            //      but we may as well handle it. This allows us to skip a step.
-            //
-            //   2) The connect operation is pending. This is what we expect most of the time.
-            //
-            //   3) The connect operation failed because the target address wasn't good
-            //      for some reason. It make sense to try connecting to a different address
-            //
-            //   4) The connect operation failed for unknown reasons. There isn't much we
-            //      can do at this point.
-
-            if (ret == 0) {
-                // Connected immediately
-                sock->raw    = raw;
-                sock->state  = SOCKET_STATE_CONNECTED;
-                sock->events = 0;
-                again = true;
-                break;
-            }
-
-            if (connect_pending()) { // TODO: I'm pretty sure all the error numbers need to be changed for windows
-                // Connection pending
-                sock->raw = raw;
-                sock->state = SOCKET_STATE_CONNECTING;
-                sock->events = POLLOUT;
-                break;
-            }
-
-            // Connect failed
-
-            // If remote peer not working, try next address
-            if (connect_failed_because_or_peer()) {
-                sock->state = SOCKET_STATE_PENDING;
-                sock->events = 0;
-                again = true;
-            } else {
-                sock->state = SOCKET_STATE_DIED;
-                sock->events = 0;
-            }
-        }
-        break;
+            break;
 
         case SOCKET_STATE_CONNECTING:
-        {
-            // We reach this point when a connect() operation on the
-            // socket started and then the descriptor was marked as
-            // ready for output. This means the operation is complete.
+            {
+                // This point is reached when a connect()
+                // operation completes.
 
-            int err = 0;
-            socklen_t len = sizeof(err);
-
-            if (getsockopt(sock->raw, SOL_SOCKET, SO_ERROR, (void*) &err, &len) < 0 || err != 0) {
-
-                // If remote peer not working, try next address
-                if (connect_failed_because_or_peer_2(err)) {
-                    sock->state = SOCKET_STATE_PENDING;
-                    sock->events = 0;
-                    again = true;
-                    break;
+                int err = 0;
+                socklen_t len = sizeof(err);
+                if (getsockopt(socket->sock, SOL_SOCKET, SO_ERROR, (void*) &err, &len) < 0) {
+                    assert(0); // TODO
                 }
 
-                sock->state = SOCKET_STATE_DIED;
-                sock->events = 0;
-                break;
+                if (err == 0) {
+                    // Connection succeded
+                    socket->state = SOCKET_STATE_CONNECTED;
+                    socket->events = 0;
+                    again = true;
+                } else if (connect_failed_because_of_peer_2(err)) {
+                    // Try the next address
+                    socket->state = SOCKET_STATE_PENDING;
+                    socket->events = 0;
+                    again = true;
+                } else {
+                    socket->state = SOCKET_STATE_DIED;
+                    socket->events = 0;
+                }
             }
-
-            // Connect succeeded
-            sock->state = SOCKET_STATE_CONNECTED;
-            sock->events = 0;
-            again = true;
-        }
-        break;
+            break;
 
         case SOCKET_STATE_CONNECTED:
-        {
-            if (!socket_secure(sock)) {
+            {
+                // We managed to connect to the peer.
+                // We can free the target array if it
+                // was allocated dynamically.
+                if (socket->num_addr > 1)
+                    free(socket->addrs);
 
-                pending_connect_free(sock->pending_connect);
-                sock->pending_connect = NULL;
-
-                sock->events = 0;
-                sock->state = SOCKET_STATE_ESTABLISHED_READY;
-
-            } else {
+                if (!is_secure(socket)) {
+                    socket->events = 0;
+                    socket->state = SOCKET_STATE_ESTABLISHED_READY;
+                } else {
 #ifdef HTTPS_ENABLED
-                // Start SSL handshake
-
-                if (sock->ssl == NULL) {
-                    sock->ssl = SSL_new(sock->sec->ctx);
-                    if (sock->ssl == NULL) {
-                        ERR_print_errors_fp(stderr); // TODO: remove
-                        sock->state  = SOCKET_STATE_DIED;
-                        sock->events = 0;
-                        break;
-                    }
-
-                    if (SSL_set_fd(sock->ssl, sock->raw) != 1) {
-                        sock->state  = SOCKET_STATE_DIED;
-                        sock->events = 0;
-                        break;
-                    }
-
-                    char *hostname = NULL;
-                    if (sock->pending_connect->hostname[0])
-                        hostname = sock->pending_connect->hostname;
-
-                    if (hostname)
-                        SSL_set_tlsext_host_name(sock->ssl, hostname);
-                }
-
-                int ret = SSL_connect(sock->ssl);
-                if (ret == 1) {
-                    // Handshake done
-
-                    pending_connect_free(sock->pending_connect);
-                    sock->pending_connect = NULL;
-
-                    sock->state  = SOCKET_STATE_ESTABLISHED_READY;
-                    sock->events = 0;
-                    break;
-                }
-
-                int err = SSL_get_error(sock->ssl, ret);
-                if (err == SSL_ERROR_WANT_READ) {
-                    sock->events = POLLIN;
-                    break;
-                }
-
-                if (err == SSL_ERROR_WANT_WRITE) {
-                    sock->events = POLLOUT;
-                    break;
-                }
-
-                sock->state  = SOCKET_STATE_PENDING;
-                sock->events = 0;
-                again = true;
-#else
-                assert(0);
+                    assert(0); // TODO
 #endif
+                }
             }
-        }
-        break;
-
-        case SOCKET_STATE_ACCEPTED:
-        {
-            if (!socket_secure(sock)) {
-                sock->state  = SOCKET_STATE_ESTABLISHED_READY;
-                sock->events = 0;
-            } else {
-#ifdef HTTPS_ENABLED
-                // Start server-side SSL handshake
-                if (!sock->ssl) {
-
-                    sock->ssl = SSL_new(sock->sec->ctx);
-                    if (sock->ssl == NULL) {
-                        sock->state  = SOCKET_STATE_DIED;
-                        sock->events = 0;
-                        break;
-                    }
-
-                    if (SSL_set_fd(sock->ssl, sock->raw) != 1) {
-                        sock->state  = SOCKET_STATE_DIED;
-                        sock->events = 0;
-                        break;
-                    }
-                }
-
-                int ret = SSL_accept(sock->ssl);
-                if (ret == 1) {
-                    // Handshake done
-                    sock->state = SOCKET_STATE_ESTABLISHED_READY;
-                    sock->events = 0;
-                    break;
-                }
-
-                int err = SSL_get_error(sock->ssl, ret);
-                if (err == SSL_ERROR_WANT_READ) {
-                    sock->events = POLLIN;
-                    break;
-                }
-
-                if (err == SSL_ERROR_WANT_WRITE) {
-                    sock->events = POLLOUT;
-                    break;
-                }
-
-                // Server socket error - close the connection
-                sock->state  = SOCKET_STATE_DIED;
-                sock->events = 0;
-#else
-               assert(0);
-#endif
-            }
-        }
-        break;
+            break;
 
         case SOCKET_STATE_ESTABLISHED_WAIT:
-        {
-            sock->state = SOCKET_STATE_ESTABLISHED_READY;
-            sock->events = 0;
-        }
-        break;
+            socket->state = SOCKET_STATE_ESTABLISHED_READY;
+            socket->events = 0;
+            break;
 
         case SOCKET_STATE_SHUTDOWN:
-        {
-            if (!socket_secure(sock)) {
-                sock->state = SOCKET_STATE_DIED;
-                sock->events = 0;
-            } else {
+            {
+                if (!is_secure(socket)) {
+                    socket->state = SOCKET_STATE_DIED;
+                    socket->events = 0;
+                } else {
 #ifdef HTTPS_ENABLED
-                int ret = SSL_shutdown(sock->ssl);
-                if (ret == 1) {
-                    sock->state  = SOCKET_STATE_DIED;
-                    sock->events = 0;
-                    break;
-                }
-
-                int err = SSL_get_error(sock->ssl, ret);
-                if (err == SSL_ERROR_WANT_READ) {
-                    sock->events = POLLIN;
-                    break;
-                }
-                
-                if (err == SSL_ERROR_WANT_WRITE) {
-                    sock->events = POLLOUT;
-                    break;
-                }
-
-                sock->state  = SOCKET_STATE_DIED;
-                sock->events = 0;
-#else
-                assert(0);
+                    assert(0); // TODO
 #endif
+                }
             }
-        }
-        break;
+            break;
 
         default:
             // Do nothing
             break;
         }
-
     } while (again);
 }
 
-static bool would_block(void)
+int socket_manager_wakeup(SocketManager *sm)
 {
-#ifdef _WIN32
-    int err = WSAGetLastError();
-    return err == WSAEWOULDBLOCK;
-#else
-    return errno == EAGAIN || errno == EWOULDBLOCK;
-#endif
+    if (mutex_lock(&sm->mutex) < 0)
+        return -1;
+
+    // TODO
+
+    if (mutex_unlock(&sm->mutex) < 0)
+        return -1;
+    return 0;
 }
 
-static bool interrupted(void)
+static int socket_manager_register_events_nolock(
+    SocketManager *sm, struct pollfd *polled, int max_polled)
 {
-#ifdef _WIN32
-    return false;
-#else
-    return errno == EINTR;
-#endif
-}
+    // The poll array must be able to hold descriptors
+    // for a socket manager at full capacity. Note that
+    // other than having a number of connection sockets,
+    // the manager also needs 2 for the listeners and
+    // one for the wakeup self-pipe.
+    if (max_polled < sm->max_used+3)
+        return -1;
+    int num_polled = 0;
 
-int socket_read(Socket *sock, char *dst, int max)
-{
-    // If not ESTABLISHED, set state to DIED and return
-    if (sock->state != SOCKET_STATE_ESTABLISHED_READY) {
-        sock->state = SOCKET_STATE_DIED;
-        sock->events = 0;
-        return 0;
+    polled[num_polled].fd = sm->wait_sock;
+    polled[num_polled].events = 0;
+    polled[num_polled].revents = 0;
+    num_polled++;
+
+    // If the manager isn't at full capacity, monitor
+    // the listener sockets for incoming connections.
+    if (sm->num_used < sm->max_used) {
+
+        if (sm->plain_sock != NATIVE_SOCKET_INVALID) {
+            polled[num_polled].fd = sm->plain_sock;
+            polled[num_polled].events = POLLIN;
+            polled[num_polled].revents = 0;
+            num_polled++;
+        }
+
+        if (sm->secure_sock != NATIVE_SOCKET_INVALID) {
+            polled[num_polled].fd = sm->secure_sock;
+            polled[num_polled].events = POLLIN;
+            polled[num_polled].revents = 0;
+            num_polled++;
+        }
     }
 
-    if (!socket_secure(sock)) {
-        int ret = recv(sock->raw, dst, max, 0);
-        if (ret == 0) {
-            sock->state  = SOCKET_STATE_DIED;
-            sock->events = 0;
+    // Iterate over each socket and register those that
+    // are waiting for I/O. If at least one socket that
+    // is ready to be processed exists, return an empty
+    // event registration list so that those entries can
+    // be processed immediately.
+    for (int i = 0, j = 0; j < sm->num_used; i++) {
+        Socket *s = &sm->sockets[i];
+        if (s->state = SOCKET_STATE_FREE)
+            continue;
+        j++;
+
+        if (s->state == SOCKET_STATE_DIED || s->state == SOCKET_STATE_ESTABLISHED_READY)
+            return 0;
+
+        if (s->events) {
+            polled[num_polled].fd = s->sock;
+            polled[num_polled].events = s->events;
+            polled[num_polled].revents = 0;
+            num_polled++;
+        }
+    }
+
+    return num_polled;
+}
+
+int socket_manager_register_events(SocketManager *sm,
+    struct pollfd *polled, int max_polled)
+{
+    if (mutex_lock(&sm->mutex) < 0)
+        return -1;
+
+    int ret = socket_manager_register_events_nolock(
+        sm, polled, max_polled);
+
+    if (mutex_unlock(&sm->mutex) < 0)
+        return -1;
+    return ret;
+}
+
+static SocketHandle
+socket_to_handle(SocketManager *sm, Socket *s)
+{
+    assert(0); // TODO
+}
+
+static Socket *handle_to_socket(SocketManager *sm, SocketHandle handle)
+{
+    assert(0); // TODO
+}
+
+static int socket_manager_translate_events_nolock(
+    SocketManager *sm, SocketEvent *events, int max_events,
+    struct pollfd *polled, int num_polled)
+{
+    int num_events = 0;
+    for (int i = 0; i < num_polled; i++) {
+
+        if (polled[i].fd == sm->plain_sock ||
+            polled[i].fd == sm->secure_sock) {
+
+            // We only listen for input events from the listener
+            // if the socket pool isn't fool. This ensures that
+            // at least one socket struct is available. Note that
+            // it's still possible that we were at capacity MAX-1
+            // and then got events from both the TCP and TCP/TLS
+            // listeners, causing one to be left witout a struct.
+            // This means we still need to check for full capacity.
+            // Fortunately, poll() is level-triggered, which means
+            // we'll handle this at the next iteration.
+            if (sm->num_used == sm->max_used)
+                continue;
+
+            // Determine whether the event came from
+            // the encrypted listener or not.
+            bool secure = (polled[i].fd == sm->secure_sock);
+
+            Socket *s = sm->sockets;
+            while (s->type != SOCKET_FREE) {
+                s++;
+                assert(s - sm->sockets < + sm->max_used);
+            }
+
+            NATIVE_SOCKET sock = accept(polled[i].fd, NULL, NULL);
+            if (sock == NATIVE_SOCKET_INVALID)
+                continue;
+
+            if (set_socket_blocking(sock, false) < 0) {
+                CLOSE_NATIVE_SOCKET(sock);
+                continue;
+            }
+
+            s->state  = SOCKET_STATE_ACCEPTED;
+            s->sock   = sock;
+            s->events = 0;
+            s->user   = NULL;
+
+            socket_update(s);
+            if (s->state == SOCKET_STATE_DIED) {
+                CLOSE_NATIVE_SOCKET(sock);
+                s->state = SOCKET_STATE_FREE;
+                continue;
+            }
+
+            pool->num_used++;
+
+        } else if (polled[i].fd == sm->wait_sock) {
+
+            // TODO: consume
+
         } else {
-            if (ret < 0) {
-                if (would_block()) {
-                    sock->state  = SOCKET_STATE_ESTABLISHED_WAIT;
-                    sock->events = POLLIN;
-                } else {
-                    if (!interrupted()) {
-                        sock->state  = SOCKET_STATE_DIED;
-                        sock->events = 0;
+            if (polled[i].revents)
+                socket_update(s);
+        }
+    }
+
+    for (int i = 0, j = 0; j < sm->num_used; i++) {
+        Socket *s = &sm->sockets[i];
+        if (s->state == SOCKET_FREE)
+            continue;
+        j++;
+
+        if (num_events == max_events)
+            break;
+
+        if (s->state == SOCKET_DIED) {
+
+            events[num_events++] = (SocketEvent) {
+                SOCKET_EVENT_DISCONNECT,
+                SOCKET_HANDE_INVALID,
+                s->user
+            };
+
+            // Free resources associated to socket
+            s->state = SOCKET_FREE;
+            if (s->sock != NATIVE_SOCKET_INVALID)
+                CLOSE_NATIVE_SOCKET(s->sock);
+            if (s->sock == SOCKET_STATE_PENDING ||
+                s->sock == SOCKET_STATE_CONNECTING) {
+                if (s->num_addr > 1)
+                    free(s->addrs);
+            }
+            s->num_used--;
+
+        } else if (s->state == SOCKET_STATE_ESTABLISHED_READY) {
+            events[num_events++] = (SocketEvent) {
+                SOCKET_EVENT_READY,
+                socket_to_handle(sm, s),
+                s->user
+            };
+        }
+    }
+
+    return num_events;
+}
+
+int socket_manager_translate_events(SocketManager *sm,
+    SocketEvent *events, int max_events, struct pollfd *polled,
+    int num_polled)
+{
+    if (mutex_lock(&sm->mutex) < 0)
+        return -1;
+
+    socket_manager_translate_events_nolock(
+        sm, events, max_events, polled, num_polled);
+
+    if (mutex_unlock(&sm->mutex) < 0)
+        return -1;
+    return 0;
+}
+
+static int resolve_connect_targets(ConnectTarget *targets,
+    int num_targets, AddressAndPort *resolved, int max_resolved)
+{
+    int num_resolved = 0;
+    for (int i = 0; i < num_targets; i++) {
+        switch (targets[i].type) {
+        case CONNECT_TARGET_NAME:
+            {
+                char portstr[16];
+                int len = snprintf(portstr, sizeof(portstr), "%u", port);
+                if (len < 0 || len >= (int) sizeof(portstr))
+                    return -1;
+
+                struct addrinfo hints = {0};
+                hints.ai_family = AF_UNSPEC;
+                hints.ai_socktype = SOCK_STREAM;
+
+                struct addrinfo *res = NULL;
+                int ret = getaddrinfo(pending_connect->hostname, portstr, &hints, &res);
+                if (ret != 0)
+                    return -1;
+
+                for (struct addrinfo *rp = res; rp; rp = rp->ai_next) {
+                    if (rp->ai_family == AF_INET) {
+                        IPv4 ipv4 = *(IPv4*) &((struct sockaddr_in*)rp->ai_addr)->sin_addr;
+                        if (num_resolved < max_resolved) {
+                            resolved[num_resolved].is_ipv4 = true;
+                            resolved[num_resolved].ipv4 = ipv4;
+                            resolved[num_resolved].port = targets[i].port;
+                            num_resolved++;
+                        }
+                    } else if (rp->ai_family == AF_INET6) {
+                        IPv6 ipv6 = *(IPv6*) &((struct sockaddr_in6*)rp->ai_addr)->sin6_addr;
+                        if (num_resolved < max_resolved) {
+                            resolved[num_resolved].is_ipv4 = false;
+                            resolved[num_resolved].ipv4 = ipv6;
+                            resolved[num_resolved].port = targets[i].port;
+                            num_resolved++;
+                        }
                     }
                 }
-                ret = 0;
+
+                freeaddrinfo(res);
             }
-        }
-        return ret;
-    } else {
-#ifdef HTTPS_ENABLED
-        int ret = SSL_read(sock->ssl, dst, max);
-        if (ret <= 0) {
-            int err = SSL_get_error(sock->ssl, ret);
-            if (err == SSL_ERROR_WANT_READ) {
-                sock->state  = SOCKET_STATE_ESTABLISHED_WAIT;
-                sock->events = POLLIN;
-            } else if (err == SSL_ERROR_WANT_WRITE) {
-                sock->state = SOCKET_STATE_ESTABLISHED_WAIT;
-                sock->events = POLLOUT;
-            } else {
-                fprintf(stderr, "OpenSSL error in socket_read: ");
-                ERR_print_errors_fp(stderr);
-                sock->state  = SOCKET_STATE_DIED;
-                sock->events = 0;
+            break;
+        case CONNECT_TARGET_IPV4:
+            if (num_resolved < max_resolved) {
+                resolved[num_resolved].is_ipv4 = true;
+                resolved[num_resolved].ipv4 = targets[i].ipv4;
+                resolved[num_resolved].port = targets[i].port;
+                num_resolved++;
             }
-            ret = 0;
+            break;
+        case CONNECT_TARGET_IPV6:
+            if (num_resolved < max_resolved) {
+                resolved[num_resolved].is_ipv4 = false;
+                resolved[num_resolved].ipv6 = targets[i].ipv6;
+                resolved[num_resolved].port = targets[i].port;
+                num_resolved++;
+            }
+            break;
         }
-        return ret;
-#else
-        assert(0);
-        return -1;
-#endif
     }
+    return num_resolved;
 }
 
-int socket_write(Socket *sock, char *src, int len)
+int socket_connect(SocketManager *sm, int num_targets,
+    ConnectTarget *targets, bool secure, void *user)
 {
-    // If not ESTABLISHED, set state to DIED and return
-    if (sock->state != SOCKET_STATE_ESTABLISHED_READY) {
-        sock->state  = SOCKET_STATE_DIED;
-        sock->events = 0;
+    if (sm->num_used == sm->max_used)
+        return -1;
+
+    AddressAndPort resolved[MAX_CONNECT_TARGETS];
+    int num_resolved = resolve_connect_targets(
+        targets, num_targets, resolved, MAX_CONNECT_TARGETS);
+
+    if (num_resolved <= 0)
+        return -1;
+
+    Socket *s = sm->sockets;
+    while (s->type != SOCKET_FREE) {
+        s++;
+        assert(s - sm->sockets < + sm->max_used);
+    }
+
+    if (num_resolved == 1) {
+        s->num_addr = 1;
+        s->next_addr = 0;
+        s->addr = resolved[0];
+    } else {
+        s->num_addr = num_resolved;
+        s->next_addr = 0;
+        s->addrs = malloc(num_resolved * sizeof(AddressAndPort));
+        if (s->addrs == NULL)
+            return -1;
+        for (int i = 0; i < num_resolved; i++)
+            s->addrs[i] = resolved[i];
+    }
+
+    s->type = SOCKET_STATE_PENDING;
+    s->sock = NATIVE_SOCKET_INVALID;
+    s->user = user;
+    s->num_used++;
+    return 0;
+}
+
+static int socket_recv_nolock(SocketManager *sm, SocketHandle handle,
+    char *dst, int max)
+{
+    Socket *s = handle_to_socket(sm, handle);
+    if (s == NULL)
+        return 0;
+
+    if (s->state != SOCKET_STATE_ESTABLISHED_READY) {
+        s->state = SOCKET_STATE_DIED;
+        s->events = 0;
         return 0;
     }
 
-    if (!socket_secure(sock)) {
-        int ret = send(sock->raw, src, len, 0);
+    if (!is_secure(s)) {
+        int ret = recv(s->sock, dst, max, 0);
+        if (ret == 0) {
+            s->state = SOCKET_STATE_DIED;
+            s->events = 0;
+        } else if (ret < 0) {
+            if (would_block()) {
+                s->state = SOCKET_STATE_ESTABLISHED_WAIT;
+                s->events = POLLIN;
+            } else if (!interrupted()) {
+                s->state = SOCKET_STATE_DIED;
+                s->events = 0;
+            }
+            ret = 0;
+        }
+        return 0;
+    } else {
+#ifdef HTTPS_ENABLED
+        int ret = SSL_read(s->ssl, dst, max);
+        if (ret <= 0) {
+            int err = SSL_get_error(s->ssl, ret);
+            if (err == SSL_ERROR_WANT_READ) {
+                s->state  = SOCKET_STATE_ESTABLISHED_WAIT;
+                s->events = POLLIN;
+            } else if (err == SSL_ERROR_WANT_WRITE) {
+                s->state = SOCKET_STATE_ESTABLISHED_WAIT;
+                s->events = POLLOUT;
+            } else {
+                s->state  = SOCKET_STATE_DIED;
+                s->events = 0;
+            }
+            ret = 0;
+        }
+        return ret;
+#endif
+    }
+}
+
+int socket_recv(SocketManager *sm, SocketHandle handle,
+    char *dst, int max)
+{
+    if (mutex_lock(&sm->mutex) < 0)
+        return -1;
+
+    int ret = socket_recv_nolock(sm, handle, dst, max);
+
+    if (mutex_unlock(&sm->mutex) < 0)
+        return -1;
+    return ret;
+}
+
+static int socket_send_nolock(SocketManager *sm, SocketHandle handle,
+    char *src, int len)
+{
+    Socket *s = handle_to_socket(sm, handle);
+    if (s == NULL)
+        return 0;
+
+    if (s->state != SOCKET_STATE_ESTABLISHED_READY) {
+        s->state = SOCKET_STATE_DIED;
+        s->events = 0;
+        return 0;
+    }
+
+    if (!socket_secure(s)) {
+        int ret = send(s->sock, src, len, 0);
         if (ret < 0) {
             if (would_block()) {
-                sock->state  = SOCKET_STATE_ESTABLISHED_WAIT;
-                sock->events = POLLOUT;
-            } else {
-                if (!interrupted()) {
-                    sock->state = SOCKET_STATE_DIED;
-                    sock->events = 0;
-                }
+                s->state = SOCKET_STATE_ESTABLISHED_WAIT;
+                s->events = POLLOUT;
+            } else if (!interrupted()) {
+                s->state = SOCKET_DIED;
+                s->events = 0;
             }
             ret = 0;
         }
         return ret;
     } else {
 #ifdef HTTPS_ENABLED
-        int ret = SSL_write(sock->ssl, src, len);
+        int ret = SSL_write(s->ssl, src, len);
         if (ret <= 0) {
-            int err = SSL_get_error(sock->ssl, ret);
+            int err = SSL_get_error(s->ssl, ret);
             if (err == SSL_ERROR_WANT_READ) {
-                sock->state  = SOCKET_STATE_ESTABLISHED_WAIT;
-                sock->events = POLLIN;
+                s->state  = SOCKET_STATE_ESTABLISHED_WAIT;
+                s->events = POLLIN;
             } else if (err == SSL_ERROR_WANT_WRITE) {
-                sock->state  = SOCKET_STATE_ESTABLISHED_WAIT;
-                sock->events = POLLOUT;
+                s->state  = SOCKET_STATE_ESTABLISHED_WAIT;
+                s->events = POLLOUT;
             } else {
-                fprintf(stderr, "OpenSSL error in socket_write: ");
-                ERR_print_errors_fp(stderr);
-                sock->state  = SOCKET_STATE_DIED;
-                sock->events = 0;
+                s->state  = SOCKET_STATE_DIED;
+                s->events = 0;
             }
             ret = 0;
         }
         return ret;
-#else
-        assert(0);
 #endif
     }
 }
 
-bool socket_secure(Socket *sock)
+int socket_send(SocketManager *sm, SocketHandle handle,
+    char *src, int len)
 {
+    if (mutex_lock(&sm->mutex) < 0)
+        return -1;
+
+    int ret = socket_send_nolock(sm, handle, src, len);
+
+    if (mutex_unlock(&sm->mutex) < 0)
+        return -1;
+    return ret;
+}
+
+void socket_close(SocketManager *sm, SocketHandle handle)
+{
+    if (mutex_lock(&sm->mutex) < 0)
+        return -1;
+
+    // TODO: maybe we don't want to always set to SHUTDOWN. What if the socket is DIED for instance?
+    s->state = SOCKET_STATE_SHUTDOWN;
+    s->events = 0;
+    socket_update(s);
+
+    if (mutex_unlock(&sm->mutex) < 0)
+        return -1;
+    return 0;
+}
+
+int socket_is_secure(SocketManager *sm, SocketHandle handle)
+{
+    if (mutex_lock(&sm->mutex) < 0)
+        return -1;
+
 #ifdef HTTPS_ENABLED
-    return sock->sec != NULL;
+    Socket *s = handle_to_socket(sm, handle);
+
+    int ret;
+    if (s == NULL)
+        ret = -1;
+    else {
+        ret = (s->ssl != NULL);
+    }
 #else
-    (void) sock;
-    return false;
-#endif
-}
-
-void socket_free(Socket *sock)
-{
-    if (sock->pending_connect != NULL)
-        pending_connect_free(sock->pending_connect);
-
-    if (sock->raw != BAD_SOCKET)
-        CLOSE_SOCKET(sock->raw);
-
-#ifdef HTTPS_ENABLED
-    if (sock->ssl)
-        SSL_free(sock->ssl);
+    int ret = 0;
 #endif
 
-    sock->state = SOCKET_STATE_FREE;
+    if (mutex_unlock(&sm->mutex) < 0)
+        return -1;
+    return ret;
 }
 
-void socket_set_user_data(Socket *sock, void *user_data)
+int socket_set_user(SocketManager *sm, SocketHandle handle)
 {
-    sock->user_data = user_data;
-}
+    if (mutex_lock(&sm->mutex) < 0)
+        return -1;
 
-void *socket_get_user_data(Socket *sock)
-{
-    return sock->user_data;
+    Socket *s = handle_to_socket(sm, handle);
+    if (s == NULL)
+        ret = -1;
+    else
+        s->user = user;
+
+    if (mutex_unlock(&sm->mutex) < 0)
+        return -1;
+    return ret;
 }

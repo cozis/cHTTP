@@ -1,7 +1,3 @@
-#ifndef CHTTP_BASIC_INCLUDED
-#define CHTTP_BASIC_INCLUDED
-
-#include <stdbool.h>
 
 // String type used throughout cHTTP.
 typedef struct {
@@ -52,30 +48,3 @@ void print_bytes(HTTP_String prefix, HTTP_String src);
 
 // TODO: comment
 #define HTTP_UNPACK(X) (X).len, (X).ptr
-
-// Macro used to make invariants of the code more explicit.
-//
-// Say you have some function that operates on two integers
-// and that by design their sum is always 100. This macro is
-// useful to make that explicit:
-//
-//   void func(int a, int b)
-//   {
-//     HTTP_ASSERT(a + b == 100);
-//     ...
-//   }
-//
-// Assertions are about documentation, *not* error management.
-//
-// In non-release builds (where NDEBUG is not defined) asserted
-// expressions are evaluated and if not true, the program is halted.
-// This is quite nice as they offer a way to document code in
-// a way that can be checked at runtime, unlike regular comments
-// like this one.
-#ifdef NDEBUG
-#define HTTP_ASSERT(X) ((void) 0)
-#else
-#define HTTP_ASSERT(X) {if (!(X)) { __builtin_trap(); }}
-#endif
-
-#endif // CHTTP_BASIC_INCLUDED

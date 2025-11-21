@@ -1,19 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#ifdef HTTPS_ENABLED
-#include <openssl/pem.h>
-#include <openssl/conf.h>
-#include <openssl/x509v3.h>
-#include <openssl/rsa.h>
-#include <openssl/evp.h>
-#include <openssl/bn.h>
-#endif
-
-#ifndef HTTP_AMALGAMATION
-#include "cert.h"
-#endif
 
 #ifdef HTTPS_ENABLED
 
@@ -51,10 +35,10 @@ static X509 *create_certificate(EVP_PKEY *pkey, HTTP_String C, HTTP_String O, HT
 
     // Set version (version 3)
     X509_set_version(x509, 2);
-    
+
     // Set serial number
     ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
-    
+
     // Set validity period
     X509_gmtime_adj(X509_get_notBefore(x509), 0);
     X509_gmtime_adj(X509_get_notAfter(x509), 31536000L * days); // days * seconds_per_year

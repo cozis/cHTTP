@@ -1,307 +1,325 @@
-#include <stdint.h>
-#include <stdarg.h>
-#include <stdlib.h>
-#include <stdbool.h>
 
-#ifndef HTTP_AMALGAMATION
-#include "engine.h"
-#include "server.h"
-#include "socket_pool.h"
-#endif
-
-#define MAX_CONNS (1<<10)
-
-typedef struct {
-    bool         used;
-    uint16_t     gen;
-    HTTP_Engine  engine;
-    SocketHandle sock;
-} Connection;
-
-struct HTTP_Server {
-
-    SocketPool *socket_pool;
-
-    int num_conns;
-    Connection conns[MAX_CONNS];
-
-    int ready_head;
-    int ready_count;
-    int ready[MAX_CONNS];
-};
-
-HTTP_Server *http_server_init(HTTP_String addr, uint16_t port)
+int http_server_init(HTTP_Server *server)
 {
-    return http_server_init_ex(addr, port, 0, HTTP_STR(""), HTTP_STR(""));
-}
-
-HTTP_Server *http_server_init_ex(HTTP_String addr, uint16_t port,
-    uint16_t secure_port, HTTP_String cert_file, HTTP_String key_file)
-{
-    HTTP_Server *server = malloc(sizeof(HTTP_Server));
-    if (server == NULL)
-        return NULL;
-
-    int backlog = 32;
-    bool reuse_addr = true;
-    SocketPool *socket_pool = socket_pool_init(addr, port, secure_port, MAX_CONNS, reuse_addr, backlog, cert_file, key_file);
-    if (socket_pool == NULL) {
-        free(server);
-        return NULL;
-    }
-
-    server->socket_pool = socket_pool;
     server->num_conns = 0;
+    for (int i = 0; i < HTTP_SERVER_CAPACITY; i++)
+        server->conns[i].state = HTTP_SERVER_CONN_FREE;
+
+    server->num_ready = 0;
     server->ready_head = 0;
-    server->ready_count = 0;
 
-    for (int i = 0; i < MAX_CONNS; i++) {
-        server->conns[i].used = false;
-        server->conns[i].gen = 1;
-    }
-
-    return server;
+    if (socket_manager_init(&server->sockets,
+        &server->socket_pool, HTTP_SERVER_CAPACITY) < 0)
+        return -1;
+    return 0;
 }
 
 void http_server_free(HTTP_Server *server)
 {
-    for (int i = 0, j = 0; j < server->num_conns; i++) {
+    socket_manager_free(&server->sockets);
 
-        if (!server->conns[i].used)
+    for (int i = 0, j = 0; j < server->num_conns; i++) {
+        HTTP_ServerConn *conn = &server->conns[i];
+        if (conn->state != HTTP_SERVER_CONN_FREE)
             continue;
         j++;
 
-        // TODO
+        http_server_conn_free(conn);
     }
-
-    socket_pool_free(server->socket_pool);
-    free(server);
 }
 
-int http_server_add_website(HTTP_Server *server, HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
+int http_server_listen_tcp(HTTP_Server *server,
+    String addr, Port port)
 {
-    return socket_pool_add_cert(server->socket_pool, domain, cert_file, key_file);
-}
-
-static void* server_memfunc(HTTP_MemoryFuncTag tag, void *ptr, int len, void *data) {
-    (void)data;
-    switch (tag) {
-        case HTTP_MEMFUNC_MALLOC:
-            return malloc(len);
-        case HTTP_MEMFUNC_FREE:
-            free(ptr);
-            return NULL;
-    }
-    return NULL;
-}
-
-int http_server_wait(HTTP_Server *server, HTTP_Request **req, HTTP_ResponseBuilder *builder)
-{
-    while (server->ready_count == 0) {
-
-        SocketEvent event = socket_pool_wait(server->socket_pool);
-        switch (event.type) {
-
-            case SOCKET_EVENT_DIED:
-            {
-                Connection *conn = event.user_data;
-                if (conn) {
-                    http_engine_free(&conn->engine);
-                    conn->used = false;
-                    conn->gen++;
-                    server->num_conns--;
-                }
-            }
-            break;
-
-            case SOCKET_EVENT_READY:
-            {
-                Connection *conn = event.user_data;
-                if (conn == NULL) {
-
-                    // Connection was just accepted
-
-                    if (server->num_conns == MAX_CONNS) {
-                        socket_pool_close(server->socket_pool, event.handle);
-                        break;
-                    }
-
-                    int i = 0;
-                    while (server->conns[i].used)
-                        i++;
-
-                    conn = &server->conns[i];
-                    conn->used = true;
-                    conn->sock = event.handle;
-                    http_engine_init(&conn->engine, 0, server_memfunc, NULL);
-                    socket_pool_set_user_data(server->socket_pool, event.handle, conn);
-                    server->num_conns++;
-                }
-
-                switch (http_engine_state(&conn->engine)) {
-
-                    int len;
-                    char *buf;
-
-                    case HTTP_ENGINE_STATE_SERVER_RECV_BUF:
-                    buf = http_engine_recvbuf(&conn->engine, &len);
-                    if (buf) {
-                        int ret = socket_pool_read(server->socket_pool, conn->sock, buf, len);
-                        http_engine_recvack(&conn->engine, ret);
-                    }
-                    break;
-
-                    case HTTP_ENGINE_STATE_SERVER_SEND_BUF:
-                    buf = http_engine_sendbuf(&conn->engine, &len);
-                    if (buf) {
-                        int ret = socket_pool_write(server->socket_pool, conn->sock, buf, len);
-                        http_engine_sendack(&conn->engine, ret);
-                    }
-                    break;
-
-                    default:
-                    break;
-                }
-
-                switch (http_engine_state(&conn->engine)) {
-
-                    int tail;
-
-                    case HTTP_ENGINE_STATE_SERVER_PREP_STATUS:
-                    tail = (server->ready_head + server->ready_count) % MAX_CONNS;
-                    server->ready[tail] = conn - server->conns;
-                    server->ready_count++;
-                    break;
-
-                    case HTTP_ENGINE_STATE_SERVER_CLOSED:
-                    socket_pool_close(server->socket_pool, conn->sock);
-                    break;
-
-                    default:
-                    break;
-                }
-            }
-            break;
-
-            case SOCKET_EVENT_ERROR:
-            return -1;
-
-            case SOCKET_EVENT_SIGNAL:
-            return 1;
-        }
-    }
-
-    int index = server->ready[server->ready_head];
-    server->ready_head = (server->ready_head + 1) % MAX_CONNS;
-    server->ready_count--;
-
-    *req = http_engine_getreq(&server->conns[index].engine);
-    (*req)->secure = socket_pool_secure(server->socket_pool, server->conns[index].sock);
-
-    *builder = (HTTP_ResponseBuilder) { server, index, server->conns[index].gen };
+    if (socket_manager_listen_tcp(&server->sockets, addr, port) < 0)
+        return -1;
     return 0;
 }
 
-static Connection*
-server_builder_to_conn(HTTP_ResponseBuilder builder)
+int http_server_listen_tls(HTTP_Server *server,
+    String addr, Port port, String cert_file_name,
+    String key_file_name)
 {
-	HTTP_Server *server = builder.data0;
-	if (builder.data1 >= MAX_CONNS)
-		return NULL;
-
-	Connection *conn = &server->conns[builder.data1];
-	if (conn->gen != builder.data2)
-		return NULL;
-
-	return conn;
+    if (socket_manager_listen_tls(&server->sockets, addr,
+        port, cert_file_name, key_file_name) < 0)
+        return -1;
+    return 0;
 }
 
-void http_response_builder_status(HTTP_ResponseBuilder res, int status)
+int http_server_add_certificate(HTTP_Server *server,
+    String domain, String cert_file, String key_file)
 {
-	Connection *conn = server_builder_to_conn(res);
-	if (conn == NULL)
-		return;
-
-	http_engine_status(&conn->engine, status);
+    if (socket_manager_add_certificate(&server->sockets,
+        domain, cert_file, key_file) < 0)
+        return -1;
+    return 0;
 }
 
-void http_response_builder_header(HTTP_ResponseBuilder res, HTTP_String str)
+int http_server_wakeup(HTTP_Server *server)
 {
-	Connection *conn = server_builder_to_conn(res);
-	if (conn == NULL)
-		return;
-
-	http_engine_header(&conn->engine, str);
+    if (socket_manager_wakeup(&server->sockets) < 0)
+        return -1;
+    return 0;
 }
 
-void http_response_builder_body(HTTP_ResponseBuilder res, HTTP_String str)
+int http_server_register_events(HTTP_Server *server,
+    struct pollfd *polled, int max_polled)
 {
-	Connection *conn = server_builder_to_conn(res);
-	if (conn == NULL)
-		return;
-
-	http_engine_body(&conn->engine, str);
+    return socket_manager_register_events(&server->sockets, polled, max_polled);
 }
 
-void http_response_builder_bodycap(HTTP_ResponseBuilder res, int mincap)
+// Look at the head of the input buffer to see if
+// a request was buffered. If it was, change the
+// connection's status to WAIT_STATUS and push it
+// to the ready queue. If the request is invalid,
+// close the socket.
+static void
+check_request_buffer(HTTP_Server *server, HTTP_ServerConn *conn)
 {
-	Connection *conn = server_builder_to_conn(res);
-	if (conn == NULL)
-		return;
+    assert(conn->state == HTTP_SERVER_CONN_BUFFERING);
 
-	http_engine_bodycap(&conn->engine, mincap);
+    ByteView src = byte_queue_read_buf(&conn->input);
+    int ret = http_parse_request(src.ptr, src.len, &conn->request);
+    if (ret < 0) {
+
+        // Invalid request
+        byte_queue_read_ack(&conn->input, 0);
+        socket_close(&server->sockets, conn->handle);
+
+    } else if (ret == 0) {
+
+        // Still waiting
+        byte_queue_read_ack(&conn->input, 0);
+
+        // If the queue reached its limit and we still didn't receive
+        // a complete request, abort the exchange.
+        if (byte_queue_full(&conn->input))
+            socket_close(&server->sockets, conn->handle);
+
+    } else {
+
+        // Ready
+        assert(ret == 1);
+
+        conn->state = HTTP_SERVER_CONN_STATUS;
+        conn->request_len = ret;
+        conn->response_offset = byte_queue_offset(&conn->output);
+
+        // Push to the ready queue
+        assert(server->num_ready < HTTP_SERVER_CAPACITY);
+        int tail = (server->ready_head + server->num_ready) % HTTP_SERVER_CAPACITY;
+        server->ready[tail] = conn - server->conns;
+        server->num_ready++;
+    }
 }
 
-char *http_response_builder_bodybuf(HTTP_ResponseBuilder res, int *cap)
+bool http_server_next_request(HTTP_Server *server,
+    HTTP_Request **request, HTTP_ResponseBuilder *builder)
 {
-	Connection *conn = server_builder_to_conn(res);
-	if (conn == NULL) {
-		*cap = 0;
-		return NULL;
-	}
+    if (server->num_ready == 0)
+        return false;
 
-	return http_engine_bodybuf(&conn->engine, cap);
+    HTTP_ServerConn *conn = &server->conns[server->ready_head];
+    server->ready_head = (server->ready_head + 1) % HTTP_SERVER_CAPACITY;
+    server->num_ready--;
+
+    assert(conn->state == HTTP_SERVER_CONN_WAIT_STATUS);
+    *request = &conn->request;
+    *builder = (HTTP_ResponseBuilder) { server, conn - server->conns, conn->gen };
+    return true;
 }
 
-void http_response_builder_bodyack(HTTP_ResponseBuilder res, int num)
+int http_server_process_events(HTTP_Server *server,
+    struct pollfd *polled, int num_polled)
 {
-	Connection *conn = server_builder_to_conn(res);
-	if (conn == NULL)
-		return;
+    SocketEvent events[HTTP_SERVER_CAPACITY];
+    int num_events = socket_manger_translate_events(&server->sockets, polled, num_polled);
+    if (num_events < 0)
+        return -1;
 
-	http_engine_bodyack(&conn->engine, num);
+    for (int i = 0; i < num_events; i++) {
+
+        HTTP_ServerConn *conn = events[i].user;
+
+        if (events[i].type == SOCKET_EVENT_DISCONNECT) {
+
+            http_server_conn_free(conn);
+            server->num_conns--;
+
+        } else if (events[i].type == SOCKET_EVENT_READY) {
+
+            if (events[i].user == NULL) {
+
+                if (server->num_conns == HTTP_SERVER_CAPACITY) {
+                    socket_close(&server->sockets, events[i].handle);
+                    continue;
+                }
+
+                int i = 0;
+                while (server->conns[i].state != HTTP_SERVER_CONN_FREE) {
+                    i++;
+                    assert(i < HTTP_SERVER_CAPACITY);
+                }
+
+                conn = &server->conns[i];
+                http_server_conn_init(conn, events[i].handle);
+                server->num_conns++;
+
+                socket_set_user(&server->sockets, events[i].handle, conn);
+            }
+
+            if (conn->state == HTTP_SERVER_CONN_BUFFERING) {
+
+                int min_recv = 1<<10;
+                byte_queue_write_setmincap(&conn->input, min_recv);
+
+                // Note that it's extra important that we don't
+                // buffer while the user is building the response.
+                // If we did that, a resize would invalidate all
+                // pointers on the parsed request structure.
+                int num = 0;
+                ByteView dst = byte_queue_write_buf(&conn->input);
+                if (dst.len) num = socket_recv(&server->sockets, conn->handle, dst.ptr, dst.len);
+                byte_queue_write_ack(&conn->input, num);
+
+                if (byte_queue_error(&conn->output))
+                    socket_close(&server->sockets, conn->handle);
+                else
+                    check_request_buffer(server, conn);
+
+            } else if (conn->state == HTTP_SERVER_CONN_FLUSHING) {
+
+                int num = 0;
+                ByteView src = byte_queue_read_buf(&conn->output);
+                if (src.len) num = socket_recv(&server->sockets, conn->handle, src.ptr, src.len);
+                byte_queue_read_ack(&conn->output, num);
+
+                if (byte_queue_error(&conn->output))
+                    socket_close(&server->sockets, conn->handle);
+                else if (byte_queue_empty(&conn->output)) {
+                    // We finished sending the response. Now we can
+                    // either close the connection or process a new
+                    // buffered request.
+                    if (conn->closing) {
+                        socket_close(&server->sockets, conn->handle);
+                    } else {
+                        check_request_buffer(server, conn);
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
 }
 
-void http_response_builder_undo(HTTP_ResponseBuilder res)
+// Get a connection pointer from a response builder.
+// If the builder is invalid, returns NULL.
+// Note that only connections in the responding states
+// can be returned, as any builder is invalidated by
+// incrementing the connection's generation counter
+// when a response is completed.
+static HTTP_ServerConn*
+builder_to_conn(HTTP_ResponseBuilder builder)
 {
-	Connection *conn = server_builder_to_conn(res);
-	if (conn == NULL)
-		return;
+    HTTP_Server *server = builder.server;
+    if (server == NULL)
+        return NULL;
 
-	http_engine_undo(&conn->engine);
+    if (server->index > HTTP_SERVER_CAPACITY)
+        return NULL;
+
+    HTTP_ServerConn *conn = server->conns[server->index];
+    if (conn->gen != builder.gen)
+        return NULL;
+
+    return conn;
 }
 
-void http_response_builder_done(HTTP_ResponseBuilder res)
+static void
+write_status(HTTP_ServerConn *conn, int status)
 {
-    HTTP_Server *server = res.data0;
-    Connection *conn = server_builder_to_conn(res);
+    byte_queue_write(&conn->output, xxx);
+}
+
+void http_response_builder_status(HTTP_ResponseBuilder builder, int status)
+{
+    HTTP_ServerConn *conn = builder_to_conn(builder);
     if (conn == NULL)
         return;
 
-    http_engine_done(&conn->engine);
-
-    conn->gen++;
-    if (conn->gen == 0 || conn->gen == UINT16_MAX)
-        conn->gen = 1;
-
-    HTTP_EngineState state = http_engine_state(&conn->engine);
-
-    if (state == HTTP_ENGINE_STATE_SERVER_PREP_STATUS) {
-        int tail = (server->ready_head + server->ready_count) % MAX_CONNS;
-        server->ready[tail] = res.data1;
-        server->ready_count++;
+    if (conn->state != HTTP_SERVER_CONN_WAIT_STATUS) {
+        // Reset all response content and start from scrach.
+        byte_queue_remove_from_offset(&conn->output, conn->response_offset);
+        conn->state = HTTP_SERVER_CONN_WAIT_STATUS;
     }
 
-    if (state == HTTP_ENGINE_STATE_SERVER_CLOSED)
-        socket_pool_close(server->socket_pool, conn->sock);
+    write_status(conn, status);
+
+    conn->state = HTTP_SERVER_CONN_WAIT_HEADER;
+}
+
+void http_response_builder_header(HTTP_ResponseBuilder builder, String str)
+{
+    HTTP_ServerConn *conn = builder_to_conn(builder);
+    if (conn == NULL)
+        return;
+
+    if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER)
+        return;
+
+    byte_queue_write(&conn->output, xxx);
+}
+
+static void append_special_headers(HTTP_ServerConn *conn)
+{
+    // TODO
+}
+
+static void patch_special_headers(HTTP_ServerConn *conn)
+{
+    // TODO
+}
+
+void http_response_builder_body(HTTP_ResponseBuilder builder, String str)
+{
+    HTTP_ServerConn *conn = builder_to_conn(builder);
+    if (conn == NULL)
+        return;
+
+    if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER) {
+        append_special_headers(conn);
+        conn->state = HTTP_SERVER_CONN_WAIT_BODY;
+    }
+
+    if (conn->state != HTTP_SERVER_CONN_WAIT_BODY)
+        return;
+
+    byte_queue_write(&conn->output, str);
+}
+
+void http_response_builder_send(HTTP_ResponseBuilder builder, String str)
+{
+    HTTP_ServerConn *conn = builder_to_conn(builder);
+    if (conn == NULL)
+        return;
+
+    if (conn->state == HTTP_SERVER_CONN_WAIT_STATUS) {
+        write_status(conn, 500);
+        conn->state = HTTP_SERVER_CONN_WAIT_HEADER;
+    }
+
+    if (conn->state == HTTP_SERVER_CONN_WAIT_HEADER) {
+        append_special_headers(conn);
+        conn->state = HTTP_SERVER_CONN_WAIT_BODY;
+    }
+
+    assert(conn->state == HTTP_SERVER_CONN_WAIT_BODY);
+    patch_special_headers(conn);
+
+    // Remove the buffered request
+    byte_queue_read_ack(&conn->input, conn->request_len);
+
+    conn->state = HTTP_SERVER_CONN_FLUSHING;
+    conn->gen++;
 }
