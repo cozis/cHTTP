@@ -11,6 +11,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
+#include <limits.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <poll.h>

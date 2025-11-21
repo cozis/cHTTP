@@ -217,6 +217,46 @@ void byte_queue_write(ByteQueue *queue, void *ptr, uint32_t len)
     }
 }
 
+void byte_queue_write_fmt2(ByteQueue *queue,
+    const char *fmt, va_list args)
+{
+	if (queue->flags & BYTE_QUEUE_ERROR)
+		return;
+
+	va_list args2;
+	va_copy(args2, args);
+
+	byte_queue_write_setmincap(queue, 128);
+	ByteView dst = byte_queue_write_buf(queue);
+
+	int len = vsnprintf(dst.ptr, dst.len, fmt, args);
+	if (len < 0) {
+		queue->flags |= BYTE_QUEUE_ERROR;
+		va_end(args2);
+		return;
+	}
+
+	if (len > dst.len) {
+		byte_queue_write_ack(queue, 0);
+		byte_queue_write_setmincap(queue, len+1);
+		dst = byte_queue_write_buf(queue);
+		vsnprintf(dst.ptr, dst.len, fmt, args2);
+	}
+
+	byte_queue_write_ack(queue, len);
+
+	va_end(args2);
+}
+
+void byte_queue_write_fmt(ByteQueue *queue,
+    const char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	byte_queue_write_fmt2(queue, fmt, args);
+	va_end(args);
+}
+
 ByteQueueOffset byte_queue_offset(ByteQueue *queue)
 {
     if (queue->flags & BYTE_QUEUE_ERROR)

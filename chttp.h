@@ -19,6 +19,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
+#include <limits.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <poll.h>
@@ -457,7 +459,7 @@ void socket_manager_free(SocketManager *sm);
 // can only be used once per manager.
 // Returns 0 on success, -1 on error.
 int socket_manager_listen_tcp(SocketManager *sm,
-    String addr, Port port);
+    HTTP_String addr, Port port);
 
 // Same as the previous function, but incoming
 // connections will be interpreted as TLS. You
@@ -467,8 +469,8 @@ int socket_manager_listen_tcp(SocketManager *sm,
 // and secure connections.
 // Returns 0 on success, -1 on error.
 int socket_manager_listen_tls(SocketManager *sm,
-    String addr, Port port, String cert_file_name,
-    String key_file_name);
+    HTTP_String addr, Port port, HTTP_String cert_file_name,
+    HTTP_String key_file_name);
 
 // If the socket manager was configures to accept
 // TLS connections, this adds additional certificates
@@ -485,22 +487,32 @@ int socket_manager_add_certificate(SocketManager *sm,
 // Returns 0 on success, -1 on error.
 int socket_manager_wakeup(SocketManager *sm);
 
-// Writes to the polled array the list of sockets
-// that the socket manager is monitoring and which
-// events associated to that socket.
-// Returns the number of items written to the polled
-// array.
+typedef struct {
+    void **ptrs;
+    struct pollfd *polled;
+    int num_polled;
+    int max_polled;
+} EventRegister;
+
+// Resets the event register with the list of descriptors
+// the socket manager wants monitored. Returns 0 on
+// success, -1 if the event register's capacity isn't
+// large enough.
 int socket_manager_register_events(SocketManager *sm,
-    struct pollfd *polled, int max_polled);
+    EventRegister *reg);
 
 // After poll() is called on the previously registered
 // pollfd array and the revents fields are set, this
 // function processes those events to produce higher-level
 // socket events. Returns the number of socket events
 // written to the output array, or -1 on error.
+//
+// The maximum number of events this will write
+// to the events array is equal to the numero of
+// socket structs provided to the socket manager
+// via the init function.
 int socket_manager_translate_events(SocketManager *sm,
-    SocketEvent *events, int max_events, struct pollfd *polled,
-    int num_polled);
+    SocketEvent *events, EventRegister *reg);
 
 typedef enum {
     CONNECT_TARGET_NAME,
@@ -531,7 +543,7 @@ int socket_recv(SocketManager *sm, SocketHandle handle,
 int socket_send(SocketManager *sm, SocketHandle handle,
     char *src, int len);
 
-void socket_close(SocketManager *sm, SocketHandle handle);
+int socket_close(SocketManager *sm, SocketHandle handle);
 
 // Returns -1 on error, 0 if the socket was accepted
 // from the plaintext listener, or 1 if it was accepted
@@ -539,7 +551,7 @@ void socket_close(SocketManager *sm, SocketHandle handle);
 int socket_is_secure(SocketManager *sm, SocketHandle handle);
 
 // Set the user pointer of a socket
-void socket_set_user(SocketManager *sm, SocketHandle handle, void *user);
+int socket_set_user(SocketManager *sm, SocketHandle handle, void *user);
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/byte_queue.h
@@ -663,6 +675,13 @@ int byte_queue_write_setmincap(ByteQueue *queue, uint32_t mincap);
 // short hand for write_buf/memcpy/write_ack
 void byte_queue_write(ByteQueue *queue, void *ptr, uint32_t len);
 
+// Write the result of the format into the queue
+void byte_queue_write_fmt(ByteQueue *queue, const char *fmt, ...);
+
+// Write the result of the format into the queue
+void byte_queue_write_fmt2(ByteQueue *queue, const char *fmt,
+    va_list args);
+
 // Returns the current offset inside the queue
 ByteQueueOffset byte_queue_offset(ByteQueue *queue);
 
@@ -724,6 +743,7 @@ typedef struct {
     HTTP_ClientConnState state;
     ByteQueue input;
     ByteQueue output;
+    HTTP_Response response;
 } HTTP_ClientConn;
 
 // Fields of this struct are private
@@ -781,31 +801,32 @@ int http_client_get_builder(HTTP_Client *client,
 
 // Set the URL of the current request. This is the first
 // function of the request builder that the user must call.
-void http_request_builder_url(HTTP_RequestBuilder builder, String url);
+void http_request_builder_url(HTTP_RequestBuilder builder, HTTP_String url);
 
 // After the URL, the user may set zero or more headers.
-void http_request_builder_header(HTTP_RequestBuilder builder, String str);
+void http_request_builder_header(HTTP_RequestBuilder builder, HTTP_String str);
 
 // Append bytes to the request's body. You can call this
 // any amount of times, as long as it's after having set
 // the URL.
-void http_request_builder_body(HTTP_RequestBuilder builder, String str);
+void http_request_builder_body(HTTP_RequestBuilder builder, HTTP_String str);
 
 // Mark this request as complete. This invalidates the
 // builder.
-void http_request_builder_send(HTTP_RequestBuilder builder);
+// Returns 0 on success, -1 on error.
+int http_request_builder_send(HTTP_RequestBuilder builder);
 
-// List all low-level socket events the client is
-// waiting for such that the caller can call poll()
-// with it.
+// Resets the event register with the list of descriptors
+// the client wants monitored. Returns 0 on success, -1 if
+// the event register's capacity isn't large enough.
 int http_client_register_events(HTTP_Client *client,
-    struct pollfd *polled, int max_polled);
+    EventRegister *reg);
 
 // The caller has waited for poll() to return and some
 // I/O events to be triggered, so now the HTTP client
 // can continue its buffering and flushing operations.
 int http_client_process_events(HTTP_Client *client,
-    struct pollfd *polled, int num_polled);
+    EventRegister *reg);
 
 // After some I/O events were processes, some responses
 // may be availabe. This function returns one of the
@@ -875,6 +896,17 @@ typedef struct {
     // Data being sent to the client
     ByteQueue output;
 
+    // Generation counter. This is used to invalidate
+    // response builders that refer to this connection.
+    uint16_t gen;
+
+    // This is set during the WAIT_XXX states or
+    // the FLUSHING state. When the connection
+    // completes flushing and no more bytes are
+    // in the output buffer, it frees the connection
+    // instead of turning it back to BUFFERING.
+    bool closing;
+
     // When the state is WAIT_STATUS, WAIT_HEADER,
     // or WAIT_BODY, this contains the parsed version
     // of the buffered request.
@@ -890,6 +922,19 @@ typedef struct {
     // scratch.
     ByteQueueOffset response_offset;
 
+    // When the first byte of the response content is
+    // written, before it are prepended special headers,
+    // including Content-Length and Connection. This
+    // offset points to the first byte that comes after
+    // the string "Content-Length: ".
+    ByteQueueOffset content_length_value_offset;
+
+    // Similarly to the previous field, this one points
+    // to the first byte of the body. This allows calculating
+    // the length of the response content byte subtracting
+    // it from the offset reached when the response is marked
+    // as done.
+    ByteQueueOffset content_length_offset;
 } HTTP_ServerConn;
 
 typedef struct {
@@ -944,7 +989,7 @@ void http_server_set_output_limit(HTTP_Server *server, uint32_t limit);
 // Enable listening for plain HTTP requests at the
 // specified interface.
 int http_server_listen_tcp(HTTP_Server *server,
-    String addr, Port port);
+    HTTP_String addr, Port port);
 
 // Enable listening for HTTPS requests at the specified
 // interfact, using the specified certificate and key
@@ -962,17 +1007,17 @@ int http_server_add_certificate(HTTP_Server *server,
 // other threads can call this function to wake it up.
 int http_server_wakeup(HTTP_Server *server);
 
-// List all low-level socket events the server is
-// waiting for such that the caller can call poll()
-// with it.
+// Resets the event register with the list of descriptors
+// the server wants monitored. Returns 0 on success, -1 if
+// the event register's capacity isn't large enough.
 int http_server_register_events(HTTP_Server *server,
-    struct pollfd *polled, int max_polled);
+    EventRegister *reg);
 
 // The caller has waited for poll() to return and some
 // I/O events to be triggered, so now the HTTP server
 // can continue its buffering and flushing operations.
 int http_server_process_events(HTTP_Server *server,
-    struct pollfd *polled, int num_polled);
+    EventRegister *reg);
 
 typedef struct {
     HTTP_Server *server;
@@ -1000,7 +1045,7 @@ void http_response_builder_status(HTTP_ResponseBuilder builder, int status);
 // Append a header to the response. This can only be
 // used after having set the status and before appending
 // to the body.
-void http_response_builder_header(HTTP_ResponseBuilder builder, String str);
+void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str);
 
 // Append some bytes to the response's body
 void http_response_builder_body(HTTP_ResponseBuilder builder, String str);

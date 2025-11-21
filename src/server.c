@@ -5,6 +5,7 @@ static void http_server_conn_init(HTTP_ServerConn *conn,
 {
     conn->state = HTTP_SERVER_CONN_BUFFERING;
     conn->handle = handle;
+    conn->closing = false;
     byte_queue_init(&conn->input, input_buffer_limit);
     byte_queue_init(&conn->output, output_buffer_limit);
 }
@@ -21,8 +22,10 @@ int http_server_init(HTTP_Server *server)
     server->output_buffer_limit = 1<<20;
 
     server->num_conns = 0;
-    for (int i = 0; i < HTTP_SERVER_CAPACITY; i++)
+    for (int i = 0; i < HTTP_SERVER_CAPACITY; i++) {
         server->conns[i].state = HTTP_SERVER_CONN_FREE;
+        server->conns[i].gen = 0;
+    }
 
     server->num_ready = 0;
     server->ready_head = 0;
@@ -58,7 +61,7 @@ void http_server_set_output_limit(HTTP_Server *server, uint32_t limit)
 }
 
 int http_server_listen_tcp(HTTP_Server *server,
-    String addr, Port port)
+    HTTP_String addr, Port port)
 {
     if (socket_manager_listen_tcp(&server->sockets, addr, port) < 0)
         return -1;
@@ -66,8 +69,8 @@ int http_server_listen_tcp(HTTP_Server *server,
 }
 
 int http_server_listen_tls(HTTP_Server *server,
-    String addr, Port port, String cert_file_name,
-    String key_file_name)
+    HTTP_String addr, Port port, HTTP_String cert_file_name,
+    HTTP_String key_file_name)
 {
     if (socket_manager_listen_tls(&server->sockets, addr,
         port, cert_file_name, key_file_name) < 0)
@@ -92,9 +95,11 @@ int http_server_wakeup(HTTP_Server *server)
 }
 
 int http_server_register_events(HTTP_Server *server,
-    struct pollfd *polled, int max_polled)
+    EventRegister *reg)
 {
-    return socket_manager_register_events(&server->sockets, polled, max_polled);
+    if (socket_manager_register_events(&server->sockets, reg) < 0)
+        return -1;
+    return 0;
 }
 
 // Look at the head of the input buffer to see if
@@ -142,27 +147,11 @@ check_request_buffer(HTTP_Server *server, HTTP_ServerConn *conn)
     }
 }
 
-bool http_server_next_request(HTTP_Server *server,
-    HTTP_Request **request, HTTP_ResponseBuilder *builder)
-{
-    if (server->num_ready == 0)
-        return false;
-
-    HTTP_ServerConn *conn = &server->conns[server->ready_head];
-    server->ready_head = (server->ready_head + 1) % HTTP_SERVER_CAPACITY;
-    server->num_ready--;
-
-    assert(conn->state == HTTP_SERVER_CONN_WAIT_STATUS);
-    *request = &conn->request;
-    *builder = (HTTP_ResponseBuilder) { server, conn - server->conns, conn->gen };
-    return true;
-}
-
 int http_server_process_events(HTTP_Server *server,
-    struct pollfd *polled, int num_polled)
+    EventRegister *reg)
 {
     SocketEvent events[HTTP_SERVER_CAPACITY];
-    int num_events = socket_manager_translate_events(&server->sockets, polled, num_polled);
+    int num_events = socket_manager_translate_events(&server->sockets, events, reg);
     if (num_events < 0)
         return -1;
 
@@ -245,6 +234,22 @@ int http_server_process_events(HTTP_Server *server,
     return 0;
 }
 
+bool http_server_next_request(HTTP_Server *server,
+    HTTP_Request **request, HTTP_ResponseBuilder *builder)
+{
+    if (server->num_ready == 0)
+        return false;
+
+    HTTP_ServerConn *conn = &server->conns[server->ready_head];
+    server->ready_head = (server->ready_head + 1) % HTTP_SERVER_CAPACITY;
+    server->num_ready--;
+
+    assert(conn->state == HTTP_SERVER_CONN_WAIT_STATUS);
+    *request = &conn->request;
+    *builder = (HTTP_ResponseBuilder) { server, conn - server->conns, conn->gen };
+    return true;
+}
+
 // Get a connection pointer from a response builder.
 // If the builder is invalid, returns NULL.
 // Note that only connections in the responding states
@@ -261,17 +266,86 @@ builder_to_conn(HTTP_ResponseBuilder builder)
     if (builder.index > HTTP_SERVER_CAPACITY)
         return NULL;
 
-    HTTP_ServerConn *conn = server->conns[builder.index];
+    HTTP_ServerConn *conn = &server->conns[builder.index];
     if (builder.gen != conn->gen)
         return NULL;
 
     return conn;
 }
 
+static const char*
+get_status_text(int code)
+{
+	switch(code) {
+
+		case 100: return "Continue";
+		case 101: return "Switching Protocols";
+		case 102: return "Processing";
+
+		case 200: return "OK";
+		case 201: return "Created";
+		case 202: return "Accepted";
+		case 203: return "Non-Authoritative Information";
+		case 204: return "No Content";
+		case 205: return "Reset Content";
+		case 206: return "Partial Content";
+		case 207: return "Multi-Status";
+		case 208: return "Already Reported";
+
+		case 300: return "Multiple Choices";
+		case 301: return "Moved Permanently";
+		case 302: return "Found";
+		case 303: return "See Other";
+		case 304: return "Not Modified";
+		case 305: return "Use Proxy";
+		case 306: return "Switch Proxy";
+		case 307: return "Temporary Redirect";
+		case 308: return "Permanent Redirect";
+
+		case 400: return "Bad Request";
+		case 401: return "Unauthorized";
+		case 402: return "Payment Required";
+		case 403: return "Forbidden";
+		case 404: return "Not Found";
+		case 405: return "Method Not Allowed";
+		case 406: return "Not Acceptable";
+		case 407: return "Proxy Authentication Required";
+		case 408: return "Request Timeout";
+		case 409: return "Conflict";
+		case 410: return "Gone";
+		case 411: return "Length Required";
+		case 412: return "Precondition Failed";
+		case 413: return "Request Entity Too Large";
+		case 414: return "Request-URI Too Long";
+		case 415: return "Unsupported Media Type";
+		case 416: return "Requested Range Not Satisfiable";
+		case 417: return "Expectation Failed";
+		case 418: return "I'm a teapot";
+		case 420: return "Enhance your calm";
+		case 422: return "Unprocessable Entity";
+		case 426: return "Upgrade Required";
+		case 429: return "Too many requests";
+		case 431: return "Request Header Fields Too Large";
+		case 449: return "Retry With";
+		case 451: return "Unavailable For Legal Reasons";
+
+		case 500: return "Internal Server Error";
+		case 501: return "Not Implemented";
+		case 502: return "Bad Gateway";
+		case 503: return "Service Unavailable";
+		case 504: return "Gateway Timeout";
+		case 505: return "HTTP Version Not Supported";
+		case 509: return "Bandwidth Limit Exceeded";
+	}
+	return "???";
+}
+
 static void
 write_status(HTTP_ServerConn *conn, int status)
 {
-    byte_queue_write(&conn->output, xxx);
+    byte_queue_write_fmt(&conn->output,
+		"HTTP/1.1 %d %s\r\n",
+		status, get_status_text(status));
 }
 
 void http_response_builder_status(HTTP_ResponseBuilder builder, int status)
@@ -291,7 +365,7 @@ void http_response_builder_status(HTTP_ResponseBuilder builder, int status)
     conn->state = HTTP_SERVER_CONN_WAIT_HEADER;
 }
 
-void http_response_builder_header(HTTP_ResponseBuilder builder, String str)
+void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str)
 {
     HTTP_ServerConn *conn = builder_to_conn(builder);
     if (conn == NULL)
@@ -300,17 +374,48 @@ void http_response_builder_header(HTTP_ResponseBuilder builder, String str)
     if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER)
         return;
 
-    byte_queue_write(&conn->output, xxx);
+    // TODO: Check that the header is valid
+
+	byte_queue_write(&conn->output, str.ptr, str.len);
+	byte_queue_write(&conn->output, "\r\n", 2);
 }
 
 static void append_special_headers(HTTP_ServerConn *conn)
 {
-    // TODO
+    HTTP_String s;
+
+    if (conn->closing) {
+        s = HTTP_STR("Connection: Close");
+        byte_queue_write(&conn->output, s.ptr, s.len);
+    } else {
+        s = HTTP_STR("Connection: Keep-Alive");
+        byte_queue_write(&conn->output, s.ptr, s.len);
+    }
+
+    s = HTTP_STR("Content-Length: ");
+    byte_queue_write(&conn->output, s.ptr, s.len);
+
+    conn->content_length_value_offset = byte_queue_offset(&conn->output);
+
+    #define TEN_SPACES "          "
+    _Static_assert(sizeof(TEN_SPACES) == 10+1);
+
+    s = HTTP_STR(TEN_SPACES "\r\n");
+    byte_queue_write(&conn->output, s.ptr, s.len);
+
+    byte_queue_write(&conn->output, "\r\n", 2);
+	conn->content_length_offset = byte_queue_offset(&conn->output);
 }
 
 static void patch_special_headers(HTTP_ServerConn *conn)
 {
-    // TODO
+    int content_length = byte_queue_size_from_offset(&conn->output, conn->content_length_offset);
+
+    char tmp[11];
+    int len = snprintf(tmp, sizeof(tmp), "%d", content_length);
+    assert(len > 0 && len < 11);
+
+    byte_queue_patch(&conn->output, conn->content_length_value_offset, tmp, len);
 }
 
 void http_response_builder_body(HTTP_ResponseBuilder builder, String str)

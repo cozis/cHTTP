@@ -221,7 +221,7 @@ void socket_manager_free(SocketManager *sm);
 // can only be used once per manager.
 // Returns 0 on success, -1 on error.
 int socket_manager_listen_tcp(SocketManager *sm,
-    String addr, Port port);
+    HTTP_String addr, Port port);
 
 // Same as the previous function, but incoming
 // connections will be interpreted as TLS. You
@@ -231,8 +231,8 @@ int socket_manager_listen_tcp(SocketManager *sm,
 // and secure connections.
 // Returns 0 on success, -1 on error.
 int socket_manager_listen_tls(SocketManager *sm,
-    String addr, Port port, String cert_file_name,
-    String key_file_name);
+    HTTP_String addr, Port port, HTTP_String cert_file_name,
+    HTTP_String key_file_name);
 
 // If the socket manager was configures to accept
 // TLS connections, this adds additional certificates
@@ -249,22 +249,32 @@ int socket_manager_add_certificate(SocketManager *sm,
 // Returns 0 on success, -1 on error.
 int socket_manager_wakeup(SocketManager *sm);
 
-// Writes to the polled array the list of sockets
-// that the socket manager is monitoring and which
-// events associated to that socket.
-// Returns the number of items written to the polled
-// array.
+typedef struct {
+    void **ptrs;
+    struct pollfd *polled;
+    int num_polled;
+    int max_polled;
+} EventRegister;
+
+// Resets the event register with the list of descriptors
+// the socket manager wants monitored. Returns 0 on
+// success, -1 if the event register's capacity isn't
+// large enough.
 int socket_manager_register_events(SocketManager *sm,
-    struct pollfd *polled, int max_polled);
+    EventRegister *reg);
 
 // After poll() is called on the previously registered
 // pollfd array and the revents fields are set, this
 // function processes those events to produce higher-level
 // socket events. Returns the number of socket events
 // written to the output array, or -1 on error.
+//
+// The maximum number of events this will write
+// to the events array is equal to the numero of
+// socket structs provided to the socket manager
+// via the init function.
 int socket_manager_translate_events(SocketManager *sm,
-    SocketEvent *events, int max_events, struct pollfd *polled,
-    int num_polled);
+    SocketEvent *events, EventRegister *reg);
 
 typedef enum {
     CONNECT_TARGET_NAME,
@@ -295,7 +305,7 @@ int socket_recv(SocketManager *sm, SocketHandle handle,
 int socket_send(SocketManager *sm, SocketHandle handle,
     char *src, int len);
 
-void socket_close(SocketManager *sm, SocketHandle handle);
+int socket_close(SocketManager *sm, SocketHandle handle);
 
 // Returns -1 on error, 0 if the socket was accepted
 // from the plaintext listener, or 1 if it was accepted
@@ -303,4 +313,4 @@ void socket_close(SocketManager *sm, SocketHandle handle);
 int socket_is_secure(SocketManager *sm, SocketHandle handle);
 
 // Set the user pointer of a socket
-void socket_set_user(SocketManager *sm, SocketHandle handle, void *user);
+int socket_set_user(SocketManager *sm, SocketHandle handle, void *user);

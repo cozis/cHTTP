@@ -117,6 +117,13 @@ int byte_queue_write_setmincap(ByteQueue *queue, uint32_t mincap);
 // short hand for write_buf/memcpy/write_ack
 void byte_queue_write(ByteQueue *queue, void *ptr, uint32_t len);
 
+// Write the result of the format into the queue
+void byte_queue_write_fmt(ByteQueue *queue, const char *fmt, ...);
+
+// Write the result of the format into the queue
+void byte_queue_write_fmt2(ByteQueue *queue, const char *fmt,
+    va_list args);
+
 // Returns the current offset inside the queue
 ByteQueueOffset byte_queue_offset(ByteQueue *queue);
 

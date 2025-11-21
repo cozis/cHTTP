@@ -49,6 +49,17 @@ typedef struct {
     // Data being sent to the client
     ByteQueue output;
 
+    // Generation counter. This is used to invalidate
+    // response builders that refer to this connection.
+    uint16_t gen;
+
+    // This is set during the WAIT_XXX states or
+    // the FLUSHING state. When the connection
+    // completes flushing and no more bytes are
+    // in the output buffer, it frees the connection
+    // instead of turning it back to BUFFERING.
+    bool closing;
+
     // When the state is WAIT_STATUS, WAIT_HEADER,
     // or WAIT_BODY, this contains the parsed version
     // of the buffered request.
@@ -64,6 +75,19 @@ typedef struct {
     // scratch.
     ByteQueueOffset response_offset;
 
+    // When the first byte of the response content is
+    // written, before it are prepended special headers,
+    // including Content-Length and Connection. This
+    // offset points to the first byte that comes after
+    // the string "Content-Length: ".
+    ByteQueueOffset content_length_value_offset;
+
+    // Similarly to the previous field, this one points
+    // to the first byte of the body. This allows calculating
+    // the length of the response content byte subtracting
+    // it from the offset reached when the response is marked
+    // as done.
+    ByteQueueOffset content_length_offset;
 } HTTP_ServerConn;
 
 typedef struct {
@@ -118,7 +142,7 @@ void http_server_set_output_limit(HTTP_Server *server, uint32_t limit);
 // Enable listening for plain HTTP requests at the
 // specified interface.
 int http_server_listen_tcp(HTTP_Server *server,
-    String addr, Port port);
+    HTTP_String addr, Port port);
 
 // Enable listening for HTTPS requests at the specified
 // interfact, using the specified certificate and key
@@ -136,17 +160,17 @@ int http_server_add_certificate(HTTP_Server *server,
 // other threads can call this function to wake it up.
 int http_server_wakeup(HTTP_Server *server);
 
-// List all low-level socket events the server is
-// waiting for such that the caller can call poll()
-// with it.
+// Resets the event register with the list of descriptors
+// the server wants monitored. Returns 0 on success, -1 if
+// the event register's capacity isn't large enough.
 int http_server_register_events(HTTP_Server *server,
-    struct pollfd *polled, int max_polled);
+    EventRegister *reg);
 
 // The caller has waited for poll() to return and some
 // I/O events to be triggered, so now the HTTP server
 // can continue its buffering and flushing operations.
 int http_server_process_events(HTTP_Server *server,
-    struct pollfd *polled, int num_polled);
+    EventRegister *reg);
 
 typedef struct {
     HTTP_Server *server;
@@ -174,7 +198,7 @@ void http_response_builder_status(HTTP_ResponseBuilder builder, int status);
 // Append a header to the response. This can only be
 // used after having set the status and before appending
 // to the body.
-void http_response_builder_header(HTTP_ResponseBuilder builder, String str);
+void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str);
 
 // Append some bytes to the response's body
 void http_response_builder_body(HTTP_ResponseBuilder builder, String str);

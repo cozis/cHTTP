@@ -68,7 +68,7 @@ static int set_socket_blocking(NATIVE_SOCKET sock, bool value)
     return 0;
 }
 
-static NATIVE_SOCKET create_listen_socket(String addr,
+static NATIVE_SOCKET create_listen_socket(HTTP_String addr,
     Port port, bool reuse_addr, int backlog)
 {
     NATIVE_SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -169,7 +169,7 @@ void socket_manager_free(SocketManager *sm)
 }
 
 int socket_manager_listen_tcp(SocketManager *sm,
-    String addr, Port port)
+    HTTP_String addr, Port port)
 {
     if (sm->plain_sock != NATIVE_SOCKET_INVALID)
         return -1;
@@ -184,8 +184,8 @@ int socket_manager_listen_tcp(SocketManager *sm,
 }
 
 int socket_manager_listen_tls(SocketManager *sm,
-    String addr, Port port, String cert_file_name,
-    String key_file_name)
+    HTTP_String addr, Port port, HTTP_String cert_file_name,
+    HTTP_String key_file_name)
 {
     if (sm->secure_sock != NATIVE_SOCKET_INVALID)
         return -1;
@@ -452,38 +452,41 @@ int socket_manager_wakeup(SocketManager *sm)
 }
 
 static int socket_manager_register_events_nolock(
-    SocketManager *sm, struct pollfd *polled, int max_polled)
+    SocketManager *sm, EventRegister *reg)
 {
     // The poll array must be able to hold descriptors
     // for a socket manager at full capacity. Note that
     // other than having a number of connection sockets,
     // the manager also needs 2 for the listeners and
     // one for the wakeup self-pipe.
-    if (max_polled < sm->max_used+3)
+    if (reg->max_polled < sm->max_used+3)
         return -1;
-    int num_polled = 0;
+    reg->num_polled = 0;
 
-    polled[num_polled].fd = sm->wait_sock;
-    polled[num_polled].events = 0;
-    polled[num_polled].revents = 0;
-    num_polled++;
+    reg->polled[reg->num_polled].fd = sm->wait_sock;
+    reg->polled[reg->num_polled].events = POLLIN;
+    reg->polled[reg->num_polled].revents = 0;
+    reg->ptrs[reg->num_polled] = NULL;
+    reg->num_polled++;
 
     // If the manager isn't at full capacity, monitor
     // the listener sockets for incoming connections.
     if (sm->num_used < sm->max_used) {
 
         if (sm->plain_sock != NATIVE_SOCKET_INVALID) {
-            polled[num_polled].fd = sm->plain_sock;
-            polled[num_polled].events = POLLIN;
-            polled[num_polled].revents = 0;
-            num_polled++;
+            reg->polled[reg->num_polled].fd = sm->plain_sock;
+            reg->polled[reg->num_polled].events = POLLIN;
+            reg->polled[reg->num_polled].revents = 0;
+            reg->ptrs[reg->num_polled] = NULL;
+            reg->num_polled++;
         }
 
         if (sm->secure_sock != NATIVE_SOCKET_INVALID) {
-            polled[num_polled].fd = sm->secure_sock;
-            polled[num_polled].events = POLLIN;
-            polled[num_polled].revents = 0;
-            num_polled++;
+            reg->polled[reg->num_polled].fd = sm->secure_sock;
+            reg->polled[reg->num_polled].events = POLLIN;
+            reg->polled[reg->num_polled].revents = 0;
+            reg->ptrs[reg->num_polled] = NULL;
+            reg->num_polled++;
         }
     }
 
@@ -498,28 +501,25 @@ static int socket_manager_register_events_nolock(
             continue;
         j++;
 
-        if (s->state == SOCKET_STATE_DIED || s->state == SOCKET_STATE_ESTABLISHED_READY)
-            return 0;
-
         if (s->events) {
-            polled[num_polled].fd = s->sock;
-            polled[num_polled].events = s->events;
-            polled[num_polled].revents = 0;
-            num_polled++;
+            reg->polled[reg->num_polled].fd = s->sock;
+            reg->polled[reg->num_polled].events = s->events;
+            reg->polled[reg->num_polled].revents = 0;
+            reg->ptrs[reg->num_polled] = s;
+            reg->num_polled++;
         }
     }
 
-    return num_polled;
+    return 0;
 }
 
 int socket_manager_register_events(SocketManager *sm,
-    struct pollfd *polled, int max_polled)
+    EventRegister *reg)
 {
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
-    int ret = socket_manager_register_events_nolock(
-        sm, polled, max_polled);
+    int ret = socket_manager_register_events_nolock(sm, reg);
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
@@ -538,14 +538,14 @@ static Socket *handle_to_socket(SocketManager *sm, SocketHandle handle)
 }
 
 static int socket_manager_translate_events_nolock(
-    SocketManager *sm, SocketEvent *events, int max_events,
-    struct pollfd *polled, int num_polled)
+    SocketManager *sm, SocketEvent *events,
+    EventRegister *reg)
 {
     int num_events = 0;
-    for (int i = 0; i < num_polled; i++) {
+    for (int i = 0; i < reg->num_polled; i++) {
 
-        if (polled[i].fd == sm->plain_sock ||
-            polled[i].fd == sm->secure_sock) {
+        if (reg->polled[i].fd == sm->plain_sock ||
+            reg->polled[i].fd == sm->secure_sock) {
 
             // We only listen for input events from the listener
             // if the socket pool isn't fool. This ensures that
@@ -561,7 +561,7 @@ static int socket_manager_translate_events_nolock(
 
             // Determine whether the event came from
             // the encrypted listener or not.
-            bool secure = (polled[i].fd == sm->secure_sock);
+            bool secure = (reg->polled[i].fd == sm->secure_sock);
 
             Socket *s = sm->sockets;
             while (s->state != SOCKET_STATE_FREE) {
@@ -569,7 +569,7 @@ static int socket_manager_translate_events_nolock(
                 assert(s - sm->sockets < + sm->max_used);
             }
 
-            NATIVE_SOCKET sock = accept(polled[i].fd, NULL, NULL);
+            NATIVE_SOCKET sock = accept(reg->polled[i].fd, NULL, NULL);
             if (sock == NATIVE_SOCKET_INVALID)
                 continue;
 
@@ -592,12 +592,14 @@ static int socket_manager_translate_events_nolock(
 
             sm->num_used++;
 
-        } else if (polled[i].fd == sm->wait_sock) {
+        } else if (reg->polled[i].fd == sm->wait_sock) {
 
             // TODO: consume
 
         } else {
-            if (polled[i].revents)
+
+            Socket *s = reg->ptrs[i];
+            if (reg->polled[i].revents)
                 socket_update(s);
         }
     }
@@ -608,14 +610,11 @@ static int socket_manager_translate_events_nolock(
             continue;
         j++;
 
-        if (num_events == max_events)
-            break;
-
-        if (s->state == SOCKET_DIED) {
+        if (s->state == SOCKET_STATE_DIED) {
 
             events[num_events++] = (SocketEvent) {
                 SOCKET_EVENT_DISCONNECT,
-                SOCKET_HANDE_INVALID,
+                SOCKET_HANDLE_INVALID,
                 s->user
             };
 
@@ -628,7 +627,7 @@ static int socket_manager_translate_events_nolock(
                 if (s->num_addr > 1)
                     free(s->addrs);
             }
-            s->num_used--;
+            sm->num_used--;
 
         } else if (s->state == SOCKET_STATE_ESTABLISHED_READY) {
             events[num_events++] = (SocketEvent) {
@@ -643,18 +642,16 @@ static int socket_manager_translate_events_nolock(
 }
 
 int socket_manager_translate_events(SocketManager *sm,
-    SocketEvent *events, int max_events, struct pollfd *polled,
-    int num_polled)
+    SocketEvent *events, EventRegister *reg)
 {
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
-    socket_manager_translate_events_nolock(
-        sm, events, max_events, polled, num_polled);
+    int ret = socket_manager_translate_events_nolock(sm, events, reg);
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
-    return 0;
+    return ret;
 }
 
 static int resolve_connect_targets(ConnectTarget *targets,
@@ -666,7 +663,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
         case CONNECT_TARGET_NAME:
             {
                 char portstr[16];
-                int len = snprintf(portstr, sizeof(portstr), "%u", port);
+                int len = snprintf(portstr, sizeof(portstr), "%u", targets[i].port);
                 if (len < 0 || len >= (int) sizeof(portstr))
                     return -1;
 
@@ -674,8 +671,14 @@ static int resolve_connect_targets(ConnectTarget *targets,
                 hints.ai_family = AF_UNSPEC;
                 hints.ai_socktype = SOCK_STREAM;
 
+                char hostname[1<<9]; // TODO: Is this a good length?
+                if (targets[i].name.len >= (int) sizeof(hostname))
+                    return -1;
+                memcpy(hostname, targets[i].name.ptr, targets[i].name.len);
+                hostname[targets[i].name.len] = '\0';
+
                 struct addrinfo *res = NULL;
-                int ret = getaddrinfo(pending_connect->hostname, portstr, &hints, &res);
+                int ret = getaddrinfo(hostname, portstr, &hints, &res);
                 if (ret != 0)
                     return -1;
 
@@ -692,7 +695,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
                         IPv6 ipv6 = *(IPv6*) &((struct sockaddr_in6*)rp->ai_addr)->sin6_addr;
                         if (num_resolved < max_resolved) {
                             resolved[num_resolved].is_ipv4 = false;
-                            resolved[num_resolved].ipv4 = ipv6;
+                            resolved[num_resolved].ipv6 = ipv6;
                             resolved[num_resolved].port = targets[i].port;
                             num_resolved++;
                         }
@@ -722,6 +725,8 @@ static int resolve_connect_targets(ConnectTarget *targets,
     }
     return num_resolved;
 }
+
+#define MAX_CONNECT_TARGETS 16
 
 int socket_connect(SocketManager *sm, int num_targets,
     ConnectTarget *targets, bool secure, void *user)
@@ -759,8 +764,27 @@ int socket_connect(SocketManager *sm, int num_targets,
     s->state = SOCKET_STATE_PENDING;
     s->sock = NATIVE_SOCKET_INVALID;
     s->user = user;
-    s->num_used++;
+    sm->num_used++;
     return 0;
+}
+
+static bool would_block(void)
+{
+#ifdef _WIN32
+    int err = WSAGetLastError();
+    return err == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
+static bool interrupted(void)
+{
+#ifdef _WIN32
+    return false;
+#else
+    return errno == EINTR;
+#endif
 }
 
 static int socket_recv_nolock(SocketManager *sm, SocketHandle handle,
@@ -840,14 +864,14 @@ static int socket_send_nolock(SocketManager *sm, SocketHandle handle,
         return 0;
     }
 
-    if (!socket_secure(s)) {
+    if (!is_secure(s)) {
         int ret = send(s->sock, src, len, 0);
         if (ret < 0) {
             if (would_block()) {
                 s->state = SOCKET_STATE_ESTABLISHED_WAIT;
                 s->events = POLLOUT;
             } else if (!interrupted()) {
-                s->state = SOCKET_DIED;
+                s->state = SOCKET_STATE_DIED;
                 s->events = 0;
             }
             ret = 0;
@@ -888,19 +912,25 @@ int socket_send(SocketManager *sm, SocketHandle handle,
     return ret;
 }
 
-void socket_close(SocketManager *sm, SocketHandle handle)
+int socket_close(SocketManager *sm, SocketHandle handle)
 {
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
-    // TODO: maybe we don't want to always set to SHUTDOWN. What if the socket is DIED for instance?
-    s->state = SOCKET_STATE_SHUTDOWN;
-    s->events = 0;
-    socket_update(s);
+    int ret;
+    Socket *s = handle_to_socket(sm, handle);
+    if (s == NULL)
+        ret = -1;
+    else {
+        // TODO: maybe we don't want to always set to SHUTDOWN. What if the socket is DIED for instance?
+        s->state = SOCKET_STATE_SHUTDOWN;
+        s->events = 0;
+        socket_update(s);
+    }
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
-    return 0;
+    return ret;
 }
 
 int socket_is_secure(SocketManager *sm, SocketHandle handle)
@@ -926,11 +956,14 @@ int socket_set_user(SocketManager *sm, SocketHandle handle, void *user)
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
+    int ret;
     Socket *s = handle_to_socket(sm, handle);
     if (s == NULL)
         ret = -1;
-    else
+    else {
         s->user = user;
+        ret = 0;
+    }
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;

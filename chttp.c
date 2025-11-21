@@ -1582,7 +1582,7 @@ static int set_socket_blocking(NATIVE_SOCKET sock, bool value)
     return 0;
 }
 
-static NATIVE_SOCKET create_listen_socket(String addr,
+static NATIVE_SOCKET create_listen_socket(HTTP_String addr,
     Port port, bool reuse_addr, int backlog)
 {
     NATIVE_SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -1683,7 +1683,7 @@ void socket_manager_free(SocketManager *sm)
 }
 
 int socket_manager_listen_tcp(SocketManager *sm,
-    String addr, Port port)
+    HTTP_String addr, Port port)
 {
     if (sm->plain_sock != NATIVE_SOCKET_INVALID)
         return -1;
@@ -1698,8 +1698,8 @@ int socket_manager_listen_tcp(SocketManager *sm,
 }
 
 int socket_manager_listen_tls(SocketManager *sm,
-    String addr, Port port, String cert_file_name,
-    String key_file_name)
+    HTTP_String addr, Port port, HTTP_String cert_file_name,
+    HTTP_String key_file_name)
 {
     if (sm->secure_sock != NATIVE_SOCKET_INVALID)
         return -1;
@@ -1966,38 +1966,41 @@ int socket_manager_wakeup(SocketManager *sm)
 }
 
 static int socket_manager_register_events_nolock(
-    SocketManager *sm, struct pollfd *polled, int max_polled)
+    SocketManager *sm, EventRegister *reg)
 {
     // The poll array must be able to hold descriptors
     // for a socket manager at full capacity. Note that
     // other than having a number of connection sockets,
     // the manager also needs 2 for the listeners and
     // one for the wakeup self-pipe.
-    if (max_polled < sm->max_used+3)
+    if (reg->max_polled < sm->max_used+3)
         return -1;
-    int num_polled = 0;
+    reg->num_polled = 0;
 
-    polled[num_polled].fd = sm->wait_sock;
-    polled[num_polled].events = 0;
-    polled[num_polled].revents = 0;
-    num_polled++;
+    reg->polled[reg->num_polled].fd = sm->wait_sock;
+    reg->polled[reg->num_polled].events = POLLIN;
+    reg->polled[reg->num_polled].revents = 0;
+    reg->ptrs[reg->num_polled] = NULL;
+    reg->num_polled++;
 
     // If the manager isn't at full capacity, monitor
     // the listener sockets for incoming connections.
     if (sm->num_used < sm->max_used) {
 
         if (sm->plain_sock != NATIVE_SOCKET_INVALID) {
-            polled[num_polled].fd = sm->plain_sock;
-            polled[num_polled].events = POLLIN;
-            polled[num_polled].revents = 0;
-            num_polled++;
+            reg->polled[reg->num_polled].fd = sm->plain_sock;
+            reg->polled[reg->num_polled].events = POLLIN;
+            reg->polled[reg->num_polled].revents = 0;
+            reg->ptrs[reg->num_polled] = NULL;
+            reg->num_polled++;
         }
 
         if (sm->secure_sock != NATIVE_SOCKET_INVALID) {
-            polled[num_polled].fd = sm->secure_sock;
-            polled[num_polled].events = POLLIN;
-            polled[num_polled].revents = 0;
-            num_polled++;
+            reg->polled[reg->num_polled].fd = sm->secure_sock;
+            reg->polled[reg->num_polled].events = POLLIN;
+            reg->polled[reg->num_polled].revents = 0;
+            reg->ptrs[reg->num_polled] = NULL;
+            reg->num_polled++;
         }
     }
 
@@ -2012,28 +2015,25 @@ static int socket_manager_register_events_nolock(
             continue;
         j++;
 
-        if (s->state == SOCKET_STATE_DIED || s->state == SOCKET_STATE_ESTABLISHED_READY)
-            return 0;
-
         if (s->events) {
-            polled[num_polled].fd = s->sock;
-            polled[num_polled].events = s->events;
-            polled[num_polled].revents = 0;
-            num_polled++;
+            reg->polled[reg->num_polled].fd = s->sock;
+            reg->polled[reg->num_polled].events = s->events;
+            reg->polled[reg->num_polled].revents = 0;
+            reg->ptrs[reg->num_polled] = s;
+            reg->num_polled++;
         }
     }
 
-    return num_polled;
+    return 0;
 }
 
 int socket_manager_register_events(SocketManager *sm,
-    struct pollfd *polled, int max_polled)
+    EventRegister *reg)
 {
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
-    int ret = socket_manager_register_events_nolock(
-        sm, polled, max_polled);
+    int ret = socket_manager_register_events_nolock(sm, reg);
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
@@ -2052,14 +2052,14 @@ static Socket *handle_to_socket(SocketManager *sm, SocketHandle handle)
 }
 
 static int socket_manager_translate_events_nolock(
-    SocketManager *sm, SocketEvent *events, int max_events,
-    struct pollfd *polled, int num_polled)
+    SocketManager *sm, SocketEvent *events,
+    EventRegister *reg)
 {
     int num_events = 0;
-    for (int i = 0; i < num_polled; i++) {
+    for (int i = 0; i < reg->num_polled; i++) {
 
-        if (polled[i].fd == sm->plain_sock ||
-            polled[i].fd == sm->secure_sock) {
+        if (reg->polled[i].fd == sm->plain_sock ||
+            reg->polled[i].fd == sm->secure_sock) {
 
             // We only listen for input events from the listener
             // if the socket pool isn't fool. This ensures that
@@ -2075,7 +2075,7 @@ static int socket_manager_translate_events_nolock(
 
             // Determine whether the event came from
             // the encrypted listener or not.
-            bool secure = (polled[i].fd == sm->secure_sock);
+            bool secure = (reg->polled[i].fd == sm->secure_sock);
 
             Socket *s = sm->sockets;
             while (s->state != SOCKET_STATE_FREE) {
@@ -2083,7 +2083,7 @@ static int socket_manager_translate_events_nolock(
                 assert(s - sm->sockets < + sm->max_used);
             }
 
-            NATIVE_SOCKET sock = accept(polled[i].fd, NULL, NULL);
+            NATIVE_SOCKET sock = accept(reg->polled[i].fd, NULL, NULL);
             if (sock == NATIVE_SOCKET_INVALID)
                 continue;
 
@@ -2106,12 +2106,14 @@ static int socket_manager_translate_events_nolock(
 
             sm->num_used++;
 
-        } else if (polled[i].fd == sm->wait_sock) {
+        } else if (reg->polled[i].fd == sm->wait_sock) {
 
             // TODO: consume
 
         } else {
-            if (polled[i].revents)
+
+            Socket *s = reg->ptrs[i];
+            if (reg->polled[i].revents)
                 socket_update(s);
         }
     }
@@ -2122,14 +2124,11 @@ static int socket_manager_translate_events_nolock(
             continue;
         j++;
 
-        if (num_events == max_events)
-            break;
-
-        if (s->state == SOCKET_DIED) {
+        if (s->state == SOCKET_STATE_DIED) {
 
             events[num_events++] = (SocketEvent) {
                 SOCKET_EVENT_DISCONNECT,
-                SOCKET_HANDE_INVALID,
+                SOCKET_HANDLE_INVALID,
                 s->user
             };
 
@@ -2142,7 +2141,7 @@ static int socket_manager_translate_events_nolock(
                 if (s->num_addr > 1)
                     free(s->addrs);
             }
-            s->num_used--;
+            sm->num_used--;
 
         } else if (s->state == SOCKET_STATE_ESTABLISHED_READY) {
             events[num_events++] = (SocketEvent) {
@@ -2157,18 +2156,16 @@ static int socket_manager_translate_events_nolock(
 }
 
 int socket_manager_translate_events(SocketManager *sm,
-    SocketEvent *events, int max_events, struct pollfd *polled,
-    int num_polled)
+    SocketEvent *events, EventRegister *reg)
 {
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
-    socket_manager_translate_events_nolock(
-        sm, events, max_events, polled, num_polled);
+    int ret = socket_manager_translate_events_nolock(sm, events, reg);
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
-    return 0;
+    return ret;
 }
 
 static int resolve_connect_targets(ConnectTarget *targets,
@@ -2180,7 +2177,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
         case CONNECT_TARGET_NAME:
             {
                 char portstr[16];
-                int len = snprintf(portstr, sizeof(portstr), "%u", port);
+                int len = snprintf(portstr, sizeof(portstr), "%u", targets[i].port);
                 if (len < 0 || len >= (int) sizeof(portstr))
                     return -1;
 
@@ -2188,8 +2185,14 @@ static int resolve_connect_targets(ConnectTarget *targets,
                 hints.ai_family = AF_UNSPEC;
                 hints.ai_socktype = SOCK_STREAM;
 
+                char hostname[1<<9]; // TODO: Is this a good length?
+                if (targets[i].name.len >= (int) sizeof(hostname))
+                    return -1;
+                memcpy(hostname, targets[i].name.ptr, targets[i].name.len);
+                hostname[targets[i].name.len] = '\0';
+
                 struct addrinfo *res = NULL;
-                int ret = getaddrinfo(pending_connect->hostname, portstr, &hints, &res);
+                int ret = getaddrinfo(hostname, portstr, &hints, &res);
                 if (ret != 0)
                     return -1;
 
@@ -2206,7 +2209,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
                         IPv6 ipv6 = *(IPv6*) &((struct sockaddr_in6*)rp->ai_addr)->sin6_addr;
                         if (num_resolved < max_resolved) {
                             resolved[num_resolved].is_ipv4 = false;
-                            resolved[num_resolved].ipv4 = ipv6;
+                            resolved[num_resolved].ipv6 = ipv6;
                             resolved[num_resolved].port = targets[i].port;
                             num_resolved++;
                         }
@@ -2236,6 +2239,8 @@ static int resolve_connect_targets(ConnectTarget *targets,
     }
     return num_resolved;
 }
+
+#define MAX_CONNECT_TARGETS 16
 
 int socket_connect(SocketManager *sm, int num_targets,
     ConnectTarget *targets, bool secure, void *user)
@@ -2273,8 +2278,27 @@ int socket_connect(SocketManager *sm, int num_targets,
     s->state = SOCKET_STATE_PENDING;
     s->sock = NATIVE_SOCKET_INVALID;
     s->user = user;
-    s->num_used++;
+    sm->num_used++;
     return 0;
+}
+
+static bool would_block(void)
+{
+#ifdef _WIN32
+    int err = WSAGetLastError();
+    return err == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
+static bool interrupted(void)
+{
+#ifdef _WIN32
+    return false;
+#else
+    return errno == EINTR;
+#endif
 }
 
 static int socket_recv_nolock(SocketManager *sm, SocketHandle handle,
@@ -2354,14 +2378,14 @@ static int socket_send_nolock(SocketManager *sm, SocketHandle handle,
         return 0;
     }
 
-    if (!socket_secure(s)) {
+    if (!is_secure(s)) {
         int ret = send(s->sock, src, len, 0);
         if (ret < 0) {
             if (would_block()) {
                 s->state = SOCKET_STATE_ESTABLISHED_WAIT;
                 s->events = POLLOUT;
             } else if (!interrupted()) {
-                s->state = SOCKET_DIED;
+                s->state = SOCKET_STATE_DIED;
                 s->events = 0;
             }
             ret = 0;
@@ -2402,19 +2426,25 @@ int socket_send(SocketManager *sm, SocketHandle handle,
     return ret;
 }
 
-void socket_close(SocketManager *sm, SocketHandle handle)
+int socket_close(SocketManager *sm, SocketHandle handle)
 {
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
-    // TODO: maybe we don't want to always set to SHUTDOWN. What if the socket is DIED for instance?
-    s->state = SOCKET_STATE_SHUTDOWN;
-    s->events = 0;
-    socket_update(s);
+    int ret;
+    Socket *s = handle_to_socket(sm, handle);
+    if (s == NULL)
+        ret = -1;
+    else {
+        // TODO: maybe we don't want to always set to SHUTDOWN. What if the socket is DIED for instance?
+        s->state = SOCKET_STATE_SHUTDOWN;
+        s->events = 0;
+        socket_update(s);
+    }
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
-    return 0;
+    return ret;
 }
 
 int socket_is_secure(SocketManager *sm, SocketHandle handle)
@@ -2440,11 +2470,14 @@ int socket_set_user(SocketManager *sm, SocketHandle handle, void *user)
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
+    int ret;
     Socket *s = handle_to_socket(sm, handle);
     if (s == NULL)
         ret = -1;
-    else
+    else {
         s->user = user;
+        ret = 0;
+    }
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
@@ -2673,6 +2706,46 @@ void byte_queue_write(ByteQueue *queue, void *ptr, uint32_t len)
     }
 }
 
+void byte_queue_write_fmt2(ByteQueue *queue,
+    const char *fmt, va_list args)
+{
+	if (queue->flags & BYTE_QUEUE_ERROR)
+		return;
+
+	va_list args2;
+	va_copy(args2, args);
+
+	byte_queue_write_setmincap(queue, 128);
+	ByteView dst = byte_queue_write_buf(queue);
+
+	int len = vsnprintf(dst.ptr, dst.len, fmt, args);
+	if (len < 0) {
+		queue->flags |= BYTE_QUEUE_ERROR;
+		va_end(args2);
+		return;
+	}
+
+	if (len > dst.len) {
+		byte_queue_write_ack(queue, 0);
+		byte_queue_write_setmincap(queue, len+1);
+		dst = byte_queue_write_buf(queue);
+		vsnprintf(dst.ptr, dst.len, fmt, args2);
+	}
+
+	byte_queue_write_ack(queue, len);
+
+	va_end(args2);
+}
+
+void byte_queue_write_fmt(ByteQueue *queue,
+    const char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	byte_queue_write_fmt2(queue, fmt, args);
+	va_end(args);
+}
+
 ByteQueueOffset byte_queue_offset(ByteQueue *queue)
 {
     if (queue->flags & BYTE_QUEUE_ERROR)
@@ -2874,6 +2947,16 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 // src/client.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+void http_client_conn_init(HTTP_ClientConn *conn)
+{
+    // TODO
+}
+
+void http_client_conn_free(HTTP_ClientConn *conn)
+{
+    // TODO
+}
+
 int http_client_init(HTTP_Client *client)
 {
     client->num_conns = 0;
@@ -2910,22 +2993,26 @@ int http_client_wakeup(HTTP_Client *client)
     return 0;
 }
 
-int http_client_get_builder(HTTP_Client *client, HTTP_RequestBuilder *builder)
+int http_client_get_builder(HTTP_Client *client,
+    HTTP_Response *response, HTTP_RequestBuilder *builder)
 {
     // TODO
 }
 
-void http_request_builder_line(HTTP_RequestBuilder builder, xxxx)
+void http_request_builder_url(HTTP_RequestBuilder builder,
+    HTTP_String url)
 {
     // TODO
 }
 
-void http_request_builder_header(HTTP_RequestBuilder builder, String str)
+void http_request_builder_header(HTTP_RequestBuilder builder,
+    HTTP_String str)
 {
     // TODO
 }
 
-void http_request_builder_body(HTTP_RequestBuilder builder, String str)
+void http_request_builder_body(HTTP_RequestBuilder builder,
+    HTTP_String str)
 {
     // TODO
 }
@@ -2936,18 +3023,19 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
 }
 
 int http_client_register_events(HTTP_Client *client,
-    struct pollfd *polled, int max_polled)
+    EventRegister *reg)
 {
-    return socket_manager_register_events(
-        &client->sockets, polled, max_polled);
+    if (socket_manager_register_events(&client->sockets, reg) < 0)
+        return -1;
+    return 0;
 }
 
 int http_client_process_events(HTTP_Client *client,
-    struct pollfd *polled, int num_polled)
+    EventRegister *reg)
 {
     SocketEvent events[HTTP_CLIENT_CAPACITY];
     int num_events = socket_manager_translate_events(
-        &client->sockets, polled, num_polled);
+        &client->sockets, events, reg);
 
     for (int i = 0; i < num_events; i++) {
 
@@ -2967,9 +3055,9 @@ int http_client_process_events(HTTP_Client *client,
 }
 
 bool http_client_next_response(HTTP_Client *client,
-    HTTP_Response **response);
+    HTTP_Response **response)
 {
-    if (server->num_ready == 0)
+    if (client->num_ready == 0)
         return false;
 
     HTTP_ClientConn *conn = &client->conns[client->ready_head];
@@ -2996,6 +3084,7 @@ static void http_server_conn_init(HTTP_ServerConn *conn,
 {
     conn->state = HTTP_SERVER_CONN_BUFFERING;
     conn->handle = handle;
+    conn->closing = false;
     byte_queue_init(&conn->input, input_buffer_limit);
     byte_queue_init(&conn->output, output_buffer_limit);
 }
@@ -3012,8 +3101,10 @@ int http_server_init(HTTP_Server *server)
     server->output_buffer_limit = 1<<20;
 
     server->num_conns = 0;
-    for (int i = 0; i < HTTP_SERVER_CAPACITY; i++)
+    for (int i = 0; i < HTTP_SERVER_CAPACITY; i++) {
         server->conns[i].state = HTTP_SERVER_CONN_FREE;
+        server->conns[i].gen = 0;
+    }
 
     server->num_ready = 0;
     server->ready_head = 0;
@@ -3049,7 +3140,7 @@ void http_server_set_output_limit(HTTP_Server *server, uint32_t limit)
 }
 
 int http_server_listen_tcp(HTTP_Server *server,
-    String addr, Port port)
+    HTTP_String addr, Port port)
 {
     if (socket_manager_listen_tcp(&server->sockets, addr, port) < 0)
         return -1;
@@ -3057,8 +3148,8 @@ int http_server_listen_tcp(HTTP_Server *server,
 }
 
 int http_server_listen_tls(HTTP_Server *server,
-    String addr, Port port, String cert_file_name,
-    String key_file_name)
+    HTTP_String addr, Port port, HTTP_String cert_file_name,
+    HTTP_String key_file_name)
 {
     if (socket_manager_listen_tls(&server->sockets, addr,
         port, cert_file_name, key_file_name) < 0)
@@ -3083,9 +3174,11 @@ int http_server_wakeup(HTTP_Server *server)
 }
 
 int http_server_register_events(HTTP_Server *server,
-    struct pollfd *polled, int max_polled)
+    EventRegister *reg)
 {
-    return socket_manager_register_events(&server->sockets, polled, max_polled);
+    if (socket_manager_register_events(&server->sockets, reg) < 0)
+        return -1;
+    return 0;
 }
 
 // Look at the head of the input buffer to see if
@@ -3133,27 +3226,11 @@ check_request_buffer(HTTP_Server *server, HTTP_ServerConn *conn)
     }
 }
 
-bool http_server_next_request(HTTP_Server *server,
-    HTTP_Request **request, HTTP_ResponseBuilder *builder)
-{
-    if (server->num_ready == 0)
-        return false;
-
-    HTTP_ServerConn *conn = &server->conns[server->ready_head];
-    server->ready_head = (server->ready_head + 1) % HTTP_SERVER_CAPACITY;
-    server->num_ready--;
-
-    assert(conn->state == HTTP_SERVER_CONN_WAIT_STATUS);
-    *request = &conn->request;
-    *builder = (HTTP_ResponseBuilder) { server, conn - server->conns, conn->gen };
-    return true;
-}
-
 int http_server_process_events(HTTP_Server *server,
-    struct pollfd *polled, int num_polled)
+    EventRegister *reg)
 {
     SocketEvent events[HTTP_SERVER_CAPACITY];
-    int num_events = socket_manager_translate_events(&server->sockets, polled, num_polled);
+    int num_events = socket_manager_translate_events(&server->sockets, events, reg);
     if (num_events < 0)
         return -1;
 
@@ -3236,6 +3313,22 @@ int http_server_process_events(HTTP_Server *server,
     return 0;
 }
 
+bool http_server_next_request(HTTP_Server *server,
+    HTTP_Request **request, HTTP_ResponseBuilder *builder)
+{
+    if (server->num_ready == 0)
+        return false;
+
+    HTTP_ServerConn *conn = &server->conns[server->ready_head];
+    server->ready_head = (server->ready_head + 1) % HTTP_SERVER_CAPACITY;
+    server->num_ready--;
+
+    assert(conn->state == HTTP_SERVER_CONN_WAIT_STATUS);
+    *request = &conn->request;
+    *builder = (HTTP_ResponseBuilder) { server, conn - server->conns, conn->gen };
+    return true;
+}
+
 // Get a connection pointer from a response builder.
 // If the builder is invalid, returns NULL.
 // Note that only connections in the responding states
@@ -3252,17 +3345,86 @@ builder_to_conn(HTTP_ResponseBuilder builder)
     if (builder.index > HTTP_SERVER_CAPACITY)
         return NULL;
 
-    HTTP_ServerConn *conn = server->conns[builder.index];
+    HTTP_ServerConn *conn = &server->conns[builder.index];
     if (builder.gen != conn->gen)
         return NULL;
 
     return conn;
 }
 
+static const char*
+get_status_text(int code)
+{
+	switch(code) {
+
+		case 100: return "Continue";
+		case 101: return "Switching Protocols";
+		case 102: return "Processing";
+
+		case 200: return "OK";
+		case 201: return "Created";
+		case 202: return "Accepted";
+		case 203: return "Non-Authoritative Information";
+		case 204: return "No Content";
+		case 205: return "Reset Content";
+		case 206: return "Partial Content";
+		case 207: return "Multi-Status";
+		case 208: return "Already Reported";
+
+		case 300: return "Multiple Choices";
+		case 301: return "Moved Permanently";
+		case 302: return "Found";
+		case 303: return "See Other";
+		case 304: return "Not Modified";
+		case 305: return "Use Proxy";
+		case 306: return "Switch Proxy";
+		case 307: return "Temporary Redirect";
+		case 308: return "Permanent Redirect";
+
+		case 400: return "Bad Request";
+		case 401: return "Unauthorized";
+		case 402: return "Payment Required";
+		case 403: return "Forbidden";
+		case 404: return "Not Found";
+		case 405: return "Method Not Allowed";
+		case 406: return "Not Acceptable";
+		case 407: return "Proxy Authentication Required";
+		case 408: return "Request Timeout";
+		case 409: return "Conflict";
+		case 410: return "Gone";
+		case 411: return "Length Required";
+		case 412: return "Precondition Failed";
+		case 413: return "Request Entity Too Large";
+		case 414: return "Request-URI Too Long";
+		case 415: return "Unsupported Media Type";
+		case 416: return "Requested Range Not Satisfiable";
+		case 417: return "Expectation Failed";
+		case 418: return "I'm a teapot";
+		case 420: return "Enhance your calm";
+		case 422: return "Unprocessable Entity";
+		case 426: return "Upgrade Required";
+		case 429: return "Too many requests";
+		case 431: return "Request Header Fields Too Large";
+		case 449: return "Retry With";
+		case 451: return "Unavailable For Legal Reasons";
+
+		case 500: return "Internal Server Error";
+		case 501: return "Not Implemented";
+		case 502: return "Bad Gateway";
+		case 503: return "Service Unavailable";
+		case 504: return "Gateway Timeout";
+		case 505: return "HTTP Version Not Supported";
+		case 509: return "Bandwidth Limit Exceeded";
+	}
+	return "???";
+}
+
 static void
 write_status(HTTP_ServerConn *conn, int status)
 {
-    byte_queue_write(&conn->output, xxx);
+    byte_queue_write_fmt(&conn->output,
+		"HTTP/1.1 %d %s\r\n",
+		status, get_status_text(status));
 }
 
 void http_response_builder_status(HTTP_ResponseBuilder builder, int status)
@@ -3282,7 +3444,7 @@ void http_response_builder_status(HTTP_ResponseBuilder builder, int status)
     conn->state = HTTP_SERVER_CONN_WAIT_HEADER;
 }
 
-void http_response_builder_header(HTTP_ResponseBuilder builder, String str)
+void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str)
 {
     HTTP_ServerConn *conn = builder_to_conn(builder);
     if (conn == NULL)
@@ -3291,17 +3453,48 @@ void http_response_builder_header(HTTP_ResponseBuilder builder, String str)
     if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER)
         return;
 
-    byte_queue_write(&conn->output, xxx);
+    // TODO: Check that the header is valid
+
+	byte_queue_write(&conn->output, str.ptr, str.len);
+	byte_queue_write(&conn->output, "\r\n", 2);
 }
 
 static void append_special_headers(HTTP_ServerConn *conn)
 {
-    // TODO
+    HTTP_String s;
+
+    if (conn->closing) {
+        s = HTTP_STR("Connection: Close");
+        byte_queue_write(&conn->output, s.ptr, s.len);
+    } else {
+        s = HTTP_STR("Connection: Keep-Alive");
+        byte_queue_write(&conn->output, s.ptr, s.len);
+    }
+
+    s = HTTP_STR("Content-Length: ");
+    byte_queue_write(&conn->output, s.ptr, s.len);
+
+    conn->content_length_value_offset = byte_queue_offset(&conn->output);
+
+    #define TEN_SPACES "          "
+    _Static_assert(sizeof(TEN_SPACES) == 10+1);
+
+    s = HTTP_STR(TEN_SPACES "\r\n");
+    byte_queue_write(&conn->output, s.ptr, s.len);
+
+    byte_queue_write(&conn->output, "\r\n", 2);
+	conn->content_length_offset = byte_queue_offset(&conn->output);
 }
 
 static void patch_special_headers(HTTP_ServerConn *conn)
 {
-    // TODO
+    int content_length = byte_queue_size_from_offset(&conn->output, conn->content_length_offset);
+
+    char tmp[11];
+    int len = snprintf(tmp, sizeof(tmp), "%d", content_length);
+    assert(len > 0 && len < 11);
+
+    byte_queue_patch(&conn->output, conn->content_length_value_offset, tmp, len);
 }
 
 void http_response_builder_body(HTTP_ResponseBuilder builder, String str)

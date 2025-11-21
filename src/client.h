@@ -20,6 +20,7 @@ typedef struct {
     HTTP_ClientConnState state;
     ByteQueue input;
     ByteQueue output;
+    HTTP_Response response;
 } HTTP_ClientConn;
 
 // Fields of this struct are private
@@ -77,31 +78,32 @@ int http_client_get_builder(HTTP_Client *client,
 
 // Set the URL of the current request. This is the first
 // function of the request builder that the user must call.
-void http_request_builder_url(HTTP_RequestBuilder builder, String url);
+void http_request_builder_url(HTTP_RequestBuilder builder, HTTP_String url);
 
 // After the URL, the user may set zero or more headers.
-void http_request_builder_header(HTTP_RequestBuilder builder, String str);
+void http_request_builder_header(HTTP_RequestBuilder builder, HTTP_String str);
 
 // Append bytes to the request's body. You can call this
 // any amount of times, as long as it's after having set
 // the URL.
-void http_request_builder_body(HTTP_RequestBuilder builder, String str);
+void http_request_builder_body(HTTP_RequestBuilder builder, HTTP_String str);
 
 // Mark this request as complete. This invalidates the
 // builder.
-void http_request_builder_send(HTTP_RequestBuilder builder);
+// Returns 0 on success, -1 on error.
+int http_request_builder_send(HTTP_RequestBuilder builder);
 
-// List all low-level socket events the client is
-// waiting for such that the caller can call poll()
-// with it.
+// Resets the event register with the list of descriptors
+// the client wants monitored. Returns 0 on success, -1 if
+// the event register's capacity isn't large enough.
 int http_client_register_events(HTTP_Client *client,
-    struct pollfd *polled, int max_polled);
+    EventRegister *reg);
 
 // The caller has waited for poll() to return and some
 // I/O events to be triggered, so now the HTTP client
 // can continue its buffering and flushing operations.
 int http_client_process_events(HTTP_Client *client,
-    struct pollfd *polled, int num_polled);
+    EventRegister *reg);
 
 // After some I/O events were processes, some responses
 // may be availabe. This function returns one of the
