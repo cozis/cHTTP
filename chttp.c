@@ -2372,7 +2372,8 @@ static int socket_manager_register_events_nolock(
             continue;
         j++;
 
-        // TODO: comment
+        // If at least one socket can be processed, return an
+        // empty list.
         if (s->state == SOCKET_STATE_DIED || s->state == SOCKET_STATE_ESTABLISHED_READY) {
             reg->num_polled = 0;
             return 0;
@@ -3814,12 +3815,12 @@ bool http_client_next_response(HTTP_Client *client,
     return true;
 }
 
-void http_free_response(HTTP_Response *res)
+void http_free_response(HTTP_Response *response)
 {
-    if (res == NULL || res->context == NULL)
+    if (response == NULL || response->context == NULL)
         return;
 
-    HTTP_ClientConn *conn = (HTTP_ClientConn*) res->context;
+    HTTP_ClientConn *conn = (HTTP_ClientConn*) response->context;
 
     // Free the connection resources
     http_client_conn_free(conn);
@@ -3827,7 +3828,7 @@ void http_free_response(HTTP_Response *res)
     conn->client->num_conns--;
 
     // Mark response as freed
-    res->context = NULL;
+    response->context = NULL;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////

@@ -1,4 +1,4 @@
-#include "chttp.h"
+#include "../chttp.h"
 
 #ifdef _WIN32
 #define POLL WSAPoll

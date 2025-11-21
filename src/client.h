@@ -151,4 +151,4 @@ bool http_client_next_response(HTTP_Client *client,
 
 // Free a response object. You can't access its fields
 // again after this.
-void http_free_response(HTTP_Response *res);
+void http_free_response(HTTP_Response *response);
