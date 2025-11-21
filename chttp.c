@@ -1424,10 +1424,10 @@ bool http_match_host(HTTP_Request *req, HTTP_String domain, int port)
 int mutex_init(Mutex *mutex)
 {
 #ifdef _WIN32
-    InitializeCriticalSection(mutex); // TODO: mock?
+    InitializeCriticalSection(mutex);
     return 0;
 #else
-    if (pthread_mutex_init(mutex, NULL)) // TODO: mock
+    if (pthread_mutex_init(mutex, NULL))
         return -1;
     return 0;
 #endif
@@ -1436,10 +1436,10 @@ int mutex_init(Mutex *mutex)
 int mutex_free(Mutex *mutex)
 {
 #ifdef _WIN32
-    DeleteCriticalSection(mutex); // TODO: mock?
+    DeleteCriticalSection(mutex);
     return 0;
 #else
-    if (pthread_mutex_destroy(mutex)) // TODO: mock
+    if (pthread_mutex_destroy(mutex))
         return -1;
     return 0;
 #endif
@@ -1448,10 +1448,10 @@ int mutex_free(Mutex *mutex)
 int mutex_lock(Mutex *mutex)
 {
 #ifdef _WIN32
-    EnterCriticalSection(mutex); // TODO: mock?
+    EnterCriticalSection(mutex);
     return 0;
 #else
-    if (pthread_mutex_lock(mutex)) // TODO: mock
+    if (pthread_mutex_lock(mutex))
         return -1;
     return 0;
 #endif
@@ -1460,10 +1460,10 @@ int mutex_lock(Mutex *mutex)
 int mutex_unlock(Mutex *mutex)
 {
 #ifdef _WIN32
-    LeaveCriticalSection(mutex); // TODO: mock?
+    LeaveCriticalSection(mutex);
     return 0;
 #else
-    if (pthread_mutex_unlock(mutex)) // TODO: mock
+    if (pthread_mutex_unlock(mutex))
         return -1;
     return 0;
 #endif
@@ -1660,6 +1660,11 @@ int socket_manager_init(SocketManager *sm, Socket *socks,
     sm->num_used = 0;
     sm->max_used = num_socks;
     sm->sockets = socks;
+
+    for (int i = 0; i < num_socks; i++) {
+        socks[i].state = SOCKET_STATE_FREE;
+        socks[i].gen = 1;
+    }
     return 0;
 }
 
@@ -2043,12 +2048,18 @@ int socket_manager_register_events(SocketManager *sm,
 static SocketHandle
 socket_to_handle(SocketManager *sm, Socket *s)
 {
-    assert(0); // TODO
+    return ((uint32_t) (s - sm->sockets) << 16) | s->gen;
 }
 
 static Socket *handle_to_socket(SocketManager *sm, SocketHandle handle)
 {
-    assert(0); // TODO
+    uint16_t gen = handle & 0xFFFF;
+    uint16_t idx = handle >> 16;
+    if (idx >= sm->max_used)
+        return NULL;
+    if (sm->sockets[idx].gen != gen)
+        return NULL;
+    return &sm->sockets[idx];
 }
 
 static int socket_manager_translate_events_nolock(
@@ -2101,6 +2112,9 @@ static int socket_manager_translate_events_nolock(
             if (s->state == SOCKET_STATE_DIED) {
                 CLOSE_NATIVE_SOCKET(sock);
                 s->state = SOCKET_STATE_FREE;
+                s->gen++;
+                if (s->gen == 0)
+                    s->gen = 1;
                 continue;
             }
 

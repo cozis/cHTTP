@@ -146,6 +146,11 @@ int socket_manager_init(SocketManager *sm, Socket *socks,
     sm->num_used = 0;
     sm->max_used = num_socks;
     sm->sockets = socks;
+
+    for (int i = 0; i < num_socks; i++) {
+        socks[i].state = SOCKET_STATE_FREE;
+        socks[i].gen = 1;
+    }
     return 0;
 }
 
@@ -529,12 +534,18 @@ int socket_manager_register_events(SocketManager *sm,
 static SocketHandle
 socket_to_handle(SocketManager *sm, Socket *s)
 {
-    assert(0); // TODO
+    return ((uint32_t) (s - sm->sockets) << 16) | s->gen;
 }
 
 static Socket *handle_to_socket(SocketManager *sm, SocketHandle handle)
 {
-    assert(0); // TODO
+    uint16_t gen = handle & 0xFFFF;
+    uint16_t idx = handle >> 16;
+    if (idx >= sm->max_used)
+        return NULL;
+    if (sm->sockets[idx].gen != gen)
+        return NULL;
+    return &sm->sockets[idx];
 }
 
 static int socket_manager_translate_events_nolock(
@@ -587,6 +598,9 @@ static int socket_manager_translate_events_nolock(
             if (s->state == SOCKET_STATE_DIED) {
                 CLOSE_NATIVE_SOCKET(sock);
                 s->state = SOCKET_STATE_FREE;
+                s->gen++;
+                if (s->gen == 0)
+                    s->gen = 1;
                 continue;
             }
 

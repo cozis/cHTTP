@@ -386,6 +386,13 @@ typedef struct {
     // Native socket events that need to be monitored
     int events;
 
+    // Generation counter to invalidate any SocketHandle
+    // referring to this socket when it is freed.
+    // Note that this counter may wrap but always skips
+    // the 0 value to ensure the 0 SocketHandle is always
+    // invalid.
+    uint16_t gen;
+
     // User-provided context pointer
     void *user;
 
