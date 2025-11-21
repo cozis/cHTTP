@@ -68,6 +68,11 @@ typedef struct {
 
 typedef struct {
 
+    // Size limit of the input and output buffer of each
+    // connection.
+    uint32_t input_buffer_limit;
+    uint32_t output_buffer_limit;
+
     // Array of connections. The counter contains the
     // number of structs such that state=FREE.
     int num_conns;
@@ -104,6 +109,11 @@ int http_server_init(HTTP_Server *server);
 
 // Release resources associated to the server.
 void http_server_free(HTTP_Server *server);
+
+// Set input and output buffer size limit for any
+// given connection. The default value is 1MB
+void http_server_set_input_limit(HTTP_Server *server, uint32_t limit);
+void http_server_set_output_limit(HTTP_Server *server, uint32_t limit);
 
 // Enable listening for plain HTTP requests at the
 // specified interface.

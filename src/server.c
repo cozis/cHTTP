@@ -1,6 +1,25 @@
 
+static void http_server_conn_init(HTTP_ServerConn *conn,
+    SocketHandle handle, uint32_t input_buffer_limit,
+    uint32_t output_buffer_limit)
+{
+    conn->state = HTTP_SERVER_CONN_BUFFERING;
+    conn->handle = handle;
+    byte_queue_init(&conn->input, input_buffer_limit);
+    byte_queue_init(&conn->output, output_buffer_limit);
+}
+
+static void http_server_conn_free(HTTP_ServerConn *conn)
+{
+    byte_queue_free(&conn->output);
+    byte_queue_free(&conn->input);
+}
+
 int http_server_init(HTTP_Server *server)
 {
+    server->input_buffer_limit = 1<<20;
+    server->output_buffer_limit = 1<<20;
+
     server->num_conns = 0;
     for (int i = 0; i < HTTP_SERVER_CAPACITY; i++)
         server->conns[i].state = HTTP_SERVER_CONN_FREE;
@@ -9,7 +28,7 @@ int http_server_init(HTTP_Server *server)
     server->ready_head = 0;
 
     if (socket_manager_init(&server->sockets,
-        &server->socket_pool, HTTP_SERVER_CAPACITY) < 0)
+        server->socket_pool, HTTP_SERVER_CAPACITY) < 0)
         return -1;
     return 0;
 }
@@ -26,6 +45,16 @@ void http_server_free(HTTP_Server *server)
 
         http_server_conn_free(conn);
     }
+}
+
+void http_server_set_input_limit(HTTP_Server *server, uint32_t limit)
+{
+    server->input_buffer_limit = limit;
+}
+
+void http_server_set_output_limit(HTTP_Server *server, uint32_t limit)
+{
+    server->output_buffer_limit = limit;
 }
 
 int http_server_listen_tcp(HTTP_Server *server,
@@ -101,7 +130,7 @@ check_request_buffer(HTTP_Server *server, HTTP_ServerConn *conn)
         // Ready
         assert(ret == 1);
 
-        conn->state = HTTP_SERVER_CONN_STATUS;
+        conn->state = HTTP_SERVER_CONN_WAIT_STATUS;
         conn->request_len = ret;
         conn->response_offset = byte_queue_offset(&conn->output);
 
@@ -133,7 +162,7 @@ int http_server_process_events(HTTP_Server *server,
     struct pollfd *polled, int num_polled)
 {
     SocketEvent events[HTTP_SERVER_CAPACITY];
-    int num_events = socket_manger_translate_events(&server->sockets, polled, num_polled);
+    int num_events = socket_manager_translate_events(&server->sockets, polled, num_polled);
     if (num_events < 0)
         return -1;
 
@@ -162,7 +191,10 @@ int http_server_process_events(HTTP_Server *server,
                 }
 
                 conn = &server->conns[i];
-                http_server_conn_init(conn, events[i].handle);
+                http_server_conn_init(conn,
+                    events[i].handle,
+                    server->input_buffer_limit,
+                    server->output_buffer_limit);
                 server->num_conns++;
 
                 socket_set_user(&server->sockets, events[i].handle, conn);
@@ -226,11 +258,11 @@ builder_to_conn(HTTP_ResponseBuilder builder)
     if (server == NULL)
         return NULL;
 
-    if (server->index > HTTP_SERVER_CAPACITY)
+    if (builder.index > HTTP_SERVER_CAPACITY)
         return NULL;
 
-    HTTP_ServerConn *conn = server->conns[server->index];
-    if (conn->gen != builder.gen)
+    HTTP_ServerConn *conn = server->conns[builder.index];
+    if (builder.gen != conn->gen)
         return NULL;
 
     return conn;
@@ -295,7 +327,7 @@ void http_response_builder_body(HTTP_ResponseBuilder builder, String str)
     if (conn->state != HTTP_SERVER_CONN_WAIT_BODY)
         return;
 
-    byte_queue_write(&conn->output, str);
+    byte_queue_write(&conn->output, str.ptr, str.len);
 }
 
 void http_response_builder_send(HTTP_ResponseBuilder builder, String str)

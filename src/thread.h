@@ -1,7 +1,9 @@
 
-typedef struct {
-    char unused; // TODO
-} Mutex;
+#ifdef _WIN32
+typedef CRITICAL_SECTION Mutex;
+#else
+typedef pthread_mutex_t Mutex;
+#endif
 
 int mutex_init(Mutex *mutex);
 int mutex_free(Mutex *mutex);

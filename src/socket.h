@@ -102,9 +102,13 @@ typedef enum {
     // still pending.
     SOCKET_STATE_CONNECTING,
 
-    // The connection was estabished, but a TLS
-    // handshake may need to be performed.
+    // Outgoing connection was established, but
+    // a TLS handshake may need to be performed.
     SOCKET_STATE_CONNECTED,
+
+    // Incoming connection was established, but
+    // a TLS handshake may need to be performed.
+    SOCKET_STATE_ACCEPTED,
 
     // The connection was esablished, but the user
     // wants to perform a read or write operation that
@@ -299,4 +303,4 @@ void socket_close(SocketManager *sm, SocketHandle handle);
 int socket_is_secure(SocketManager *sm, SocketHandle handle);
 
 // Set the user pointer of a socket
-void socket_set_user(SocketManager *sm, SocketHandle handle);
+void socket_set_user(SocketManager *sm, SocketHandle handle, void *user);

@@ -17,12 +17,14 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #else
 #include <unistd.h>
 #include <pthread.h>
 #include <poll.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -81,6 +83,120 @@ void print_bytes(HTTP_String prefix, HTTP_String src);
 
 // TODO: comment
 #define HTTP_UNPACK(X) (X).len, (X).ptr
+
+////////////////////////////////////////////////////////////////////////////////////////
+// src/parse.h
+////////////////////////////////////////////////////////////////////////////////////////
+
+#define HTTP_MAX_HEADERS 32
+
+typedef struct {
+	unsigned int data;
+} HTTP_IPv4;
+
+typedef struct {
+	unsigned short data[8];
+} HTTP_IPv6;
+
+typedef enum {
+	HTTP_HOST_MODE_VOID = 0,
+	HTTP_HOST_MODE_NAME,
+	HTTP_HOST_MODE_IPV4,
+	HTTP_HOST_MODE_IPV6,
+} HTTP_HostMode;
+
+typedef struct {
+	HTTP_HostMode mode;
+	HTTP_String   text;
+	union {
+		HTTP_String name;
+		HTTP_IPv4   ipv4;
+		HTTP_IPv6   ipv6;
+	};
+} HTTP_Host;
+
+typedef struct {
+	HTTP_String userinfo;
+	HTTP_Host   host;
+	int         port;
+} HTTP_Authority;
+
+// ZII
+typedef struct {
+	HTTP_String    scheme;
+	HTTP_Authority authority;
+	HTTP_String    path;
+	HTTP_String    query;
+	HTTP_String    fragment;
+} HTTP_URL;
+
+typedef enum {
+	HTTP_METHOD_GET,
+	HTTP_METHOD_HEAD,
+	HTTP_METHOD_POST,
+	HTTP_METHOD_PUT,
+	HTTP_METHOD_DELETE,
+	HTTP_METHOD_CONNECT,
+	HTTP_METHOD_OPTIONS,
+	HTTP_METHOD_TRACE,
+	HTTP_METHOD_PATCH,
+} HTTP_Method;
+
+typedef struct {
+	HTTP_String name;
+	HTTP_String value;
+} HTTP_Header;
+
+typedef struct {
+    bool        secure;
+	HTTP_Method method;
+	HTTP_URL    url;
+	int         minor;
+	int         num_headers;
+	HTTP_Header headers[HTTP_MAX_HEADERS];
+	HTTP_String body;
+} HTTP_Request;
+
+typedef struct {
+    void*       context;
+	int         minor;
+	int         status;
+	HTTP_String reason;
+	int         num_headers;
+	HTTP_Header headers[HTTP_MAX_HEADERS];
+	HTTP_String body;
+} HTTP_Response;
+
+int         http_parse_ipv4     (char *src, int len, HTTP_IPv4     *ipv4);
+int         http_parse_ipv6     (char *src, int len, HTTP_IPv6     *ipv6);
+int         http_parse_url      (char *src, int len, HTTP_URL      *url);
+int         http_parse_request  (char *src, int len, HTTP_Request  *req);
+int         http_parse_response (char *src, int len, HTTP_Response *res);
+
+int         http_find_header    (HTTP_Header *headers, int num_headers, HTTP_String name);
+
+HTTP_String http_get_cookie     (HTTP_Request *req, HTTP_String name);
+HTTP_String http_get_param      (HTTP_String body, HTTP_String str, char *mem, int cap);
+int         http_get_param_i    (HTTP_String body, HTTP_String str);
+
+// Checks whether the request was meant for the host with the given
+// domain an port. If port is -1, the default value of 80 is assumed.
+bool http_match_host(HTTP_Request *req, HTTP_String domain, int port);
+
+////////////////////////////////////////////////////////////////////////////////////////
+// src/thread.h
+////////////////////////////////////////////////////////////////////////////////////////
+
+#ifdef _WIN32
+typedef CRITICAL_SECTION Mutex;
+#else
+typedef pthread_mutex_t Mutex;
+#endif
+
+int mutex_init(Mutex *mutex);
+int mutex_free(Mutex *mutex);
+int mutex_lock(Mutex *mutex);
+int mutex_unlock(Mutex *mutex);
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/secure_context.h
@@ -222,9 +338,13 @@ typedef enum {
     // still pending.
     SOCKET_STATE_CONNECTING,
 
-    // The connection was estabished, but a TLS
-    // handshake may need to be performed.
+    // Outgoing connection was established, but
+    // a TLS handshake may need to be performed.
     SOCKET_STATE_CONNECTED,
+
+    // Incoming connection was established, but
+    // a TLS handshake may need to be performed.
+    SOCKET_STATE_ACCEPTED,
 
     // The connection was esablished, but the user
     // wants to perform a read or write operation that
@@ -419,20 +539,7 @@ void socket_close(SocketManager *sm, SocketHandle handle);
 int socket_is_secure(SocketManager *sm, SocketHandle handle);
 
 // Set the user pointer of a socket
-void socket_set_user(SocketManager *sm, SocketHandle handle);
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/thread.h
-////////////////////////////////////////////////////////////////////////////////////////
-
-typedef struct {
-    char unused; // TODO
-} Mutex;
-
-int mutex_init(Mutex *mutex);
-int mutex_free(Mutex *mutex);
-int mutex_lock(Mutex *mutex);
-int mutex_unlock(Mutex *mutex);
+void socket_set_user(SocketManager *sm, SocketHandle handle, void *user);
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/byte_queue.h
@@ -715,105 +822,6 @@ bool http_client_next_response(HTTP_Client *client,
 void http_free_response(HTTP_Response *res);
 
 ////////////////////////////////////////////////////////////////////////////////////////
-// src/parse.h
-////////////////////////////////////////////////////////////////////////////////////////
-
-#define HTTP_MAX_HEADERS 32
-
-typedef struct {
-	unsigned int data;
-} HTTP_IPv4;
-
-typedef struct {
-	unsigned short data[8];
-} HTTP_IPv6;
-
-typedef enum {
-	HTTP_HOST_MODE_VOID = 0,
-	HTTP_HOST_MODE_NAME,
-	HTTP_HOST_MODE_IPV4,
-	HTTP_HOST_MODE_IPV6,
-} HTTP_HostMode;
-
-typedef struct {
-	HTTP_HostMode mode;
-	HTTP_String   text;
-	union {
-		HTTP_String name;
-		HTTP_IPv4   ipv4;
-		HTTP_IPv6   ipv6;
-	};
-} HTTP_Host;
-
-typedef struct {
-	HTTP_String userinfo;
-	HTTP_Host   host;
-	int         port;
-} HTTP_Authority;
-
-// ZII
-typedef struct {
-	HTTP_String    scheme;
-	HTTP_Authority authority;
-	HTTP_String    path;
-	HTTP_String    query;
-	HTTP_String    fragment;
-} HTTP_URL;
-
-typedef enum {
-	HTTP_METHOD_GET,
-	HTTP_METHOD_HEAD,
-	HTTP_METHOD_POST,
-	HTTP_METHOD_PUT,
-	HTTP_METHOD_DELETE,
-	HTTP_METHOD_CONNECT,
-	HTTP_METHOD_OPTIONS,
-	HTTP_METHOD_TRACE,
-	HTTP_METHOD_PATCH,
-} HTTP_Method;
-
-typedef struct {
-	HTTP_String name;
-	HTTP_String value;
-} HTTP_Header;
-
-typedef struct {
-    bool        secure;
-	HTTP_Method method;
-	HTTP_URL    url;
-	int         minor;
-	int         num_headers;
-	HTTP_Header headers[HTTP_MAX_HEADERS];
-	HTTP_String body;
-} HTTP_Request;
-
-typedef struct {
-    void*       context;
-	int         minor;
-	int         status;
-	HTTP_String reason;
-	int         num_headers;
-	HTTP_Header headers[HTTP_MAX_HEADERS];
-	HTTP_String body;
-} HTTP_Response;
-
-int         http_parse_ipv4     (char *src, int len, HTTP_IPv4     *ipv4);
-int         http_parse_ipv6     (char *src, int len, HTTP_IPv6     *ipv6);
-int         http_parse_url      (char *src, int len, HTTP_URL      *url);
-int         http_parse_request  (char *src, int len, HTTP_Request  *req);
-int         http_parse_response (char *src, int len, HTTP_Response *res);
-
-int         http_find_header    (HTTP_Header *headers, int num_headers, HTTP_String name);
-
-HTTP_String http_get_cookie     (HTTP_Request *req, HTTP_String name);
-HTTP_String http_get_param      (HTTP_String body, HTTP_String str, char *mem, int cap);
-int         http_get_param_i    (HTTP_String body, HTTP_String str);
-
-// Checks whether the request was meant for the host with the given
-// domain an port. If port is -1, the default value of 80 is assumed.
-bool http_match_host(HTTP_Request *req, HTTP_String domain, int port);
-
-////////////////////////////////////////////////////////////////////////////////////////
 // src/server.h
 ////////////////////////////////////////////////////////////////////////////////////////
 
@@ -886,6 +894,11 @@ typedef struct {
 
 typedef struct {
 
+    // Size limit of the input and output buffer of each
+    // connection.
+    uint32_t input_buffer_limit;
+    uint32_t output_buffer_limit;
+
     // Array of connections. The counter contains the
     // number of structs such that state=FREE.
     int num_conns;
@@ -922,6 +935,11 @@ int http_server_init(HTTP_Server *server);
 
 // Release resources associated to the server.
 void http_server_free(HTTP_Server *server);
+
+// Set input and output buffer size limit for any
+// given connection. The default value is 1MB
+void http_server_set_input_limit(HTTP_Server *server, uint32_t limit);
+void http_server_set_output_limit(HTTP_Server *server, uint32_t limit);
 
 // Enable listening for plain HTTP requests at the
 // specified interface.

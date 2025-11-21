@@ -219,6 +219,15 @@ int socket_manager_add_certificate(SocketManager *sm,
     return 0;
 }
 
+static bool is_secure(Socket *s)
+{
+#ifdef HTTPS_ENABLED
+    return (s->ssl != NULL);
+#else
+    return false;
+#endif
+}
+
 static bool connect_pending(void)
 {
 #ifdef _WIN32
@@ -226,17 +235,6 @@ static bool connect_pending(void)
 #else
     return errno == EINPROGRESS;
 #endif
-}
-
-static bool
-connect_failed_because_of_peer(void)
-{
-#ifdef _WIN32
-    int err = WSAGetLastError();
-#else
-    int err = errno;
-#endif
-    return connect_failed_because_of_peer_2(err);
 }
 
 static bool
@@ -255,10 +253,21 @@ connect_failed_because_of_peer_2(int err)
 #endif
 }
 
+static bool
+connect_failed_because_of_peer(void)
+{
+#ifdef _WIN32
+    int err = WSAGetLastError();
+#else
+    int err = errno;
+#endif
+    return connect_failed_because_of_peer_2(err);
+}
+
 // This function moves the socket state machine
 // to the next state until an I/O event would
 // be required to continue.
-static void socket_update(Socket *socket)
+static void socket_update(Socket *s)
 {
     // Each case of this switch encodes a state transition.
     // If the evaluated case requires a given I/O event to
@@ -269,7 +278,7 @@ static void socket_update(Socket *socket)
     bool again;
     do {
         again = false;
-        switch (socket->state) {
+        switch (s->state) {
         case SOCKET_STATE_PENDING:
             {
                 // This point may be reached because
@@ -280,17 +289,17 @@ static void socket_update(Socket *socket)
                 // If (2) is true, we have some resources
                 // to clean up.
 
-                if (socket->sock != NATIVE_SOCKET_INVALID) {
+                if (s->sock != NATIVE_SOCKET_INVALID) {
                     // This is not the first attempt
 
-                    CLOSE_NATIVE_SOCKET(socket->sock);
+                    CLOSE_NATIVE_SOCKET(s->sock);
 
-                    socket->next_addr++;
-                    if (socket->next_addr == socket->num_addr) {
+                    s->next_addr++;
+                    if (s->next_addr == s->num_addr) {
                         assert(0); // TODO
                     }
                 }
-                AddressAndPort addr = socket->addrs[socket->next_addr];
+                AddressAndPort addr = s->addrs[s->next_addr];
 
                 int family = (addr.is_ipv4 ? AF_INET : AF_INET6);
                 NATIVE_SOCKET sock = socket(family, SOCK_STREAM, 0);
@@ -307,41 +316,39 @@ static void socket_update(Socket *socket)
                     struct sockaddr_in buf;
                     buf.sin_family = AF_INET;
                     buf.sin_port = htons(addr.port);
-                    memset(&buf.sin_addr, &addr.ipv4, sizeof(IPv4));
-                    ret = connect(sock, (struct sockaddr*) &connect_buf,
-                        sizeof(connect_buf));
+                    memcpy(&buf.sin_addr, &addr.ipv4, sizeof(IPv4));
+                    ret = connect(sock, (struct sockaddr*) &buf, sizeof(buf));
                 } else {
                     struct sockaddr_in6 buf;
                     buf.sin6_family = AF_INET6;
                     buf.sin6_port = htons(addr.port);
-                    memset(&buf.sin6_addr, &addr.ipv6, sizeof(IPv6));
-                    ret = connect(sock, (struct sockaddr*) &connect_buf,
-                        sizeof(connect_buf));
+                    memcpy(&buf.sin6_addr, &addr.ipv6, sizeof(IPv6));
+                    ret = connect(sock, (struct sockaddr*) &buf, sizeof(buf));
                 }
 
                 if (ret == 0) {
                     // Connect resolved immediately
-                    socket->sock = sock;
-                    socket->state = SOCKET_STATE_CONNECTED;
-                    socket->events = 0;
+                    s->sock = sock;
+                    s->state = SOCKET_STATE_CONNECTED;
+                    s->events = 0;
                     again = true;
                 } else if (connect_pending()) {
                     // Connect is pending, which is expected
-                    socket->sock = sock;
-                    socket->state = SOCKET_STATE_CONNECTING;
-                    socket->events = POLLOUT;
+                    s->sock = sock;
+                    s->state = SOCKET_STATE_CONNECTING;
+                    s->events = POLLOUT;
                 } else if (connect_failed_because_of_peer()) {
                     // Conenct failed due to the peer host
                     // We should try a different address.
-                    socket->sock = sock;
-                    socket->state = SOCKET_STATE_PENDING;
-                    socket->events = 0;
+                    s->sock = sock;
+                    s->state = SOCKET_STATE_PENDING;
+                    s->events = 0;
                     again = true;
                 } else {
                     // An error occurred that we can't recover from
-                    socket->sock = sock;
-                    socket->state = SOCKET_STATE_DIED;
-                    socket->events = 0;
+                    s->sock = sock;
+                    s->state = SOCKET_STATE_DIED;
+                    s->events = 0;
                     again = true;
                 }
             }
@@ -354,23 +361,23 @@ static void socket_update(Socket *socket)
 
                 int err = 0;
                 socklen_t len = sizeof(err);
-                if (getsockopt(socket->sock, SOL_SOCKET, SO_ERROR, (void*) &err, &len) < 0) {
+                if (getsockopt(s->sock, SOL_SOCKET, SO_ERROR, (void*) &err, &len) < 0) {
                     assert(0); // TODO
                 }
 
                 if (err == 0) {
                     // Connection succeded
-                    socket->state = SOCKET_STATE_CONNECTED;
-                    socket->events = 0;
+                    s->state = SOCKET_STATE_CONNECTED;
+                    s->events = 0;
                     again = true;
                 } else if (connect_failed_because_of_peer_2(err)) {
                     // Try the next address
-                    socket->state = SOCKET_STATE_PENDING;
-                    socket->events = 0;
+                    s->state = SOCKET_STATE_PENDING;
+                    s->events = 0;
                     again = true;
                 } else {
-                    socket->state = SOCKET_STATE_DIED;
-                    socket->events = 0;
+                    s->state = SOCKET_STATE_DIED;
+                    s->events = 0;
                 }
             }
             break;
@@ -380,12 +387,25 @@ static void socket_update(Socket *socket)
                 // We managed to connect to the peer.
                 // We can free the target array if it
                 // was allocated dynamically.
-                if (socket->num_addr > 1)
-                    free(socket->addrs);
+                if (s->num_addr > 1)
+                    free(s->addrs);
 
-                if (!is_secure(socket)) {
-                    socket->events = 0;
-                    socket->state = SOCKET_STATE_ESTABLISHED_READY;
+                if (!is_secure(s)) {
+                    s->events = 0;
+                    s->state = SOCKET_STATE_ESTABLISHED_READY;
+                } else {
+#ifdef HTTPS_ENABLED
+                    assert(0); // TODO
+#endif
+                }
+            }
+            break;
+
+        case SOCKET_STATE_ACCEPTED:
+            {
+                if (!is_secure(s)) {
+                    s->state = SOCKET_STATE_ESTABLISHED_READY;
+                    s->events = 0;
                 } else {
 #ifdef HTTPS_ENABLED
                     assert(0); // TODO
@@ -395,15 +415,15 @@ static void socket_update(Socket *socket)
             break;
 
         case SOCKET_STATE_ESTABLISHED_WAIT:
-            socket->state = SOCKET_STATE_ESTABLISHED_READY;
-            socket->events = 0;
+            s->state = SOCKET_STATE_ESTABLISHED_READY;
+            s->events = 0;
             break;
 
         case SOCKET_STATE_SHUTDOWN:
             {
-                if (!is_secure(socket)) {
-                    socket->state = SOCKET_STATE_DIED;
-                    socket->events = 0;
+                if (!is_secure(s)) {
+                    s->state = SOCKET_STATE_DIED;
+                    s->events = 0;
                 } else {
 #ifdef HTTPS_ENABLED
                     assert(0); // TODO
@@ -544,7 +564,7 @@ static int socket_manager_translate_events_nolock(
             bool secure = (polled[i].fd == sm->secure_sock);
 
             Socket *s = sm->sockets;
-            while (s->type != SOCKET_FREE) {
+            while (s->state != SOCKET_STATE_FREE) {
                 s++;
                 assert(s - sm->sockets < + sm->max_used);
             }
@@ -570,7 +590,7 @@ static int socket_manager_translate_events_nolock(
                 continue;
             }
 
-            pool->num_used++;
+            sm->num_used++;
 
         } else if (polled[i].fd == sm->wait_sock) {
 
@@ -584,7 +604,7 @@ static int socket_manager_translate_events_nolock(
 
     for (int i = 0, j = 0; j < sm->num_used; i++) {
         Socket *s = &sm->sockets[i];
-        if (s->state == SOCKET_FREE)
+        if (s->state == SOCKET_STATE_FREE)
             continue;
         j++;
 
@@ -600,7 +620,7 @@ static int socket_manager_translate_events_nolock(
             };
 
             // Free resources associated to socket
-            s->state = SOCKET_FREE;
+            s->state = SOCKET_STATE_FREE;
             if (s->sock != NATIVE_SOCKET_INVALID)
                 CLOSE_NATIVE_SOCKET(s->sock);
             if (s->sock == SOCKET_STATE_PENDING ||
@@ -717,7 +737,7 @@ int socket_connect(SocketManager *sm, int num_targets,
         return -1;
 
     Socket *s = sm->sockets;
-    while (s->type != SOCKET_FREE) {
+    while (s->state != SOCKET_STATE_FREE) {
         s++;
         assert(s - sm->sockets < + sm->max_used);
     }
@@ -736,7 +756,7 @@ int socket_connect(SocketManager *sm, int num_targets,
             s->addrs[i] = resolved[i];
     }
 
-    s->type = SOCKET_STATE_PENDING;
+    s->state = SOCKET_STATE_PENDING;
     s->sock = NATIVE_SOCKET_INVALID;
     s->user = user;
     s->num_used++;
@@ -888,25 +908,20 @@ int socket_is_secure(SocketManager *sm, SocketHandle handle)
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
-#ifdef HTTPS_ENABLED
     Socket *s = handle_to_socket(sm, handle);
 
     int ret;
     if (s == NULL)
         ret = -1;
-    else {
-        ret = (s->ssl != NULL);
-    }
-#else
-    int ret = 0;
-#endif
+    else
+        ret = is_secure(s);
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
     return ret;
 }
 
-int socket_set_user(SocketManager *sm, SocketHandle handle)
+int socket_set_user(SocketManager *sm, SocketHandle handle, void *user)
 {
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
