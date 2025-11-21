@@ -19,7 +19,8 @@ bool http_streqcase(HTTP_String s1, HTTP_String s2);
 // the new one references the contents of the original one.
 HTTP_String http_trim(HTTP_String s);
 
-// TODO: comment
+// Print the contents of a byte string with the given prefix.
+// This is primarily used for debugging purposes.
 void print_bytes(HTTP_String prefix, HTTP_String src);
 
 // Macro to simplify converting string literals to
@@ -46,5 +47,7 @@ void print_bytes(HTTP_String prefix, HTTP_String src);
 // Returns the number of items of a static array.
 #define HTTP_COUNT(X) (sizeof(X) / sizeof((X)[0]))
 
-// TODO: comment
+// Macro to unpack an HTTP_String into its length and pointer components.
+// Useful for passing HTTP_String to printf-style functions with "%.*s" format.
+// Example: printf("%.*s", HTTP_UNPACK(str));
 #define HTTP_UNPACK(X) (X).len, (X).ptr

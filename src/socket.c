@@ -32,7 +32,10 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b)
     // Optional: Set socket to non-blocking mode
     // This prevents send() from blocking if the receive buffer is full
     u_long mode = 1;
-    ioctlsocket(sock, FIONBIO, &mode); // TODO: does this fail?
+    if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR) {
+        closesocket(sock);
+        return -1;
+    }
 
     *a = sock;
     *b = sock;
@@ -108,12 +111,12 @@ static NATIVE_SOCKET create_listen_socket(HTTP_String addr,
     bind_buf.sin_family = AF_INET;
     bind_buf.sin_addr   = addr_buf;
     bind_buf.sin_port   = htons(port);
-    if (bind(sock, (struct sockaddr*) &bind_buf, sizeof(bind_buf)) < 0) { // TODO: how does bind fail on windows?
+    if (bind(sock, (struct sockaddr*) &bind_buf, sizeof(bind_buf)) < 0) {
         CLOSE_NATIVE_SOCKET(sock);
         return NATIVE_SOCKET_INVALID;
     }
 
-    if (listen(sock, backlog) < 0) { // TODO: how does listen fail on windows?
+    if (listen(sock, backlog) < 0) {
         CLOSE_NATIVE_SOCKET(sock);
         return NATIVE_SOCKET_INVALID;
     }
@@ -327,7 +330,10 @@ static void socket_update(Socket *s)
 
                     s->next_addr++;
                     if (s->next_addr == s->num_addr) {
-                        assert(0); // TODO
+                        // All addresses have been tried and failed
+                        s->state = SOCKET_STATE_DIED;
+                        s->events = 0;
+                        continue;
                     }
                 }
                 AddressAndPort addr = s->addrs[s->next_addr];
@@ -335,11 +341,16 @@ static void socket_update(Socket *s)
                 int family = (addr.is_ipv4 ? AF_INET : AF_INET6);
                 NATIVE_SOCKET sock = socket(family, SOCK_STREAM, 0);
                 if (sock == NATIVE_SOCKET_INVALID) {
-                    assert(0); // TODO
+                    s->state = SOCKET_STATE_DIED;
+                    s->events = 0;
+                    continue;
                 }
 
                 if (set_socket_blocking(sock, false) < 0) {
-                    assert(0); // TODO
+                    CLOSE_NATIVE_SOCKET(sock);
+                    s->state = SOCKET_STATE_DIED;
+                    s->events = 0;
+                    continue;
                 }
 
                 int ret;
@@ -393,7 +404,10 @@ static void socket_update(Socket *s)
                 int err = 0;
                 socklen_t len = sizeof(err);
                 if (getsockopt(s->sock, SOL_SOCKET, SO_ERROR, (void*) &err, &len) < 0) {
-                    assert(0); // TODO
+                    // Failed to get socket error status
+                    s->state = SOCKET_STATE_DIED;
+                    s->events = 0;
+                    continue;
                 }
 
                 if (err == 0) {
@@ -590,11 +604,21 @@ int socket_manager_wakeup(SocketManager *sm)
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
-    // TODO
+    // Send a byte through the signal socket to wake up any thread
+    // blocked on poll() with the wait socket
+    char byte = 1;
+    int ret = 0;
+#ifdef _WIN32
+    if (send(sm->signal_sock, &byte, 1, 0) < 0)
+        ret = -1;
+#else
+    if (write(sm->signal_sock, &byte, 1) < 0)
+        ret = -1;
+#endif
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
-    return 0;
+    return ret;
 }
 
 static int socket_manager_register_events_nolock(
@@ -752,7 +776,13 @@ static int socket_manager_translate_events_nolock(
 
         } else if (reg->polled[i].fd == sm->wait_sock) {
 
-            // TODO: consume
+            // Consume one byte from the wakeup signal
+            char byte;
+#ifdef _WIN32
+            recv(sm->wait_sock, &byte, 1, 0);
+#else
+            read(sm->wait_sock, &byte, 1);
+#endif
 
         } else {
 
@@ -839,7 +869,8 @@ static int resolve_connect_targets(ConnectTarget *targets,
                 name->data[targets[i].name.len] = '\0';
                 char *hostname = name->data;
 #else
-                char hostname[1<<9]; // TODO: Is this a good length?
+                // 512 bytes is more than enough for a DNS hostname (max 253 chars)
+                char hostname[1<<9];
                 if (targets[i].name.len >= (int) sizeof(hostname))
                     return -1;
                 memcpy(hostname, targets[i].name.ptr, targets[i].name.len);
@@ -848,8 +879,12 @@ static int resolve_connect_targets(ConnectTarget *targets,
                 struct addrinfo *res = NULL;
                 int ret = getaddrinfo(hostname, portstr, &hints, &res);
                 if (ret != 0) {
+#ifdef HTTPS_ENABLED
+                    // Free the name allocated for this target
+                    free(name);
+#endif
                     free_addr_list(resolved, num_resolved);
-                    return -1; // TODO: free all allocated registered names
+                    return -1;
                 }
 
                 for (struct addrinfo *rp = res; rp; rp = rp->ai_next) {
@@ -1120,10 +1155,12 @@ int socket_close(SocketManager *sm, SocketHandle handle)
     if (s == NULL)
         ret = -1;
     else {
-        // TODO: maybe we don't want to always set to SHUTDOWN. What if the socket is DIED for instance?
-        s->state = SOCKET_STATE_SHUTDOWN;
-        s->events = 0;
-        socket_update(s);
+        // Only transition to SHUTDOWN if socket is not already DIED
+        if (s->state != SOCKET_STATE_DIED) {
+            s->state = SOCKET_STATE_SHUTDOWN;
+            s->events = 0;
+            socket_update(s);
+        }
     }
 
     if (mutex_unlock(&sm->mutex) < 0)

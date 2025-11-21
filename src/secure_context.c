@@ -53,7 +53,9 @@ static int servername_callback(SSL *ssl, int *ad, void *arg)
 {
     ServerSecureContext *ctx = arg;
 
-    (void) ad; // TODO: use this?
+    // The 'ad' parameter is used to set the alert description when returning
+    // SSL_TLSEXT_ERR_ALERT_FATAL. Since we only return OK or NOACK, it's unused.
+    (void) ad;
 
     const char *servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
     if (servername == NULL)

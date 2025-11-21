@@ -432,9 +432,10 @@ static int is_scheme_body(char c)
 }
 
 // userinfo = *( unreserved / pct-encoded / sub-delims / ":" )
+// Note: percent-encoded characters (%XX) are not currently validated
 static int is_userinfo(char c)
 {
-	return is_unreserved(c) || is_sub_delim(c) || c == ':'; // TODO: PCT encoded
+	return is_unreserved(c) || is_sub_delim(c) || c == ':' || c == '%';
 }
 
 // authority = [ userinfo "@" ] host [ ":" port ]
@@ -1033,8 +1034,13 @@ static int parse_request(Scanner *s, HTTP_Request *req)
         return num_headers;
     req->num_headers = num_headers;
 
+    // Request methods that typically don't have a body
     bool body_expected = true;
-    if (req->method == HTTP_METHOD_GET || req->method == HTTP_METHOD_DELETE) // TODO: maybe other methods?
+    if (req->method == HTTP_METHOD_GET ||
+        req->method == HTTP_METHOD_HEAD ||
+        req->method == HTTP_METHOD_DELETE ||
+        req->method == HTTP_METHOD_OPTIONS ||
+        req->method == HTTP_METHOD_TRACE)
         body_expected = false;
 
     return parse_body(s, req->headers, req->num_headers, &req->body, body_expected);
@@ -1075,10 +1081,12 @@ static int parse_response(Scanner *s, HTTP_Response *res)
         (s->src[s->cur-3] - '0') * 10 +
         (s->src[s->cur-4] - '0') * 100;
 
+    // Parse reason phrase: HTAB / SP / VCHAR / obs-text
+    // Note: obs-text (obsolete text, octets 0x80-0xFF) is not validated
     while (s->cur < s->len && (
         s->src[s->cur] == '\t' ||
         s->src[s->cur] == ' ' ||
-        is_vchar(s->src[s->cur]))) // TODO: obs-text
+        is_vchar(s->src[s->cur])))
         s->cur++;
 
     if (s->len - s->cur < 2
@@ -1092,7 +1100,17 @@ static int parse_response(Scanner *s, HTTP_Response *res)
         return num_headers;
     res->num_headers = num_headers;
 
-    bool body_expected = true; // TODO
+    // Responses with certain status codes don't have a body:
+    // - 1xx (Informational)
+    // - 204 (No Content)
+    // - 304 (Not Modified)
+    // Note: HEAD responses also don't have a body, but we can't determine
+    // that here without access to the request method
+    bool body_expected = true;
+    if ((res->status >= 100 && res->status < 200) ||
+        res->status == 204 ||
+        res->status == 304)
+        body_expected = false;
 
     return parse_body(s, res->headers, res->num_headers, &res->body, body_expected);
 }
@@ -1142,7 +1160,8 @@ int http_parse_response(char *src, int len, HTTP_Response *res)
 
 HTTP_String http_get_cookie(HTTP_Request *req, HTTP_String name)
 {
-    // TODO: best-effort implementation
+    // Simple cookie parsing - does not handle quoted values or special characters
+    // See RFC 6265 for full cookie specification
 
     for (int i = 0; i < req->num_headers; i++) {
 

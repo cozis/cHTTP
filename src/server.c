@@ -374,7 +374,19 @@ void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str)
     if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER)
         return;
 
-    // TODO: Check that the header is valid
+    // Validate header: must contain a colon and no control characters
+    // (to prevent HTTP response splitting attacks)
+    bool has_colon = false;
+    for (int i = 0; i < str.len; i++) {
+        char c = str.ptr[i];
+        if (c == ':')
+            has_colon = true;
+        // Reject control characters (especially \r and \n)
+        if (c < 0x20 && c != '\t')
+            return;
+    }
+    if (!has_colon)
+        return;
 
 	byte_queue_write(&conn->output, str.ptr, str.len);
 	byte_queue_write(&conn->output, "\r\n", 2);
