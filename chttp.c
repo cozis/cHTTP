@@ -1475,38 +1475,206 @@ int mutex_unlock(Mutex *mutex)
 
 int global_secure_context_init(void)
 {
-    // TODO
+#ifdef HTTPS_ENABLED
+    SSL_library_init();
+    SSL_load_error_strings();
+    OpenSSL_add_all_algorithms();
+#endif
+    return 0;
 }
 
 int global_secure_context_free(void)
 {
-    // TODO
+#ifdef HTTPS_ENABLED
+    EVP_cleanup();
+#endif
+    return 0;
 }
 
 int client_secure_context_init(ClientSecureContext *ctx)
 {
-    // TODO
+#ifdef HTTPS_ENABLED
+    SSL_CTX *p = SSL_CTX_new(TLS_client_method());
+    if (!p)
+        return -1;
+
+    SSL_CTX_set_min_proto_version(p, TLS1_2_VERSION);
+
+    SSL_CTX_set_verify(p, SSL_VERIFY_PEER, NULL);
+
+    if (SSL_CTX_set_default_verify_paths(p) != 1) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+
+    ctx->p = p;
+    return 0;
+#else
+    (void) ctx;
+    return -1;
+#endif
 }
 
-int client_secure_context_free(ClientSecureContext *ctx)
+void client_secure_context_free(ClientSecureContext *ctx)
 {
-    // TODO
+#ifdef HTTPS_ENABLED
+    SSL_CTX_free(ctx->p);
+#endif
 }
 
-int server_secure_context_init(ServerSecureContext *ctx)
+#ifdef HTTPS_ENABLED
+static int servername_callback(SSL *ssl, int *ad, void *arg)
 {
-    // TODO
+    ServerSecureContext *ctx = arg;
+
+    (void) ad; // TODO: use this?
+
+    const char *servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+    if (servername == NULL)
+        return SSL_TLSEXT_ERR_NOACK;
+
+    for (int i = 0; i < ctx->num_certs; i++) {
+        ServerCertificate *cert = &ctx->certs[i];
+        if (!strcmp(cert->domain, servername)) {
+            SSL_set_SSL_CTX(ssl, cert->ctx);
+            return SSL_TLSEXT_ERR_OK;
+        }
+    }
+
+    return SSL_TLSEXT_ERR_NOACK;
+}
+#endif
+
+int server_secure_context_init(ServerSecureContext *ctx,
+    HTTP_String cert_file, HTTP_String key_file)
+{
+#ifdef HTTPS_ENABLED
+    SSL_CTX *p = SSL_CTX_new(TLS_server_method());
+    if (!p)
+        return -1;
+
+    SSL_CTX_set_min_proto_version(p, TLS1_2_VERSION);
+
+    char cert_buffer[1024];
+    if (cert_file.len >= (int) sizeof(cert_buffer)) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+    memcpy(cert_buffer, cert_file.ptr, cert_file.len);
+    cert_buffer[cert_file.len] = '\0';
+
+    // Copy private key file path to static buffer
+    char key_buffer[1024];
+    if (key_file.len >= (int) sizeof(key_buffer)) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+    memcpy(key_buffer, key_file.ptr, key_file.len);
+    key_buffer[key_file.len] = '\0';
+
+    // Load certificate and private key
+    if (SSL_CTX_use_certificate_file(p, cert_buffer, SSL_FILETYPE_PEM) != 1) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+
+    if (SSL_CTX_use_PrivateKey_file(p, key_buffer, SSL_FILETYPE_PEM) != 1) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+
+    // Verify that the private key matches the certificate
+    if (SSL_CTX_check_private_key(p) != 1) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+
+    SSL_CTX_set_tlsext_servername_callback(p, servername_callback);
+    SSL_CTX_set_tlsext_servername_arg(p, ctx);
+
+    ctx->p = p;
+    ctx->num_certs = 0;
+    return 0;
+#else
+    (void) ctx;
+    (void) cert_file;
+    (void) key_file;
+    return -1;
+#endif
 }
 
-int server_secure_context_free(ServerSecureContext *ctx)
+void server_secure_context_free(ServerSecureContext *ctx)
 {
-    // TODO
+#ifdef HTTPS_ENABLED
+    SSL_CTX_free(ctx->p);
+    for (int i = 0; i < ctx->num_certs; i++)
+        SSL_CTX_free(ctx->certs[i].ctx);
+#else
+    (void) ctx;
+#endif
 }
 
 int server_secure_context_add_certificate(ServerSecureContext *ctx,
     HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
-    // TODO
+#ifdef HTTPS_ENABLED
+    if (ctx->num_certs == SERVER_CERTIFICATE_LIMIT)
+        return -1;
+
+    SSL_CTX *p = SSL_CTX_new(TLS_server_method());
+    if (!p)
+        return -1;
+
+    SSL_CTX_set_min_proto_version(p, TLS1_2_VERSION);
+
+    char cert_buffer[1024];
+    if (cert_file.len >= (int) sizeof(cert_buffer)) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+    memcpy(cert_buffer, cert_file.ptr, cert_file.len);
+    cert_buffer[cert_file.len] = '\0';
+
+    char key_buffer[1024];
+    if (key_file.len >= (int) sizeof(key_buffer)) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+    memcpy(key_buffer, key_file.ptr, key_file.len);
+    key_buffer[key_file.len] = '\0';
+
+    if (SSL_CTX_use_certificate_file(p, cert_buffer, SSL_FILETYPE_PEM) != 1) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+
+    if (SSL_CTX_use_PrivateKey_file(p, key_buffer, SSL_FILETYPE_PEM) != 1) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+
+    if (SSL_CTX_check_private_key(p) != 1) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+
+    ServerCertificate *cert = &ctx->certs[ctx->num_certs];
+    if (domain.len >= (int) sizeof(cert->domain)) {
+        SSL_CTX_free(p);
+        return -1;
+    }
+    memcpy(cert->domain, domain.ptr, domain.len);
+    cert->domain[domain.len] = '\0';
+    cert->ctx = p;
+    ctx->num_certs++;
+    return 0;
+#else
+    (void) ctx;
+    (void) domain;
+    (void) cert_file;
+    (void) key_file;
+    return -1;
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -1703,8 +1871,8 @@ int socket_manager_listen_tcp(SocketManager *sm,
 }
 
 int socket_manager_listen_tls(SocketManager *sm,
-    HTTP_String addr, Port port, HTTP_String cert_file_name,
-    HTTP_String key_file_name)
+    HTTP_String addr, Port port, HTTP_String cert_file,
+    HTTP_String key_file)
 {
     if (sm->secure_sock != NATIVE_SOCKET_INVALID)
         return -1;
@@ -1715,7 +1883,8 @@ int socket_manager_listen_tls(SocketManager *sm,
     if (sm->secure_sock == NATIVE_SOCKET_INVALID)
         return -1;
 
-    if (server_secure_context_init(&sm->server_secure_context) < 0) {
+    if (server_secure_context_init(&sm->server_secure_context,
+        cert_file, key_file) < 0) {
         CLOSE_NATIVE_SOCKET(sm->secure_sock);
         sm->secure_sock = NATIVE_SOCKET_INVALID;
         return -1;
@@ -1741,7 +1910,7 @@ int socket_manager_add_certificate(SocketManager *sm,
 static bool is_secure(Socket *s)
 {
 #ifdef HTTPS_ENABLED
-    return (s->ssl != NULL);
+    return (s->server_secure_context != NULL);
 #else
     return false;
 #endif
@@ -1783,6 +1952,24 @@ connect_failed_because_of_peer(void)
     return connect_failed_because_of_peer_2(err);
 }
 
+static void free_addr_list(AddressAndPort *addrs, int num_addr)
+{
+#ifdef HTTPS_ENABLED
+    for (int i = 0; i < num_addr; i++) {
+        RegisteredName *name = addrs[i].name;
+        if (name) {
+            assert(name->refs > 0);
+            name->refs--;
+            if (name->refs == 0)
+                free(name);
+        }
+    }
+#else
+    (void) addrs;
+    (void) num_addr;
+#endif
+}
+
 // This function moves the socket state machine
 // to the next state until an I/O event would
 // be required to continue.
@@ -1810,6 +1997,13 @@ static void socket_update(Socket *s)
 
                 if (s->sock != NATIVE_SOCKET_INVALID) {
                     // This is not the first attempt
+
+#ifdef HTTPS_ENABLED
+                    if (s->ssl) {
+                        SSL_free(s->ssl);
+                        s->ssl = NULL;
+                    }
+#endif
 
                     CLOSE_NATIVE_SOCKET(s->sock);
 
@@ -1903,18 +2097,76 @@ static void socket_update(Socket *s)
 
         case SOCKET_STATE_CONNECTED:
             {
-                // We managed to connect to the peer.
-                // We can free the target array if it
-                // was allocated dynamically.
-                if (s->num_addr > 1)
-                    free(s->addrs);
-
                 if (!is_secure(s)) {
+
+                    // We managed to connect to the peer.
+                    // We can free the target array if it
+                    // was allocated dynamically.
+                    if (s->num_addr > 1)
+                        free(s->addrs);
+
                     s->events = 0;
                     s->state = SOCKET_STATE_ESTABLISHED_READY;
                 } else {
 #ifdef HTTPS_ENABLED
-                    assert(0); // TODO
+                    if (s->ssl == NULL) {
+                        s->ssl = SSL_new(s->server_secure_context->p);
+                        if (s->ssl == NULL) {
+                            s->state = SOCKET_STATE_DIED;
+                            s->events = 0;
+                            break;
+                        }
+
+                        if (SSL_set_fd(s->ssl, s->sock) != 1) {
+                            s->state = SOCKET_STATE_DIED;
+                            s->events = 0;
+                            break;
+                        }
+
+                        AddressAndPort addr;
+                        if (s->num_addr > 1)
+                            addr = s->addrs[s->next_addr];
+                        else
+                            addr = s->addr;
+
+                        if (addr.name)
+                            SSL_set_tlsext_host_name(s->ssl, addr.name->data);
+                    }
+
+                    int ret = SSL_connect(s->ssl);
+                    if (ret == 1) {
+                        // Handshake done
+
+                        // We managed to connect to the peer.
+                        // We can free the target array if it
+                        // was allocated dynamically.
+                        if (s->num_addr == 1)
+                            free_addr_list(&s->addr, 1);
+                        else {
+                            assert(s->num_addr > 1);
+                            free_addr_list(s->addrs, s->num_addr);
+                            free(s->addrs);
+                        }
+
+                        s->state = SOCKET_STATE_ESTABLISHED_READY;
+                        s->events = 0;
+                        break;
+                    }
+
+                    int err = SSL_get_error(s->ssl, ret);
+                    if (err == SSL_ERROR_WANT_READ) {
+                        s->events = POLLIN;
+                        break;
+                    }
+
+                    if (err == SSL_ERROR_WANT_WRITE) {
+                        s->events = POLLOUT;
+                        break;
+                    }
+
+                    s->state = SOCKET_STATE_PENDING;
+                    s->events = 0;
+                    again = true;
 #endif
                 }
             }
@@ -1927,7 +2179,45 @@ static void socket_update(Socket *s)
                     s->events = 0;
                 } else {
 #ifdef HTTPS_ENABLED
-                    assert(0); // TODO
+                    // Start server-side SSL handshake
+                    if (!s->ssl) {
+
+                        s->ssl = SSL_new(s->server_secure_context->p);
+                        if (s->ssl == NULL) {
+                            s->state = SOCKET_STATE_DIED;
+                            s->events = 0;
+                            break;
+                        }
+
+                        if (SSL_set_fd(s->ssl, s->sock) != 1) {
+                            s->state = SOCKET_STATE_DIED;
+                            s->events = 0;
+                            break;
+                        }
+                    }
+
+                    int ret = SSL_accept(s->ssl);
+                    if (ret == 1) {
+                        // Handshake done
+                        s->state = SOCKET_STATE_ESTABLISHED_READY;
+                        s->events = 0;
+                        break;
+                    }
+
+                    int err = SSL_get_error(s->ssl, ret);
+                    if (err == SSL_ERROR_WANT_READ) {
+                        s->events = POLLIN;
+                        break;
+                    }
+
+                    if (err == SSL_ERROR_WANT_WRITE) {
+                        s->events = POLLOUT;
+                        break;
+                    }
+
+                    // Server socket error - close the connection
+                    s->state = SOCKET_STATE_DIED;
+                    s->events = 0;
 #endif
                 }
             }
@@ -1945,7 +2235,26 @@ static void socket_update(Socket *s)
                     s->events = 0;
                 } else {
 #ifdef HTTPS_ENABLED
-                    assert(0); // TODO
+                    int ret = SSL_shutdown(s->ssl);
+                    if (ret == 1) {
+                        s->state = SOCKET_STATE_DIED;
+                        s->events = 0;
+                        break;
+                    }
+
+                    int err = SSL_get_error(s->ssl, ret);
+                    if (err == SSL_ERROR_WANT_READ) {
+                        s->events = POLLIN;
+                        break;
+                    }
+
+                    if (err == SSL_ERROR_WANT_WRITE) {
+                        s->events = POLLOUT;
+                        break;
+                    }
+
+                    s->state = SOCKET_STATE_DIED;
+                    s->events = 0;
 #endif
                 }
             }
@@ -2107,6 +2416,9 @@ static int socket_manager_translate_events_nolock(
             s->sock   = sock;
             s->events = 0;
             s->user   = NULL;
+#ifdef HTTPS_ENABLED
+            s->ssl = NULL;
+#endif
 
             socket_update(s);
             if (s->state == SOCKET_STATE_DIED) {
@@ -2192,23 +2504,35 @@ static int resolve_connect_targets(ConnectTarget *targets,
             {
                 char portstr[16];
                 int len = snprintf(portstr, sizeof(portstr), "%u", targets[i].port);
-                if (len < 0 || len >= (int) sizeof(portstr))
-                    return -1;
+                assert(len > 1 && len < (int) sizeof(portstr));
 
                 struct addrinfo hints = {0};
                 hints.ai_family = AF_UNSPEC;
                 hints.ai_socktype = SOCK_STREAM;
 
+#ifdef HTTPS_ENABLED
+                RegisteredName *name = malloc(sizeof(RegisteredName) + targets[i].name.len + 1);
+                if (name == NULL) {
+                    free_addr_list(resolved, num_resolved);
+                    return -1;
+                }
+                name->refs = 0;
+                memcpy(name->data, targets[i].name.ptr, targets[i].name.len);
+                name->data[targets[i].name.len] = '\0';
+                char *hostname = name->data;
+#else
                 char hostname[1<<9]; // TODO: Is this a good length?
                 if (targets[i].name.len >= (int) sizeof(hostname))
                     return -1;
                 memcpy(hostname, targets[i].name.ptr, targets[i].name.len);
                 hostname[targets[i].name.len] = '\0';
-
+#endif
                 struct addrinfo *res = NULL;
                 int ret = getaddrinfo(hostname, portstr, &hints, &res);
-                if (ret != 0)
-                    return -1;
+                if (ret != 0) {
+                    free_addr_list(resolved, num_resolved);
+                    return -1; // TODO: free all allocated registered names
+                }
 
                 for (struct addrinfo *rp = res; rp; rp = rp->ai_next) {
                     if (rp->ai_family == AF_INET) {
@@ -2217,6 +2541,10 @@ static int resolve_connect_targets(ConnectTarget *targets,
                             resolved[num_resolved].is_ipv4 = true;
                             resolved[num_resolved].ipv4 = ipv4;
                             resolved[num_resolved].port = targets[i].port;
+#ifdef HTTPS_ENABLED
+                            resolved[num_resolved].name = name;
+                            name->refs++;
+#endif
                             num_resolved++;
                         }
                     } else if (rp->ai_family == AF_INET6) {
@@ -2225,10 +2553,19 @@ static int resolve_connect_targets(ConnectTarget *targets,
                             resolved[num_resolved].is_ipv4 = false;
                             resolved[num_resolved].ipv6 = ipv6;
                             resolved[num_resolved].port = targets[i].port;
+#ifdef HTTPS_ENABLED
+                            resolved[num_resolved].name = name;
+                            name->refs++;
+#endif
                             num_resolved++;
                         }
                     }
                 }
+
+#ifdef HTTPS_ENABLED
+                if (name->refs == 0)
+                    free(name);
+#endif
 
                 freeaddrinfo(res);
             }
@@ -2238,6 +2575,9 @@ static int resolve_connect_targets(ConnectTarget *targets,
                 resolved[num_resolved].is_ipv4 = true;
                 resolved[num_resolved].ipv4 = targets[i].ipv4;
                 resolved[num_resolved].port = targets[i].port;
+#ifdef HTTPS_ENABLED
+                resolved[num_resolved].name = NULL;
+#endif
                 num_resolved++;
             }
             break;
@@ -2246,6 +2586,9 @@ static int resolve_connect_targets(ConnectTarget *targets,
                 resolved[num_resolved].is_ipv4 = false;
                 resolved[num_resolved].ipv6 = targets[i].ipv6;
                 resolved[num_resolved].port = targets[i].port;
+#ifdef HTTPS_ENABLED
+                resolved[num_resolved].name = NULL;
+#endif
                 num_resolved++;
             }
             break;
@@ -2261,6 +2604,11 @@ int socket_connect(SocketManager *sm, int num_targets,
 {
     if (sm->num_used == sm->max_used)
         return -1;
+
+#ifndef HTTPS_ENABLED
+    if (secure)
+        return -1;
+#endif
 
     AddressAndPort resolved[MAX_CONNECT_TARGETS];
     int num_resolved = resolve_connect_targets(
@@ -2292,6 +2640,10 @@ int socket_connect(SocketManager *sm, int num_targets,
     s->state = SOCKET_STATE_PENDING;
     s->sock = NATIVE_SOCKET_INVALID;
     s->user = user;
+#ifdef HTTPS_ENABLED
+    s->server_secure_context = &sm->server_secure_context;
+    s->ssl = NULL;
+#endif
     sm->num_used++;
     return 0;
 }

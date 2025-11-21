@@ -23,3 +23,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #endif
+
+#ifdef HTTPS_ENABLED
+#include <openssl/ssl.h>
+#endif

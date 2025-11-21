@@ -128,6 +128,11 @@ typedef enum {
     SOCKET_STATE_DIED,
 } SocketState;
 
+typedef struct {
+    int  refs;
+    char data[];
+} RegisteredName;
+
 // Internal use only
 typedef struct {
     union {
@@ -136,6 +141,15 @@ typedef struct {
     };
     bool is_ipv4;
     Port port;
+
+#ifdef HTTPS_ENABLED
+    // When connecting to a peer using TLS, if the address
+    // was resolved from a registered name, that name is
+    // used to request the correct certificate once the TCP
+    // handshake is established, and therefore need to
+    // store it somewhere until that happens.
+    RegisteredName *name;
+#endif
 } AddressAndPort;
 
 // Internal use only
@@ -167,6 +181,12 @@ typedef struct {
         AddressAndPort addr; // When num_addr=1
         AddressAndPort *addrs; // Dynamically allocated when num_addr>1
     };
+
+#ifdef HTTPS_ENABLED
+    ServerSecureContext *server_secure_context;
+    SSL *ssl;
+#endif
+
 } Socket;
 
 // Glorified array of sockets. This structure
@@ -238,8 +258,8 @@ int socket_manager_listen_tcp(SocketManager *sm,
 // and secure connections.
 // Returns 0 on success, -1 on error.
 int socket_manager_listen_tls(SocketManager *sm,
-    HTTP_String addr, Port port, HTTP_String cert_file_name,
-    HTTP_String key_file_name);
+    HTTP_String addr, Port port, HTTP_String cert_file,
+    HTTP_String key_file);
 
 // If the socket manager was configures to accept
 // TLS connections, this adds additional certificates
