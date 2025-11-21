@@ -60,7 +60,8 @@ bool http_streqcase(HTTP_String s1, HTTP_String s2);
 // the new one references the contents of the original one.
 HTTP_String http_trim(HTTP_String s);
 
-// TODO: comment
+// Print the contents of a byte string with the given prefix.
+// This is primarily used for debugging purposes.
 void print_bytes(HTTP_String prefix, HTTP_String src);
 
 // Macro to simplify converting string literals to
@@ -87,7 +88,9 @@ void print_bytes(HTTP_String prefix, HTTP_String src);
 // Returns the number of items of a static array.
 #define HTTP_COUNT(X) (sizeof(X) / sizeof((X)[0]))
 
-// TODO: comment
+// Macro to unpack an HTTP_String into its length and pointer components.
+// Useful for passing HTTP_String to printf-style functions with "%.*s" format.
+// Example: printf("%.*s", HTTP_UNPACK(str));
 #define HTTP_UNPACK(X) (X).len, (X).ptr
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -781,18 +784,43 @@ typedef enum {
 } HTTP_ClientConnState;
 
 // Fields of this struct are private
+typedef struct HTTP_Client HTTP_Client;
+
 typedef struct {
     HTTP_ClientConnState state;
+
+    // Handle to the socket
+    SocketHandle handle;
+
+    // Pointer back to the client
+    HTTP_Client *client;
+
+    // Generation counter for request builder validation
+    uint16_t gen;
+
+    // Data received from the server
     ByteQueue input;
+
+    // Data being sent to the server
     ByteQueue output;
+
+    // Parsed URL for connection establishment
+    HTTP_URL url;
+
+    // Parsed response once complete
     HTTP_Response response;
 } HTTP_ClientConn;
 
 // Fields of this struct are private
-typedef struct {
+struct HTTP_Client {
+
+    // Size limit of the input and output buffer of each
+    // connection.
+    uint32_t input_buffer_limit;
+    uint32_t output_buffer_limit;
 
     // Array of connections. The counter contains the
-    // number of structs such that state=FREE.
+    // number of structs such that state!=FREE.
     int num_conns;
     HTTP_ClientConn conns[HTTP_CLIENT_CAPACITY];
 
@@ -805,14 +833,14 @@ typedef struct {
     // Asynchronous TCP and TLS socket abstraction
     SocketManager sockets;
 
-    // The server object doesn't interact with this
+    // The client object doesn't interact with this
     // field directly, it just initializes the socket
     // manager with a pointer to it. This allows
     // allocating the exact number of sockets we
     // will need.
     Socket socket_pool[HTTP_CLIENT_CAPACITY];
 
-} HTTP_Client;
+};
 
 // Initialize an HTTP client object. This allows one to
 // perform a number of requests in parallel.
@@ -820,6 +848,11 @@ int http_client_init(HTTP_Client *client);
 
 // Release resources associated to a client object.
 void http_client_free(HTTP_Client *client);
+
+// Set input and output buffer size limit for any
+// given connection. The default value is 1MB
+void http_client_set_input_limit(HTTP_Client *client, uint32_t limit);
+void http_client_set_output_limit(HTTP_Client *client, uint32_t limit);
 
 // When a thread is blocked waiting for client events,
 // other threads can call this function to wake it up.
