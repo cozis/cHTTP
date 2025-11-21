@@ -18,7 +18,7 @@
 #include <pthread.h>
 #include <poll.h>
 #include <fcntl.h>
-#include <errno.h>-
+#include <errno.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>

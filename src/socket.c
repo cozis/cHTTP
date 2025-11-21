@@ -177,13 +177,12 @@ void socket_manager_free(SocketManager *sm)
 }
 
 int socket_manager_listen_tcp(SocketManager *sm,
-    HTTP_String addr, Port port)
+    HTTP_String addr, Port port, int backlog,
+    bool reuse_addr)
 {
     if (sm->plain_sock != NATIVE_SOCKET_INVALID)
         return -1;
 
-    bool reuse_addr = false;
-    int  backlog = 32;
     sm->plain_sock = create_listen_socket(addr, port, reuse_addr, backlog);
     if (sm->plain_sock == NATIVE_SOCKET_INVALID)
         return -1;
@@ -192,14 +191,13 @@ int socket_manager_listen_tcp(SocketManager *sm,
 }
 
 int socket_manager_listen_tls(SocketManager *sm,
-    HTTP_String addr, Port port, HTTP_String cert_file,
+    HTTP_String addr, Port port, int backlog,
+    bool reuse_addr, HTTP_String cert_file,
     HTTP_String key_file)
 {
     if (sm->secure_sock != NATIVE_SOCKET_INVALID)
         return -1;
 
-    bool reuse_addr = false;
-    int  backlog = 32;
     sm->secure_sock = create_listen_socket(addr, port, reuse_addr, backlog);
     if (sm->secure_sock == NATIVE_SOCKET_INVALID)
         return -1;
@@ -365,7 +363,7 @@ static void socket_update(Socket *s)
                     struct sockaddr_in6 buf;
                     buf.sin6_family = AF_INET6;
                     buf.sin6_port = htons(addr.port);
-                    memcpy(&buf.sin6_addr, &addr.ipv6, sizeof(IPv6));
+                    memcpy(&buf.sin6_addr, &addr.ipv6, sizeof(HTTP_IPv6));
                     ret = connect(sock, (struct sockaddr*) &buf, sizeof(buf));
                 }
 
@@ -672,6 +670,13 @@ static int socket_manager_register_events_nolock(
             continue;
         j++;
 
+        // If at least one socket can be processed, return an
+        // empty list.
+        if (s->state == SOCKET_STATE_DIED || s->state == SOCKET_STATE_ESTABLISHED_READY) {
+            reg->num_polled = 0;
+            return 0;
+        }
+
         if (s->events) {
             reg->polled[reg->num_polled].fd = s->sock;
             reg->polled[reg->num_polled].events = s->events;
@@ -720,6 +725,9 @@ static int socket_manager_translate_events_nolock(
 {
     int num_events = 0;
     for (int i = 0; i < reg->num_polled; i++) {
+
+        if (!reg->polled[i].revents)
+            continue;
 
         if (reg->polled[i].fd == sm->plain_sock ||
             reg->polled[i].fd == sm->secure_sock) {

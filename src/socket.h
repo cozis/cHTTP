@@ -236,7 +236,8 @@ void socket_manager_free(SocketManager *sm);
 // can only be used once per manager.
 // Returns 0 on success, -1 on error.
 int socket_manager_listen_tcp(SocketManager *sm,
-    HTTP_String addr, Port port);
+    HTTP_String addr, Port port, int backlog,
+    bool reuse_addr);
 
 // Same as the previous function, but incoming
 // connections will be interpreted as TLS. You
@@ -246,7 +247,8 @@ int socket_manager_listen_tcp(SocketManager *sm,
 // and secure connections.
 // Returns 0 on success, -1 on error.
 int socket_manager_listen_tls(SocketManager *sm,
-    HTTP_String addr, Port port, HTTP_String cert_file,
+    HTTP_String addr, Port port, int backlog,
+    bool reuse_addr, HTTP_String cert_file,
     HTTP_String key_file);
 
 // If the socket manager was configures to accept

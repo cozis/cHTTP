@@ -1879,13 +1879,12 @@ void socket_manager_free(SocketManager *sm)
 }
 
 int socket_manager_listen_tcp(SocketManager *sm,
-    HTTP_String addr, Port port)
+    HTTP_String addr, Port port, int backlog,
+    bool reuse_addr)
 {
     if (sm->plain_sock != NATIVE_SOCKET_INVALID)
         return -1;
 
-    bool reuse_addr = false;
-    int  backlog = 32;
     sm->plain_sock = create_listen_socket(addr, port, reuse_addr, backlog);
     if (sm->plain_sock == NATIVE_SOCKET_INVALID)
         return -1;
@@ -1894,14 +1893,13 @@ int socket_manager_listen_tcp(SocketManager *sm,
 }
 
 int socket_manager_listen_tls(SocketManager *sm,
-    HTTP_String addr, Port port, HTTP_String cert_file,
+    HTTP_String addr, Port port, int backlog,
+    bool reuse_addr, HTTP_String cert_file,
     HTTP_String key_file)
 {
     if (sm->secure_sock != NATIVE_SOCKET_INVALID)
         return -1;
 
-    bool reuse_addr = false;
-    int  backlog = 32;
     sm->secure_sock = create_listen_socket(addr, port, reuse_addr, backlog);
     if (sm->secure_sock == NATIVE_SOCKET_INVALID)
         return -1;
@@ -2374,6 +2372,12 @@ static int socket_manager_register_events_nolock(
             continue;
         j++;
 
+        // TODO: comment
+        if (s->state == SOCKET_STATE_DIED || s->state == SOCKET_STATE_ESTABLISHED_READY) {
+            reg->num_polled = 0;
+            return 0;
+        }
+
         if (s->events) {
             reg->polled[reg->num_polled].fd = s->sock;
             reg->polled[reg->num_polled].events = s->events;
@@ -2422,6 +2426,9 @@ static int socket_manager_translate_events_nolock(
 {
     int num_events = 0;
     for (int i = 0; i < reg->num_polled; i++) {
+
+        if (!reg->polled[i].revents)
+            continue;
 
         if (reg->polled[i].fd == sm->plain_sock ||
             reg->polled[i].fd == sm->secure_sock) {
@@ -3849,6 +3856,10 @@ int http_server_init(HTTP_Server *server)
     server->input_buffer_limit = 1<<20;
     server->output_buffer_limit = 1<<20;
 
+    server->trace_bytes = false;
+    server->reuse_addr = false;
+    server->backlog = 32;
+
     server->num_conns = 0;
     for (int i = 0; i < HTTP_SERVER_CAPACITY; i++) {
         server->conns[i].state = HTTP_SERVER_CONN_FREE;
@@ -3888,10 +3899,26 @@ void http_server_set_output_limit(HTTP_Server *server, uint32_t limit)
     server->output_buffer_limit = limit;
 }
 
+void http_server_set_trace_bytes(HTTP_Server *server, bool value)
+{
+    server->trace_bytes = value;
+}
+
+void http_server_set_reuse_addr(HTTP_Server *server, bool reuse)
+{
+    server->reuse_addr = reuse;
+}
+
+void http_server_set_backlog(HTTP_Server *server, int backlog)
+{
+    server->backlog = backlog;
+}
+
 int http_server_listen_tcp(HTTP_Server *server,
     HTTP_String addr, Port port)
 {
-    if (socket_manager_listen_tcp(&server->sockets, addr, port) < 0)
+    if (socket_manager_listen_tcp(&server->sockets, addr,
+        port, server->backlog, server->reuse_addr) < 0)
         return -1;
     return 0;
 }
@@ -3901,7 +3928,8 @@ int http_server_listen_tls(HTTP_Server *server,
     HTTP_String key_file_name)
 {
     if (socket_manager_listen_tls(&server->sockets, addr,
-        port, cert_file_name, key_file_name) < 0)
+        port, server->backlog, server->reuse_addr,
+        cert_file_name, key_file_name) < 0)
         return -1;
     return 0;
 }
@@ -3961,7 +3989,7 @@ check_request_buffer(HTTP_Server *server, HTTP_ServerConn *conn)
     } else {
 
         // Ready
-        assert(ret == 1);
+        assert(ret > 0);
 
         conn->state = HTTP_SERVER_CONN_WAIT_STATUS;
         conn->request_len = ret;
@@ -3972,6 +4000,67 @@ check_request_buffer(HTTP_Server *server, HTTP_ServerConn *conn)
         int tail = (server->ready_head + server->num_ready) % HTTP_SERVER_CAPACITY;
         server->ready[tail] = conn - server->conns;
         server->num_ready++;
+    }
+}
+
+static void
+http_server_conn_process_events(HTTP_Server *server, HTTP_ServerConn *conn)
+{
+    if (conn->state == HTTP_SERVER_CONN_FLUSHING) {
+
+        ByteView src = byte_queue_read_buf(&conn->output);
+
+        int num = 0;
+        if (src.len)
+            num = socket_send(&server->sockets, conn->handle, src.ptr, src.len);
+
+        if (server->trace_bytes)
+            print_bytes(HTTP_STR("<< "), (HTTP_String) { src.ptr, num });
+
+        byte_queue_read_ack(&conn->output, num);
+
+        if (byte_queue_error(&conn->output)) {
+            socket_close(&server->sockets, conn->handle);
+            return;
+        }
+
+        if (byte_queue_empty(&conn->output)) {
+            // We finished sending the response. Now we can
+            // either close the connection or process a new
+            // buffered request.
+            if (conn->closing) {
+                socket_close(&server->sockets, conn->handle);
+                return;
+            }
+            conn->state = HTTP_SERVER_CONN_BUFFERING;
+        }
+    }
+
+    if (conn->state == HTTP_SERVER_CONN_BUFFERING) {
+
+        int min_recv = 1<<10;
+        byte_queue_write_setmincap(&conn->input, min_recv);
+
+        // Note that it's extra important that we don't
+        // buffer while the user is building the response.
+        // If we did that, a resize would invalidate all
+        // pointers on the parsed request structure.
+        ByteView dst = byte_queue_write_buf(&conn->input);
+
+        int num = 0;
+        if (dst.len)
+            num = socket_recv(&server->sockets, conn->handle, dst.ptr, dst.len);
+
+        if (server->trace_bytes)
+            print_bytes(HTTP_STR(">> "), (HTTP_String) { dst.ptr, num });
+
+        byte_queue_write_ack(&conn->input, num);
+
+        if (byte_queue_error(&conn->output)) {
+            socket_close(&server->sockets, conn->handle);
+        } else {
+            check_request_buffer(server, conn);
+        }
     }
 }
 
@@ -4001,13 +4090,13 @@ int http_server_process_events(HTTP_Server *server,
                     continue;
                 }
 
-                int i = 0;
-                while (server->conns[i].state != HTTP_SERVER_CONN_FREE) {
-                    i++;
+                int j = 0;
+                while (server->conns[j].state != HTTP_SERVER_CONN_FREE) {
+                    j++;
                     assert(i < HTTP_SERVER_CAPACITY);
                 }
 
-                conn = &server->conns[i];
+                conn = &server->conns[j];
                 http_server_conn_init(conn,
                     events[i].handle,
                     server->input_buffer_limit,
@@ -4017,45 +4106,7 @@ int http_server_process_events(HTTP_Server *server,
                 socket_set_user(&server->sockets, events[i].handle, conn);
             }
 
-            if (conn->state == HTTP_SERVER_CONN_BUFFERING) {
-
-                int min_recv = 1<<10;
-                byte_queue_write_setmincap(&conn->input, min_recv);
-
-                // Note that it's extra important that we don't
-                // buffer while the user is building the response.
-                // If we did that, a resize would invalidate all
-                // pointers on the parsed request structure.
-                int num = 0;
-                ByteView dst = byte_queue_write_buf(&conn->input);
-                if (dst.len) num = socket_recv(&server->sockets, conn->handle, dst.ptr, dst.len);
-                byte_queue_write_ack(&conn->input, num);
-
-                if (byte_queue_error(&conn->output))
-                    socket_close(&server->sockets, conn->handle);
-                else
-                    check_request_buffer(server, conn);
-
-            } else if (conn->state == HTTP_SERVER_CONN_FLUSHING) {
-
-                int num = 0;
-                ByteView src = byte_queue_read_buf(&conn->output);
-                if (src.len) num = socket_send(&server->sockets, conn->handle, src.ptr, src.len);
-                byte_queue_read_ack(&conn->output, num);
-
-                if (byte_queue_error(&conn->output))
-                    socket_close(&server->sockets, conn->handle);
-                else if (byte_queue_empty(&conn->output)) {
-                    // We finished sending the response. Now we can
-                    // either close the connection or process a new
-                    // buffered request.
-                    if (conn->closing) {
-                        socket_close(&server->sockets, conn->handle);
-                    } else {
-                        check_request_buffer(server, conn);
-                    }
-                }
-            }
+            http_server_conn_process_events(server, conn);
         }
     }
 
@@ -4225,10 +4276,10 @@ static void append_special_headers(HTTP_ServerConn *conn)
     HTTP_String s;
 
     if (conn->closing) {
-        s = HTTP_STR("Connection: Close");
+        s = HTTP_STR("Connection: Close\r\n");
         byte_queue_write(&conn->output, s.ptr, s.len);
     } else {
-        s = HTTP_STR("Connection: Keep-Alive");
+        s = HTTP_STR("Connection: Keep-Alive\r\n");
         byte_queue_write(&conn->output, s.ptr, s.len);
     }
 
@@ -4275,7 +4326,7 @@ void http_response_builder_body(HTTP_ResponseBuilder builder, HTTP_String str)
     byte_queue_write(&conn->output, str.ptr, str.len);
 }
 
-void http_response_builder_send(HTTP_ResponseBuilder builder, HTTP_String str)
+void http_response_builder_send(HTTP_ResponseBuilder builder)
 {
     HTTP_ServerConn *conn = builder_to_conn(builder);
     if (conn == NULL)
@@ -4299,6 +4350,8 @@ void http_response_builder_send(HTTP_ResponseBuilder builder, HTTP_String str)
 
     conn->state = HTTP_SERVER_CONN_FLUSHING;
     conn->gen++;
+
+    http_server_conn_process_events(builder.server, conn);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////

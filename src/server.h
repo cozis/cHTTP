@@ -97,6 +97,10 @@ typedef struct {
     uint32_t input_buffer_limit;
     uint32_t output_buffer_limit;
 
+    bool trace_bytes;
+    bool reuse_addr;
+    int backlog;
+
     // Array of connections. The counter contains the
     // number of structs such that state=FREE.
     int num_conns;
@@ -139,6 +143,15 @@ void http_server_free(HTTP_Server *server);
 void http_server_set_input_limit(HTTP_Server *server, uint32_t limit);
 void http_server_set_output_limit(HTTP_Server *server, uint32_t limit);
 
+// TODO: Comment
+void http_server_set_trace_bytes(HTTP_Server *server, bool value);
+
+// TODO: Comment
+void http_server_set_reuse_addr(HTTP_Server *server, bool reuse);
+
+// TODO: comment
+void http_server_set_backlog(HTTP_Server *server, int backlog);
+
 // Enable listening for plain HTTP requests at the
 // specified interface.
 int http_server_listen_tcp(HTTP_Server *server,
@@ -147,9 +160,8 @@ int http_server_listen_tcp(HTTP_Server *server,
 // Enable listening for HTTPS requests at the specified
 // interfact, using the specified certificate and key
 // to verify the connection.
-int http_server_listen_tls(HTTP_Server *server,
-    HTTP_String addr, Port port, HTTP_String cert_file_name,
-    HTTP_String key_file_name);
+int http_server_listen_tls(HTTP_Server *server, HTTP_String addr, Port port,
+    HTTP_String cert_file_name, HTTP_String key_file_name);
 
 // Add the certificate for an additional domain when
 // the server is listening for HTTPS requests.
@@ -205,4 +217,4 @@ void http_response_builder_body(HTTP_ResponseBuilder builder, HTTP_String str);
 
 // Mark the response as complete. This will invalidate
 // the response builder handle.
-void http_response_builder_send(HTTP_ResponseBuilder builder, HTTP_String str);
+void http_response_builder_send(HTTP_ResponseBuilder builder);
