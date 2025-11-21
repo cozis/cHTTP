@@ -1,6 +1,6 @@
 
 typedef struct {
-    // TODO
+    char unused; // TODO
 } Mutex;
 
 int mutex_init(Mutex *mutex);

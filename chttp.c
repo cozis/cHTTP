@@ -143,7 +143,7 @@ int server_secure_context_free(ServerSecureContext *ctx)
 }
 
 int server_secure_context_add_certificate(ServerSecureContext *ctx,
-    String domain, String cert_file)
+    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
     // TODO
 }
@@ -359,7 +359,7 @@ int socket_manager_listen_tls(SocketManager *sm,
 }
 
 int socket_manager_add_certificate(SocketManager *sm,
-    String domain, String cert_file, String key_file)
+    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
     if (sm->secure_sock == NATIVE_SOCKET_INVALID)
         return -1;
@@ -3023,7 +3023,7 @@ int http_server_listen_tls(HTTP_Server *server,
 }
 
 int http_server_add_certificate(HTTP_Server *server,
-    String domain, String cert_file, String key_file)
+    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
     if (socket_manager_add_certificate(&server->sockets,
         domain, cert_file, key_file) < 0)

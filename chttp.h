@@ -9,6 +9,9 @@
 
 #include <stdint.h>
 #include <assert.h>
+#include <stdbool.h>
+#include <string.h>
+#include <stdlib.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -17,6 +20,11 @@
 #else
 #include <unistd.h>
 #include <pthread.h>
+#include <poll.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #endif
 
@@ -105,7 +113,7 @@ typedef struct {
 int server_secure_context_init(ServerSecureContext *ctx);
 int server_secure_context_free(ServerSecureContext *ctx);
 int server_secure_context_add_certificate(ServerSecureContext *ctx,
-    String domain, String cert_file, String key_file);
+    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/socket.h
@@ -348,7 +356,7 @@ int socket_manager_listen_tls(SocketManager *sm,
 // authenticity.
 // Returns 0 on success, -1 on error.
 int socket_manager_add_certificate(SocketManager *sm,
-    String domain, String cert_file, String key_file);
+    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
 
 // When a thread is blocked on a poll() call for
 // descriptors associated to this socket manager,
@@ -418,7 +426,7 @@ void socket_set_user(SocketManager *sm, SocketHandle handle);
 ////////////////////////////////////////////////////////////////////////////////////////
 
 typedef struct {
-    // TODO
+    char unused; // TODO
 } Mutex;
 
 int mutex_init(Mutex *mutex);
@@ -924,13 +932,13 @@ int http_server_listen_tcp(HTTP_Server *server,
 // interfact, using the specified certificate and key
 // to verify the connection.
 int http_server_listen_tls(HTTP_Server *server,
-    String addr, Port port, String cert_file_name,
-    String key_file_name);
+    HTTP_String addr, Port port, HTTP_String cert_file_name,
+    HTTP_String key_file_name);
 
 // Add the certificate for an additional domain when
 // the server is listening for HTTPS requests.
 int http_server_add_certificate(HTTP_Server *server,
-    String domain, String cert_file, String key_file);
+    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
 
 // When a thread is blocked waiting for server events,
 // other threads can call this function to wake it up.

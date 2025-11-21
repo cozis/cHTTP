@@ -26,4 +26,4 @@ typedef struct {
 int server_secure_context_init(ServerSecureContext *ctx);
 int server_secure_context_free(ServerSecureContext *ctx);
 int server_secure_context_add_certificate(ServerSecureContext *ctx,
-    String domain, String cert_file, String key_file);
+    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);

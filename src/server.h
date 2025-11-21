@@ -114,13 +114,13 @@ int http_server_listen_tcp(HTTP_Server *server,
 // interfact, using the specified certificate and key
 // to verify the connection.
 int http_server_listen_tls(HTTP_Server *server,
-    String addr, Port port, String cert_file_name,
-    String key_file_name);
+    HTTP_String addr, Port port, HTTP_String cert_file_name,
+    HTTP_String key_file_name);
 
 // Add the certificate for an additional domain when
 // the server is listening for HTTPS requests.
 int http_server_add_certificate(HTTP_Server *server,
-    String domain, String cert_file, String key_file);
+    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
 
 // When a thread is blocked waiting for server events,
 // other threads can call this function to wake it up.

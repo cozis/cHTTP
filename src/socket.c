@@ -206,7 +206,7 @@ int socket_manager_listen_tls(SocketManager *sm,
 }
 
 int socket_manager_add_certificate(SocketManager *sm,
-    String domain, String cert_file, String key_file)
+    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
     if (sm->secure_sock == NATIVE_SOCKET_INVALID)
         return -1;

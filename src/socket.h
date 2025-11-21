@@ -236,7 +236,7 @@ int socket_manager_listen_tls(SocketManager *sm,
 // authenticity.
 // Returns 0 on success, -1 on error.
 int socket_manager_add_certificate(SocketManager *sm,
-    String domain, String cert_file, String key_file);
+    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
 
 // When a thread is blocked on a poll() call for
 // descriptors associated to this socket manager,

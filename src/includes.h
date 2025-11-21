@@ -1,6 +1,9 @@
 
 #include <stdint.h>
 #include <assert.h>
+#include <stdbool.h>
+#include <string.h>
+#include <stdlib.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -9,5 +12,11 @@
 #else
 #include <unistd.h>
 #include <pthread.h>
+#include <poll.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #endif
