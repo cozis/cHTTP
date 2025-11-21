@@ -42,7 +42,7 @@ void http_server_free(HTTP_Server *server)
 
     for (int i = 0, j = 0; j < server->num_conns; i++) {
         HTTP_ServerConn *conn = &server->conns[i];
-        if (conn->state != HTTP_SERVER_CONN_FREE)
+        if (conn->state == HTTP_SERVER_CONN_FREE)
             continue;
         j++;
 
@@ -212,7 +212,7 @@ int http_server_process_events(HTTP_Server *server,
 
                 int num = 0;
                 ByteView src = byte_queue_read_buf(&conn->output);
-                if (src.len) num = socket_recv(&server->sockets, conn->handle, src.ptr, src.len);
+                if (src.len) num = socket_send(&server->sockets, conn->handle, src.ptr, src.len);
                 byte_queue_read_ack(&conn->output, num);
 
                 if (byte_queue_error(&conn->output))
@@ -430,7 +430,7 @@ static void patch_special_headers(HTTP_ServerConn *conn)
     byte_queue_patch(&conn->output, conn->content_length_value_offset, tmp, len);
 }
 
-void http_response_builder_body(HTTP_ResponseBuilder builder, String str)
+void http_response_builder_body(HTTP_ResponseBuilder builder, HTTP_String str)
 {
     HTTP_ServerConn *conn = builder_to_conn(builder);
     if (conn == NULL)
@@ -447,7 +447,7 @@ void http_response_builder_body(HTTP_ResponseBuilder builder, String str)
     byte_queue_write(&conn->output, str.ptr, str.len);
 }
 
-void http_response_builder_send(HTTP_ResponseBuilder builder, String str)
+void http_response_builder_send(HTTP_ResponseBuilder builder, HTTP_String str)
 {
     HTTP_ServerConn *conn = builder_to_conn(builder);
     if (conn == NULL)

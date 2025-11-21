@@ -54,7 +54,6 @@ static bool is_printable(char c)
     return c >= ' ' && c <= '~';
 }
 
-#include <stdio.h>
 void print_bytes(HTTP_String prefix, HTTP_String src)
 {
     if (src.len == 0)

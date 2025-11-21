@@ -66,7 +66,6 @@ static bool is_printable(char c)
     return c >= ' ' && c <= '~';
 }
 
-#include <stdio.h>
 void print_bytes(HTTP_String prefix, HTTP_String src)
 {
     if (src.len == 0)
@@ -1934,7 +1933,8 @@ int socket_manager_add_certificate(SocketManager *sm,
 static bool is_secure(Socket *s)
 {
 #ifdef HTTPS_ENABLED
-    return (s->server_secure_context != NULL);
+    return s->server_secure_context != NULL
+        || s->client_secure_context != NULL;
 #else
     return false;
 #endif
@@ -2061,13 +2061,13 @@ static void socket_update(Socket *s)
                     struct sockaddr_in buf;
                     buf.sin_family = AF_INET;
                     buf.sin_port = htons(addr.port);
-                    memcpy(&buf.sin_addr, &addr.ipv4, sizeof(IPv4));
+                    memcpy(&buf.sin_addr, &addr.ipv4, sizeof(HTTP_IPv4));
                     ret = connect(sock, (struct sockaddr*) &buf, sizeof(buf));
                 } else {
                     struct sockaddr_in6 buf;
                     buf.sin6_family = AF_INET6;
                     buf.sin6_port = htons(addr.port);
-                    memcpy(&buf.sin6_addr, &addr.ipv6, sizeof(IPv6));
+                    memcpy(&buf.sin6_addr, &addr.ipv6, sizeof(HTTP_IPv6));
                     ret = connect(sock, (struct sockaddr*) &buf, sizeof(buf));
                 }
 
@@ -2145,7 +2145,7 @@ static void socket_update(Socket *s)
                 } else {
 #ifdef HTTPS_ENABLED
                     if (s->ssl == NULL) {
-                        s->ssl = SSL_new(s->server_secure_context->p);
+                        s->ssl = SSL_new(s->client_secure_context->p);
                         if (s->ssl == NULL) {
                             s->state = SOCKET_STATE_DIED;
                             s->events = 0;
@@ -2370,7 +2370,7 @@ static int socket_manager_register_events_nolock(
     // be processed immediately.
     for (int i = 0, j = 0; j < sm->num_used; i++) {
         Socket *s = &sm->sockets[i];
-        if (s->state = SOCKET_STATE_FREE)
+        if (s->state == SOCKET_STATE_FREE)
             continue;
         j++;
 
@@ -2463,6 +2463,10 @@ static int socket_manager_translate_events_nolock(
             s->user   = NULL;
 #ifdef HTTPS_ENABLED
             s->ssl = NULL;
+            s->server_secure_context = NULL;
+            s->client_secure_context = NULL;
+            if (secure)
+                &s->server_secure_context = sm->server_secure_context;
 #endif
 
             socket_update(s);
@@ -2592,7 +2596,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
 
                 for (struct addrinfo *rp = res; rp; rp = rp->ai_next) {
                     if (rp->ai_family == AF_INET) {
-                        IPv4 ipv4 = *(IPv4*) &((struct sockaddr_in*)rp->ai_addr)->sin_addr;
+                        HTTP_IPv4 ipv4 = *(HTTP_IPv4*) &((struct sockaddr_in*)rp->ai_addr)->sin_addr;
                         if (num_resolved < max_resolved) {
                             resolved[num_resolved].is_ipv4 = true;
                             resolved[num_resolved].ipv4 = ipv4;
@@ -2604,7 +2608,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
                             num_resolved++;
                         }
                     } else if (rp->ai_family == AF_INET6) {
-                        IPv6 ipv6 = *(IPv6*) &((struct sockaddr_in6*)rp->ai_addr)->sin6_addr;
+                        HTTP_IPv6 ipv6 = *(HTTP_IPv6*) &((struct sockaddr_in6*)rp->ai_addr)->sin6_addr;
                         if (num_resolved < max_resolved) {
                             resolved[num_resolved].is_ipv4 = false;
                             resolved[num_resolved].ipv6 = ipv6;
@@ -2661,7 +2665,13 @@ int socket_connect(SocketManager *sm, int num_targets,
     if (sm->num_used == sm->max_used)
         return -1;
 
-#ifndef HTTPS_ENABLED
+#ifdef HTTPS_ENABLED
+    if (!sm->at_least_one_secure_connect) {
+        if (client_secure_context_init(&sm->client_secure_context) < 0)
+            return -1;
+        sm->at_least_one_secure_connect = true;
+    }
+#else
     if (secure)
         return -1;
 #endif
@@ -2697,8 +2707,11 @@ int socket_connect(SocketManager *sm, int num_targets,
     s->sock = NATIVE_SOCKET_INVALID;
     s->user = user;
 #ifdef HTTPS_ENABLED
-    s->server_secure_context = &sm->server_secure_context;
+    s->server_secure_context = NULL;
+    s->client_secure_context = NULL;
     s->ssl = NULL;
+    if (secure)
+        s->client_secure_context = &sm->client_secure_context;
 #endif
     sm->num_used++;
     return 0;
@@ -2751,7 +2764,7 @@ static int socket_recv_nolock(SocketManager *sm, SocketHandle handle,
             }
             ret = 0;
         }
-        return 0;
+        return ret;
     } else {
 #ifdef HTTPS_ENABLED
         int ret = SSL_read(s->ssl, dst, max);
@@ -3640,17 +3653,13 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
         // Set up target based on host type
         if (conn->url.authority.host.mode == HTTP_HOST_MODE_NAME) {
             target.type = CONNECT_TARGET_NAME;
-            target.name = (String) {
-                conn->url.authority.host.name.ptr,
-                conn->url.authority.host.name.len
-            };
+            target.name = conn->url.authority.host.name;
         } else if (conn->url.authority.host.mode == HTTP_HOST_MODE_IPV4) {
             target.type = CONNECT_TARGET_IPV4;
-            target.ipv4 = (IPv4) { conn->url.authority.host.ipv4.data };
+            target.ipv4 = conn->url.authority.host.ipv4;
         } else if (conn->url.authority.host.mode == HTTP_HOST_MODE_IPV6) {
             target.type = CONNECT_TARGET_IPV6;
-            for (int i = 0; i < 8; i++)
-                target.ipv6.data[i] = conn->url.authority.host.ipv6.data[i];
+            target.ipv6 = conn->url.authority.host.ipv6;
         } else {
             // Invalid host mode - clean up connection
             http_client_conn_free(conn);
@@ -3861,7 +3870,7 @@ void http_server_free(HTTP_Server *server)
 
     for (int i = 0, j = 0; j < server->num_conns; i++) {
         HTTP_ServerConn *conn = &server->conns[i];
-        if (conn->state != HTTP_SERVER_CONN_FREE)
+        if (conn->state == HTTP_SERVER_CONN_FREE)
             continue;
         j++;
 
@@ -4031,7 +4040,7 @@ int http_server_process_events(HTTP_Server *server,
 
                 int num = 0;
                 ByteView src = byte_queue_read_buf(&conn->output);
-                if (src.len) num = socket_recv(&server->sockets, conn->handle, src.ptr, src.len);
+                if (src.len) num = socket_send(&server->sockets, conn->handle, src.ptr, src.len);
                 byte_queue_read_ack(&conn->output, num);
 
                 if (byte_queue_error(&conn->output))
@@ -4249,7 +4258,7 @@ static void patch_special_headers(HTTP_ServerConn *conn)
     byte_queue_patch(&conn->output, conn->content_length_value_offset, tmp, len);
 }
 
-void http_response_builder_body(HTTP_ResponseBuilder builder, String str)
+void http_response_builder_body(HTTP_ResponseBuilder builder, HTTP_String str)
 {
     HTTP_ServerConn *conn = builder_to_conn(builder);
     if (conn == NULL)
@@ -4266,7 +4275,7 @@ void http_response_builder_body(HTTP_ResponseBuilder builder, String str)
     byte_queue_write(&conn->output, str.ptr, str.len);
 }
 
-void http_response_builder_send(HTTP_ResponseBuilder builder, String str)
+void http_response_builder_send(HTTP_ResponseBuilder builder, HTTP_String str)
 {
     HTTP_ServerConn *conn = builder_to_conn(builder);
     if (conn == NULL)
@@ -4291,3 +4300,28 @@ void http_response_builder_send(HTTP_ResponseBuilder builder, String str)
     conn->state = HTTP_SERVER_CONN_FLUSHING;
     conn->gen++;
 }
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Copyright 2025 Francesco Cozzuto
+//
+// Permission is hereby granted, free of charge, to any person
+// obtaining a copy of this software and associated documentation
+// files (the "Software"), to deal in the Software without
+// restriction, including without limitation the rights to use,
+// copy, modify, merge, publish, distribute, sublicense, and/or
+// sell copies of the Software, and to permit persons to whom
+// the Software is furnished to do so, subject to the following
+// conditions:
+//
+// The above copyright notice and this permission notice shall
+// be included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+// OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+// HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+// WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS IN THE SOFTWARE.
+////////////////////////////////////////////////////////////////////////////////////////

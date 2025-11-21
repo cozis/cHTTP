@@ -201,8 +201,8 @@ void http_response_builder_status(HTTP_ResponseBuilder builder, int status);
 void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str);
 
 // Append some bytes to the response's body
-void http_response_builder_body(HTTP_ResponseBuilder builder, String str);
+void http_response_builder_body(HTTP_ResponseBuilder builder, HTTP_String str);
 
 // Mark the response as complete. This will invalidate
 // the response builder handle.
-void http_response_builder_send(HTTP_ResponseBuilder builder, String str);
+void http_response_builder_send(HTTP_ResponseBuilder builder, HTTP_String str);

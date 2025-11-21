@@ -7,6 +7,7 @@
 // src/includes.h
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#include <stdio.h>
 #include <stdint.h>
 #include <assert.h>
 #include <stdbool.h>
@@ -25,7 +26,7 @@
 #include <pthread.h>
 #include <poll.h>
 #include <fcntl.h>
-#include <errno.h>
+#include <errno.h>-
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -317,20 +318,7 @@ int  server_secure_context_add_certificate(ServerSecureContext *ctx,
 typedef uint32_t SocketHandle;
 #define SOCKET_HANDLE_INVALID ((SocketHandle) 0)
 
-typedef struct {
-    char *ptr;
-    int   len;
-} String;
-
 typedef uint16_t Port;
-
-typedef struct {
-    uint32_t data;
-} IPv4;
-
-typedef struct {
-    uint16_t data[8];
-} IPv6;
 
 typedef enum {
     SOCKET_EVENT_READY,
@@ -392,8 +380,8 @@ typedef struct {
 // Internal use only
 typedef struct {
     union {
-        IPv4 ipv4;
-        IPv6 ipv6;
+        HTTP_IPv4 ipv4;
+        HTTP_IPv6 ipv6;
     };
     bool is_ipv4;
     Port port;
@@ -439,6 +427,7 @@ typedef struct {
     };
 
 #ifdef HTTPS_ENABLED
+    ClientSecureContext *client_secure_context;
     ServerSecureContext *server_secure_context;
     SSL *ssl;
 #endif
@@ -569,9 +558,9 @@ typedef struct {
     ConnectTargetType type;
     Port port;
     union {
-        IPv4   ipv4;
-        IPv6   ipv6;
-        String name;
+        HTTP_IPv4 ipv4;
+        HTTP_IPv6 ipv6;
+        HTTP_String name;
     };
 } ConnectTarget;
 
@@ -1127,11 +1116,11 @@ void http_response_builder_status(HTTP_ResponseBuilder builder, int status);
 void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str);
 
 // Append some bytes to the response's body
-void http_response_builder_body(HTTP_ResponseBuilder builder, String str);
+void http_response_builder_body(HTTP_ResponseBuilder builder, HTTP_String str);
 
 // Mark the response as complete. This will invalidate
 // the response builder handle.
-void http_response_builder_send(HTTP_ResponseBuilder builder, String str);
+void http_response_builder_send(HTTP_ResponseBuilder builder, HTTP_String str);
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Copyright 2025 Francesco Cozzuto

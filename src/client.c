@@ -268,17 +268,13 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
         // Set up target based on host type
         if (conn->url.authority.host.mode == HTTP_HOST_MODE_NAME) {
             target.type = CONNECT_TARGET_NAME;
-            target.name = (String) {
-                conn->url.authority.host.name.ptr,
-                conn->url.authority.host.name.len
-            };
+            target.name = conn->url.authority.host.name;
         } else if (conn->url.authority.host.mode == HTTP_HOST_MODE_IPV4) {
             target.type = CONNECT_TARGET_IPV4;
-            target.ipv4 = (IPv4) { conn->url.authority.host.ipv4.data };
+            target.ipv4 = conn->url.authority.host.ipv4;
         } else if (conn->url.authority.host.mode == HTTP_HOST_MODE_IPV6) {
             target.type = CONNECT_TARGET_IPV6;
-            for (int i = 0; i < 8; i++)
-                target.ipv6.data[i] = conn->url.authority.host.ipv6.data[i];
+            target.ipv6 = conn->url.authority.host.ipv6;
         } else {
             // Invalid host mode - clean up connection
             http_client_conn_free(conn);

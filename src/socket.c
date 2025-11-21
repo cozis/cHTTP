@@ -231,7 +231,8 @@ int socket_manager_add_certificate(SocketManager *sm,
 static bool is_secure(Socket *s)
 {
 #ifdef HTTPS_ENABLED
-    return (s->server_secure_context != NULL);
+    return s->server_secure_context != NULL
+        || s->client_secure_context != NULL;
 #else
     return false;
 #endif
@@ -358,7 +359,7 @@ static void socket_update(Socket *s)
                     struct sockaddr_in buf;
                     buf.sin_family = AF_INET;
                     buf.sin_port = htons(addr.port);
-                    memcpy(&buf.sin_addr, &addr.ipv4, sizeof(IPv4));
+                    memcpy(&buf.sin_addr, &addr.ipv4, sizeof(HTTP_IPv4));
                     ret = connect(sock, (struct sockaddr*) &buf, sizeof(buf));
                 } else {
                     struct sockaddr_in6 buf;
@@ -442,7 +443,7 @@ static void socket_update(Socket *s)
                 } else {
 #ifdef HTTPS_ENABLED
                     if (s->ssl == NULL) {
-                        s->ssl = SSL_new(s->server_secure_context->p);
+                        s->ssl = SSL_new(s->client_secure_context->p);
                         if (s->ssl == NULL) {
                             s->state = SOCKET_STATE_DIED;
                             s->events = 0;
@@ -667,7 +668,7 @@ static int socket_manager_register_events_nolock(
     // be processed immediately.
     for (int i = 0, j = 0; j < sm->num_used; i++) {
         Socket *s = &sm->sockets[i];
-        if (s->state = SOCKET_STATE_FREE)
+        if (s->state == SOCKET_STATE_FREE)
             continue;
         j++;
 
@@ -760,6 +761,10 @@ static int socket_manager_translate_events_nolock(
             s->user   = NULL;
 #ifdef HTTPS_ENABLED
             s->ssl = NULL;
+            s->server_secure_context = NULL;
+            s->client_secure_context = NULL;
+            if (secure)
+                &s->server_secure_context = sm->server_secure_context;
 #endif
 
             socket_update(s);
@@ -889,7 +894,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
 
                 for (struct addrinfo *rp = res; rp; rp = rp->ai_next) {
                     if (rp->ai_family == AF_INET) {
-                        IPv4 ipv4 = *(IPv4*) &((struct sockaddr_in*)rp->ai_addr)->sin_addr;
+                        HTTP_IPv4 ipv4 = *(HTTP_IPv4*) &((struct sockaddr_in*)rp->ai_addr)->sin_addr;
                         if (num_resolved < max_resolved) {
                             resolved[num_resolved].is_ipv4 = true;
                             resolved[num_resolved].ipv4 = ipv4;
@@ -901,7 +906,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
                             num_resolved++;
                         }
                     } else if (rp->ai_family == AF_INET6) {
-                        IPv6 ipv6 = *(IPv6*) &((struct sockaddr_in6*)rp->ai_addr)->sin6_addr;
+                        HTTP_IPv6 ipv6 = *(HTTP_IPv6*) &((struct sockaddr_in6*)rp->ai_addr)->sin6_addr;
                         if (num_resolved < max_resolved) {
                             resolved[num_resolved].is_ipv4 = false;
                             resolved[num_resolved].ipv6 = ipv6;
@@ -958,7 +963,13 @@ int socket_connect(SocketManager *sm, int num_targets,
     if (sm->num_used == sm->max_used)
         return -1;
 
-#ifndef HTTPS_ENABLED
+#ifdef HTTPS_ENABLED
+    if (!sm->at_least_one_secure_connect) {
+        if (client_secure_context_init(&sm->client_secure_context) < 0)
+            return -1;
+        sm->at_least_one_secure_connect = true;
+    }
+#else
     if (secure)
         return -1;
 #endif
@@ -994,8 +1005,11 @@ int socket_connect(SocketManager *sm, int num_targets,
     s->sock = NATIVE_SOCKET_INVALID;
     s->user = user;
 #ifdef HTTPS_ENABLED
-    s->server_secure_context = &sm->server_secure_context;
+    s->server_secure_context = NULL;
+    s->client_secure_context = NULL;
     s->ssl = NULL;
+    if (secure)
+        s->client_secure_context = &sm->client_secure_context;
 #endif
     sm->num_used++;
     return 0;
@@ -1048,7 +1062,7 @@ static int socket_recv_nolock(SocketManager *sm, SocketHandle handle,
             }
             ret = 0;
         }
-        return 0;
+        return ret;
     } else {
 #ifdef HTTPS_ENABLED
         int ret = SSL_read(s->ssl, dst, max);
