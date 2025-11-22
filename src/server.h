@@ -220,6 +220,11 @@ void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str)
 // Append some bytes to the response's body
 void http_response_builder_body(HTTP_ResponseBuilder builder, HTTP_String str);
 
+// TODO: comment
+void  http_response_builder_body_cap(HTTP_ResponseBuilder builder, int cap);
+char *http_response_builder_body_buf(HTTP_ResponseBuilder builder, int *cap);
+void  http_response_builder_body_ack(HTTP_ResponseBuilder builder, int num);
+
 // Mark the response as complete. This will invalidate
 // the response builder handle.
 void http_response_builder_send(HTTP_ResponseBuilder builder);
