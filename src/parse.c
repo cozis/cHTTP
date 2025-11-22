@@ -1322,3 +1322,290 @@ bool http_match_host(HTTP_Request *req, HTTP_String domain, int port)
     HTTP_String host = req->headers[idx].value;
     return http_streq(host, domain);
 }
+
+typedef enum {
+    HTTP_WEEKDAY_MON,
+    HTTP_WEEKDAY_TUE,
+    HTTP_WEEKDAY_WED,
+    HTTP_WEEKDAY_THU,
+    HTTP_WEEKDAY_FRI,
+    HTTP_WEEKDAY_SAT,
+    HTTP_WEEKDAY_SUN,
+} HTTP_WeekDay;
+
+typedef enum {
+    HTTP_MONTH_JAN,
+    HTTP_MONTH_FEB,
+    HTTP_MONTH_MAR,
+    HTTP_MONTH_APR,
+    HTTP_MONTH_MAY,
+    HTTP_MONTH_JUN,
+    HTTP_MONTH_JUL,
+    HTTP_MONTH_AUG,
+    HTTP_MONTH_SEP,
+    HTTP_MONTH_OCT,
+    HTTP_MONTH_NOV,
+    HTTP_MONTH_DEC,
+} HTTP_Month;
+
+typedef struct {
+    HTTP_WeekDay week_day;
+    int          day;
+    HTTP_Month   month;
+    int          year;
+    int          hour;
+    int          minute;
+    int          second;
+} HTTP_Date;
+
+// <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
+static int parse_date(Scanner *s, HTTP_Date *out)
+{
+    struct { HTTP_String str; HTTP_WeekDay val; } week_day_table[] = {
+        { HTTP_STR("Mon, "), HTTP_WEEKDAY_MON },
+        { HTTP_STR("Tue, "), HTTP_WEEKDAY_TUE },
+        { HTTP_STR("Wed, "), HTTP_WEEKDAY_WED },
+        { HTTP_STR("Thu, "), HTTP_WEEKDAY_THU },
+        { HTTP_STR("Fri, "), HTTP_WEEKDAY_FRI },
+        { HTTP_STR("Sat, "), HTTP_WEEKDAY_SAT },
+        { HTTP_STR("Sun, "), HTTP_WEEKDAY_SUN },
+    };
+
+    bool found = false;
+    for (int i = 0; i < HTTP_COUNT(week_day_table); i++)
+        if (consume_str(s, week_day_table[i].str)) {
+            out->week_day = week_day_table[i].val;
+            found = true;
+            break;
+        }
+    if (!found)
+        return -1;
+
+    if (1 >= s->len - s->cur
+        || !is_digit(s->src[s->cur+0])
+        || !is_digit(s->src[s->cur+1]))
+        return -1;
+    out->day
+        = (s->src[s->cur+0] - '0') * 10
+        + (s->src[s->cur+1] - '0') * 1;
+    s->cur += 2;
+
+    struct { HTTP_String str; HTTP_Month val; } month_table[] = {
+        { HTTP_STR(" Jan "), HTTP_MONTH_JAN },
+        { HTTP_STR(" Feb "), HTTP_MONTH_FEB },
+        { HTTP_STR(" Mar "), HTTP_MONTH_MAR },
+        { HTTP_STR(" Apr "), HTTP_MONTH_APR },
+        { HTTP_STR(" May "), HTTP_MONTH_MAY },
+        { HTTP_STR(" Jun "), HTTP_MONTH_JUN },
+        { HTTP_STR(" Jul "), HTTP_MONTH_JUL },
+        { HTTP_STR(" Aug "), HTTP_MONTH_AUG },
+        { HTTP_STR(" Sep "), HTTP_MONTH_SEP },
+        { HTTP_STR(" Oct "), HTTP_MONTH_OCT },
+        { HTTP_STR(" Nov "), HTTP_MONTH_NOV },
+        { HTTP_STR(" Dec "), HTTP_MONTH_DEC },
+    };
+
+    found = false;
+    for (int i = 0; i < HTTP_COUNT(month_table); i++)
+        if (consume_str(s, month_table[i].str)) {
+            out->month = month_table[i].val;
+            found = true;
+            break;
+        }
+    if (!found)
+        return -1;
+
+    if (3 >= s->len - s->cur
+        || !is_digit(s->src[s->cur+0])
+        || !is_digit(s->src[s->cur+1])
+        || !is_digit(s->src[s->cur+2])
+        || !is_digit(s->src[s->cur+3]))
+        return -1;
+    out->year
+        = (s->src[s->cur+0] - '0') * 1000
+        + (s->src[s->cur+1] - '0') * 100
+        + (s->src[s->cur+1] - '0') * 10
+        + (s->src[s->cur+1] - '0') * 1;
+    s->cur += 4;
+
+    if (s->cur == s->len || s->src[s->cur] != ' ')
+        return -1;
+    s->cur++;
+
+    if (7 >= s->len - s->cur
+        || !is_digit(s->src[s->cur+0])
+        || !is_digit(s->src[s->cur+1])
+        || s->src[s->cur+2] != ':'
+        || !is_digit(s->src[s->cur+3])
+        || !is_digit(s->src[s->cur+4])
+        || s->src[s->cur+5] != ':'
+        || !is_digit(s->src[s->cur+6])
+        || !is_digit(s->src[s->cur+7])
+        || s->src[s->cur+8] != ' '
+        || s->src[s->cur+9] != 'G'
+        || s->src[s->cur+10] != 'M'
+        || s->src[s->cur+11] != 'T')
+        return -1;
+    out->hour
+        = (s->src[s->cur+0] - '0') * 10
+        + (s->src[s->cur+1] - '0') * 1;
+    out->minute
+        = (s->src[s->cur+3] - '0') * 10
+        + (s->src[s->cur+4] - '0') * 1;
+    out->second
+        = (s->src[s->cur+6] - '0') * 10
+        + (s->src[s->cur+7] - '0') * 1;
+    s->cur += 12;
+    return 0;
+}
+
+// cookie-octet = %x21 / %x23-2B / %x2D-3A / %x3C-5B / %x5D-7E
+//              ; US-ASCII characters excluding CTLs,
+//              ; whitespace, DQUOTE, comma, semicolon,
+//              ; and backslash
+static bool is_cookie_octet(char c)
+{
+    // TODO
+}
+
+typedef struct {
+    HTTP_String name;
+    HTTP_String value;
+    bool secure;
+} HTTP_SetCookie;
+
+void http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
+{
+    char *src = str.ptr;
+    int   len = str.len;
+    int   cur = 0;
+
+    // cookie-name = token
+    if (cur == len || !is_tchar(src[cur]))
+        return -1;
+    int off = cur;
+    do
+        cur++;
+    while (cur < len && is_tchar(src[cur]));
+    out->name = (HTTP_String) { src + off, cur - off };
+
+    // cookie-pair = cookie-name "=" cookie-value
+    if (cur == len || src[cur] != '=')
+        return -1;
+    cur++;
+
+    // cookie-value = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
+    if (cur < len && src[cur] == '"') {
+        cur++; // Consume opening double quote
+        int off = cur;
+        while (cur < len && is_cookie_octet(src[cur]))
+            cur++;
+        if (cur == len || src[cur] != '"')
+            return -1; // Missing closing double quote
+        out->value = (HTTP_String) { src + off, cur - off };
+        cur++; // Consume closing double quote
+    } else {
+        int off = cur;
+        while (cur < len && is_cookie_octet(src[cur]))
+            cur++;
+        out->value = (HTTP_String) { src + off, cur - off };
+    }
+
+    // *( ";" SP cookie-av )
+    //
+    // cookie-av = expires-av / max-age-av / domain-av /
+    //             path-av / secure-av / httponly-av /
+    //             extension-av
+    while (cur < len && src[cur] == ';') {
+        cur++; // Consume semicolon
+
+        if (cur == len || src[cur] != ' ')
+            return -1; // Missing space after semicolon
+        cur++;
+
+        // expires-av = "Expires=" sane-cookie-date
+        if (7 < len - cur
+            && src[cur+0] == 'E'
+            && src[cur+1] == 'x'
+            && src[cur+2] == 'p'
+            && src[cur+3] == 'i'
+            && src[cur+4] == 'r'
+            && src[cur+5] == 'e'
+            && src[cur+6] == 's'
+            && src[cur+7] == '=') {
+            cur += 8;
+
+            // TODO
+
+            // max-age-av = "Max-Age=" non-zero-digit *DIGIT
+        } else if (7 < len - cur
+            && src[cur+0] == 'M'
+            && src[cur+1] == 'a'
+            && src[cur+2] == 'x'
+            && src[cur+3] == '-'
+            && src[cur+4] == 'A'
+            && src[cur+5] == 'g'
+            && src[cur+6] == 'e'
+            && src[cur+7] == '=') {
+            cur += 8;
+
+            // domain-av = "Domain=" domain-value
+        } else if (6 < len - cur
+            && src[cur+0] == 'D'
+            && src[cur+1] == 'o'
+            && src[cur+2] == 'm'
+            && src[cur+3] == 'a'
+            && src[cur+4] == 'i'
+            && src[cur+5] == 'n'
+            && src[cur+6] == '=') {
+            cur += 7;
+
+            // domain-value = <subdomain>
+            //              ; defined in RFC 1034, Section 3.5
+            // TODO
+
+            // path-av = "Path=" path-value
+
+        } else if (4 < len - cur
+            && src[cur+0] == 'P'
+            && src[cur+1] == 'a'
+            && src[cur+2] == 't'
+            && src[cur+3] == 'h'
+            && src[cur+4] == '=') {
+            cur += 5;
+
+            // path-value = <any CHAR except CTLs or ";">
+            //
+            // TODO
+
+            // secure-av = "Secure"
+        } else if (5 < len - cur
+            && src[cur+0] == 'S'
+            && src[cur+1] == 'e'
+            && src[cur+2] == 'c'
+            && src[cur+3] == 'u'
+            && src[cur+4] == 'r'
+            && src[cur+5] == 'e') {
+            cur += 6;
+
+            // TODO
+
+            // httponly-av = "HttpOnly"
+        } else if (
+            && src[cur+0] == 'H'
+            && src[cur+1] == 't'
+            && src[cur+2] == 't'
+            && src[cur+3] == 'p'
+            && src[cur+4] == 'O'
+            && src[cur+5] == 'n'
+            && src[cur+6] == 'l'
+            && src[cur+7] == 'y') {
+            cur += 8;
+
+            // TODO
+
+        } else {
+            return -1; // Invalid attribute
+        }
+    }
+}

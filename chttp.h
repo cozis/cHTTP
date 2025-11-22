@@ -526,8 +526,8 @@ int socket_manager_wakeup(SocketManager *sm);
 typedef struct {
     void **ptrs;
     struct pollfd *polled;
-    int num_polled;
     int max_polled;
+    int num_polled;
 } EventRegister;
 
 // Resets the event register with the list of descriptors
