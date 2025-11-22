@@ -764,6 +764,11 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 #define HTTP_CLIENT_CAPACITY (1<<7)
 #endif
 
+// Maximum number of descriptors the client will want
+// to wait on. It's one per connection plus the wakeup
+// self-pipe.
+#define HTTP_CLIENT_POLL_CAPACITY (HTTP_CLIENT_CAPACITY+1)
+
 typedef enum {
     HTTP_CLIENT_CONN_FREE,
     HTTP_CLIENT_CONN_WAIT_LINE,
@@ -921,6 +926,11 @@ void http_free_response(HTTP_Response *response);
 // in parallel.
 #define HTTP_SERVER_CAPACITY (1<<9)
 #endif
+
+// Maximum number of descriptors the server will want
+// to wait on. It's one per connection plus two for the
+// TCP and TLS listener, plus one for the wakeup self-pipe.
+#define HTTP_SERVER_POLL_CAPACITY (HTTP_SERVER_CAPACITY+3)
 
 typedef enum {
 

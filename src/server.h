@@ -5,6 +5,11 @@
 #define HTTP_SERVER_CAPACITY (1<<9)
 #endif
 
+// Maximum number of descriptors the server will want
+// to wait on. It's one per connection plus two for the
+// TCP and TLS listener, plus one for the wakeup self-pipe.
+#define HTTP_SERVER_POLL_CAPACITY (HTTP_SERVER_CAPACITY+3)
+
 typedef enum {
 
     // This struct is unused

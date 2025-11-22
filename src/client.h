@@ -5,6 +5,11 @@
 #define HTTP_CLIENT_CAPACITY (1<<7)
 #endif
 
+// Maximum number of descriptors the client will want
+// to wait on. It's one per connection plus the wakeup
+// self-pipe.
+#define HTTP_CLIENT_POLL_CAPACITY (HTTP_CLIENT_CAPACITY+1)
+
 typedef enum {
     HTTP_CLIENT_CONN_FREE,
     HTTP_CLIENT_CONN_WAIT_LINE,
