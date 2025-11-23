@@ -3660,27 +3660,12 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 // src/client.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
-static void http_client_conn_init(HTTP_ClientConn *conn,
-    SocketHandle handle, uint32_t input_buffer_limit,
-    uint32_t output_buffer_limit)
-{
-    conn->state = HTTP_CLIENT_CONN_WAIT_LINE;
-    conn->handle = handle;
-    conn->gen = 0;
-    byte_queue_init(&conn->input, input_buffer_limit);
-    byte_queue_init(&conn->output, output_buffer_limit);
-}
-
-static void http_client_conn_free(HTTP_ClientConn *conn)
-{
-    byte_queue_free(&conn->output);
-    byte_queue_free(&conn->input);
-}
-
 int http_client_init(HTTP_Client *client)
 {
     client->input_buffer_limit = 1<<20;
     client->output_buffer_limit = 1<<20;
+
+    client->cookie_jar.count = 0;
 
     client->num_conns = 0;
     for (int i = 0; i < HTTP_CLIENT_CAPACITY; i++) {
@@ -3700,6 +3685,9 @@ int http_client_init(HTTP_Client *client)
 void http_client_free(HTTP_Client *client)
 {
     socket_manager_free(&client->sockets);
+
+    for (int i = 0; i < cookie_jar->count; i++)
+        free(client->cookie_jar.items[i].name.ptr);
 
     for (int i = 0, j = 0; j < client->num_conns; i++) {
         HTTP_ClientConn *conn = &client->conns[i];
@@ -3755,48 +3743,123 @@ request_builder_to_conn(HTTP_RequestBuilder builder)
     return conn;
 }
 
-int http_client_get_builder(HTTP_Client *client,
-    HTTP_Response *response, HTTP_RequestBuilder *builder)
+HTTP_RequestBuilder http_client_get_builder(HTTP_Client *client)
 {
-    HTTP_ClientConn *conn = NULL;
+    // Find a free connection slot
+    if (client->num_conns == HTTP_CLIENT_CAPACITY)
+        return (HTTP_RequestBuilder) { NULL, -1, -1 };
 
-    if (response != NULL && response->context != NULL) {
-        // Reuse the connection from the previous response
-        conn = (HTTP_ClientConn*) response->context;
+    int i = 0;
+    while (client->conns[i].state != HTTP_CLIENT_CONN_FREE) {
+        i++;
+        assert(i < HTTP_CLIENT_CAPACITY);
+    }
+    client->num_conns++;
 
-        // Mark the response as freed
-        response->context = NULL;
+    client->conns[i].state = HTTP_CLIENT_CONN_WAIT_LINE;
+    client->conns[i].user = NULL;
+    client->conns[i].trace_bytes = false;
+    byte_queue_init(&client->conns[i].input,  client->input_buffer_limit);
+    byte_queue_init(&client->conns[i].output, client->output_buffer_limit);
 
-        // Reset the connection for a new request
-        byte_queue_read_ack(&conn->input, byte_queue_read_buf(&conn->input).len);
-        byte_queue_read_ack(&conn->output, byte_queue_read_buf(&conn->output).len);
-        conn->state = HTTP_CLIENT_CONN_WAIT_LINE;
+    return (HTTP_RequestBuilder) { client, conn - client->conns, conn->gen };
+}
 
+// TODO: test this function
+static bool is_subdomain(HTTP_String domain, HTTP_String subdomain)
+{
+    if (http_streq(domain, subdomain))
+        return true; // Exact match
+
+    if (domain.len > subdomain.len)
+        return false;
+
+    HTTP_String subdomain_suffix = {
+        subdomain.ptr + subdomain.len - domain.len,
+        entry.domain.len
+    };
+    if (subdomain_suffix.ptr[-1] != '.' || !http_streq(domain, subdomain_suffix))
+        return false;
+
+    return true;
+}
+
+// TODO: test this function
+static bool is_subpath(HTTP_String path, HTTP_String subpath)
+{
+    if (path.len > subpath.len)
+        return false;
+
+    if (subpath.len != path.len && subpath.ptr[path.len] != '/')
+        return false;
+
+    subpath.len = path.len;
+    return http_streq(path, subpath);
+}
+
+static bool should_send_cookie(HTTP_CookieJarEntry entry, HTTP_URL url)
+{
+    // TODO: If the cookie is expired, ignore it regardless
+
+    if (entry.exact_domain) {
+        // Cookie domain and URL domain must match exactly
+        if (!http_streq(entry.domain, url.authority.host.text))
+            return false;
     } else {
-        // Find a free connection slot
-        if (client->num_conns == HTTP_CLIENT_CAPACITY)
-            return -1;
-
-        int i = 0;
-        while (client->conns[i].state != HTTP_CLIENT_CONN_FREE)
-            i++;
-
-        conn = &client->conns[i];
-        conn->state = HTTP_CLIENT_CONN_WAIT_LINE;
-        conn->handle = SOCKET_HANDLE_INVALID;
-        conn->client = client;
-        byte_queue_init(&conn->input, client->input_buffer_limit);
-        byte_queue_init(&conn->output, client->output_buffer_limit);
-        client->num_conns++;
+        // The URL's domain must match or be a subdomain of the cookie's domain
+        if (!is_subdomain(entry.domain, url.authority.host.text))
+            return false;
     }
 
-    *builder = (HTTP_RequestBuilder) {
-        client,
-        conn - client->conns,
-        conn->gen
-    };
+    if (entry.exact_path) {
+        // Cookie path and URL path must match exactly
+        if (!http_streq(entry.path, url.path))
+            return false;
+    } else {
+        if (!is_subpath(entry.path, url.path))
+            return false;
+    }
 
-    return 0;
+    if (entry.secure) {
+        if (!http_streq(url.scheme, HTTP_STR("https"))
+            return false; // Cookie was marked as secure but the target URL is not HTTPS
+    }
+
+    return true;
+}
+
+static HTTP_String get_method_string(HTTP_Method method)
+{
+    switch (method) {
+        case HTTP_METHOD_GET    : return HTTP_STR("GET");
+        case HTTP_METHOD_HEAD   : return HTTP_STR("HEAD");
+        case HTTP_METHOD_POST   : return HTTP_STR("POST");
+        case HTTP_METHOD_PUT    : return HTTP_STR("PUT");
+        case HTTP_METHOD_DELETE : return HTTP_STR("DELETE");
+        case HTTP_METHOD_CONNECT: return HTTP_STR("CONNECT");
+        case HTTP_METHOD_OPTIONS: return HTTP_STR("OPTIONS");
+        case HTTP_METHOD_TRACE  : return HTTP_STR("TRACE");
+        case HTTP_METHOD_PATCH  : return HTTP_STR("PATCH");
+    }
+    return HTTP_STR("???");
+}
+
+void http_request_builder_set_user(HTTP_RequestBuilder builder, void *user)
+{
+    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    if (conn == NULL)
+        return; // Invalid builder
+
+    conn->user = user;
+}
+
+void http_request_builder_set_trace_bytes(HTTP_RequestBuilder builder, bool trace_bytes)
+{
+    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    if (conn == NULL)
+        return; // Invalid builder
+
+    conn->trace_bytes = trace_bytes;
 }
 
 void http_request_builder_url(HTTP_RequestBuilder builder,
@@ -3804,49 +3867,76 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
 {
     HTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
-        return;
+        return; // Invalid builder
 
     if (conn->state != HTTP_CLIENT_CONN_WAIT_LINE)
-        return;
+        return; // Request line already written
 
     // Parse the URL to extract components
     HTTP_URL parsed_url;
     if (http_parse_url(url.ptr, url.len, &parsed_url) != 1)
-        return;
+        return; // TODO: set error
 
-    // Store method and parsed URL for connection establishment
-    conn->method = method;
-    conn->url = parsed_url;
+    HTTP_String domain = parsed_url.authority.host.text;
+    HTTP_String path   = parsed_url.path;
+    char *p = malloc(domain.len + path.len);
+    if (p == NULL)
+        return; // TODO: set error
 
-    // Convert method enum to string
-    const char *method_str;
-    switch (method) {
-        case HTTP_METHOD_GET:     method_str = "GET"; break;
-        case HTTP_METHOD_HEAD:    method_str = "HEAD"; break;
-        case HTTP_METHOD_POST:    method_str = "POST"; break;
-        case HTTP_METHOD_PUT:     method_str = "PUT"; break;
-        case HTTP_METHOD_DELETE:  method_str = "DELETE"; break;
-        case HTTP_METHOD_CONNECT: method_str = "CONNECT"; break;
-        case HTTP_METHOD_OPTIONS: method_str = "OPTIONS"; break;
-        case HTTP_METHOD_TRACE:   method_str = "TRACE"; break;
-        case HTTP_METHOD_PATCH:   method_str = "PATCH"; break;
-        default: return;
+    memcpy(p, domain.ptr, domain.len);
+    domain.ptr = p;
+    p += domain.len;
+
+    memcpy(p, path.ptr, path.len);
+    path.ptr = p;
+    p += path.len;
+
+    conn->domain = domain;
+    conn->path   = path;
+
+    // Write method
+    HTTP_String method_str = get_method_string(method);
+    byte_queue_write(&conn->output, method_str.ptr, method_str.len);
+
+    HTTP_String path = parsed_url.path;
+    byte_queue_write(&conn->output, path.ptr, path.len);
+
+    HTTP_String query = parsed_url.query;
+    if (query.len > 0) {
+        byte_queue_write(&conn->output, "?", 1);
+        byte_queue_write(&conn->output, query.ptr, query.len);
     }
 
-    // Build request line: METHOD path HTTP/1.1\r\n
-    byte_queue_write_fmt(&conn->output, "%s %.*s HTTP/1.1\r\n",
-        method_str,
-        parsed_url.path.len, parsed_url.path.ptr);
+    HTTP_String version = HTTP_STR("HTTP/1.1");
+    byte_queue_write(&conn->output, version.ptr, version.len);
+
+    byte_queue_write(&conn->output, "\r\n", 2);
 
     // Add Host header automatically
     byte_queue_write_fmt(&conn->output, "Host: %.*s",
         parsed_url.authority.host.text.len,
         parsed_url.authority.host.text.ptr);
-
-    if (parsed_url.authority.port > 0) {
+    if (parsed_url.authority.port > 0)
         byte_queue_write_fmt(&conn->output, ":%d", parsed_url.authority.port);
-    }
+
     byte_queue_write(&conn->output, "\r\n", 2);
+
+    // Find all entries from the cookie jar that should
+    // be sent to this server and append headers for them
+    HTTP_CookieJar *cookie_jar = &conn->client->cookie_jar;
+    for (int i = 0; i < cookie_jar->count; i++) {
+        HTTP_CookieJarEntry entry = cookie_jar->items[i];
+        if (should_send_cookie(entry, parsed_url)) {
+            // TODO: Adding one header per cookie may cause the number of
+            //       headers to increase significantly. Should probably group
+            //       3-4 cookies in the same headers.
+            byte_queue_write(&conn->output, HTTP_STR("Cookie: "));
+            byte_queue_write(&conn->output, entry.name);
+            byte_queue_write(&conn->output, HTTP_STR("="));
+            byte_queue_write(&conn->output, entry.value);
+            byte_queue_write(&conn->output, HTTP_STR("\r\n"));
+        }
+    }
 
     conn->state = HTTP_CLIENT_CONN_WAIT_HEADER;
 }
@@ -3888,6 +3978,7 @@ void http_request_builder_body(HTTP_RequestBuilder builder,
     // Transition from WAIT_HEADER to WAIT_BODY if needed
     if (conn->state == HTTP_CLIENT_CONN_WAIT_HEADER) {
         // End headers section
+        // TODO: add Content-Length header
         byte_queue_write(&conn->output, "\r\n", 2);
         conn->state = HTTP_CLIENT_CONN_WAIT_BODY;
     }
@@ -3898,105 +3989,149 @@ void http_request_builder_body(HTTP_RequestBuilder builder,
     byte_queue_write(&conn->output, str.ptr, str.len);
 }
 
-int http_request_builder_send(HTTP_RequestBuilder builder)
+static int
+url_to_connect_target(HTTP_URL url,
+    ConnectTarget *target)
 {
-    HTTP_ClientConn *conn = request_builder_to_conn(builder);
-    if (conn == NULL)
+    HTTP_Authority authority = url.authority;
+
+    if (authority.port < 1) {
+        if (http_streq(url.scheme, HTTP_STR("https")))
+            target.port = 443;
+        else
+            target.port = 80;
+    } else {
+        target->port = authority.port;
+    }
+
+    // Set up target based on host type
+    if (authority.host.mode == HTTP_HOST_MODE_NAME) {
+        target.type = CONNECT_TARGET_NAME;
+        target.name = authority.host.name;
+    } else if (authority.host.mode == HTTP_HOST_MODE_IPV4) {
+        target.type = CONNECT_TARGET_IPV4;
+        target.ipv4 = authority.host.ipv4;
+    } else if (authority.host.mode == HTTP_HOST_MODE_IPV6) {
+        target.type = CONNECT_TARGET_IPV6;
+        target.ipv6 = authority.host.ipv6;
+    } else {
         return -1;
-
-    // Finalize the request
-    if (conn->state == HTTP_CLIENT_CONN_WAIT_HEADER) {
-        // No body, just end headers
-        byte_queue_write(&conn->output, "\r\n", 2);
     }
-
-    // Establish connection if not already connected
-    if (conn->handle == SOCKET_HANDLE_INVALID) {
-
-        // Determine if connection should be secure
-        bool secure = false;
-        if (conn->url.scheme.len == 5 &&
-            strncmp(conn->url.scheme.ptr, "https", 5) == 0) {
-            secure = true;
-        }
-
-        // Prepare connection target
-        ConnectTarget target;
-        target.port = conn->url.authority.port;
-        if (target.port <= 0)
-            target.port = secure ? 443 : 80;
-
-        // Set up target based on host type
-        if (conn->url.authority.host.mode == HTTP_HOST_MODE_NAME) {
-            target.type = CONNECT_TARGET_NAME;
-            target.name = conn->url.authority.host.name;
-        } else if (conn->url.authority.host.mode == HTTP_HOST_MODE_IPV4) {
-            target.type = CONNECT_TARGET_IPV4;
-            target.ipv4 = conn->url.authority.host.ipv4;
-        } else if (conn->url.authority.host.mode == HTTP_HOST_MODE_IPV6) {
-            target.type = CONNECT_TARGET_IPV6;
-            target.ipv6 = conn->url.authority.host.ipv6;
-        } else {
-            // Invalid host mode - clean up connection
-            http_client_conn_free(conn);
-            conn->state = HTTP_CLIENT_CONN_FREE;
-            conn->client->num_conns--;
-            return -1;
-        }
-
-        if (socket_connect(&conn->client->sockets, 1, &target, secure, conn) < 0) {
-            // Connection failed - clean up
-            http_client_conn_free(conn);
-            conn->state = HTTP_CLIENT_CONN_FREE;
-            conn->client->num_conns--;
-            return -1;
-        }
-    }
-
-    conn->state = HTTP_CLIENT_CONN_FLUSHING;
-    conn->gen++;
 
     return 0;
 }
 
-// Look at the input buffer to see if a complete response
-// was buffered. If it was, change the connection's status
-// to COMPLETE and push it to the ready queue.
-static void
-check_response_buffer(HTTP_Client *client, HTTP_ClientConn *conn)
+int http_request_builder_send(HTTP_RequestBuilder builder)
 {
-    assert(conn->state == HTTP_CLIENT_CONN_BUFFERING);
+    HTTP_Client *client = builder.client;
+    if (client == NULL)
+        return -1;
 
-    ByteView src = byte_queue_read_buf(&conn->input);
-    int ret = http_parse_response(src.ptr, src.len, &conn->response);
+    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    if (conn == NULL)
+        return -1;
 
-    if (ret < 0) {
-        // Invalid response
-        byte_queue_read_ack(&conn->input, 0);
-        socket_close(&client->sockets, conn->handle);
-
-    } else if (ret == 0) {
-        // Still waiting
-        byte_queue_read_ack(&conn->input, 0);
-
-        // If the queue reached its limit and we still didn't receive
-        // a complete response, abort the exchange.
-        if (byte_queue_full(&conn->input))
-            socket_close(&client->sockets, conn->handle);
-
-    } else {
-        // Ready
-        assert(ret == 1);
-
-        conn->state = HTTP_CLIENT_CONN_COMPLETE;
-        conn->response.context = conn;
-
-        // Push to the ready queue
-        assert(client->num_ready < HTTP_CLIENT_CAPACITY);
-        int tail = (client->ready_head + client->num_ready) % HTTP_CLIENT_CAPACITY;
-        client->ready[tail] = conn - client->conns;
-        client->num_ready++;
+    if (conn->state == HTTP_CLIENT_CONN_WAIT_HEADER) {
+        // No body, just end headers
+        byte_queue_write(&conn->output, "\r\n", 2);
+        conn->state = HTTP_CLIENT_CONN_WAIT_BODY;
     }
+
+    if (conn->state != HTTP_CLIENT_CONN_WAIT_BODY)
+        goto error;
+
+    if (byte_queue_error(&conn->output))
+        goto error;
+
+    ConnectTarget target;
+    if (url_to_connect_target(url, &target) < 0)
+        goto error;
+
+    bool secure = http_streq(url.scheme, HTTP_STR("https"));
+    if (socket_connect(&conn->client->sockets, 1, &target, secure, conn) < 0)
+        goto error;
+
+    conn->state = HTTP_CLIENT_CONN_FLUSHING;
+    conn->gen++;
+    return 0;
+
+error:
+    conn->state = HTTP_CLIENT_CONN_FREE;
+    free(conn->domain.ptr);
+    byte_queue_free(&conn->input);
+    byte_queue_free(&conn->output);
+    client->num_conns--;
+    return -1;
+}
+
+static void save_one_cookie(HTTP_CookieJar *cookie_jar,
+    HTTP_Header set_cookie, HTTP_String domain, HTTP_String path)
+{
+    if (cookie_jar->count == HTTP_COOKIE_JAR_CAPACITY)
+        return; // Cookie jar capacity reached
+
+    HTTP_SetCookie parsed;
+    if (http_parse_set_cookie(headers[i].value, &parsed) < 0)
+        return; // Ignore invalid Set-Cookie headers
+
+    HTTP_CookieJarEntry entry;
+
+    entry.name = parsed.name;
+    entry.value = parsed.value;
+
+    if (parsed.have_domain) {
+        // TODO: Check that the server can set a cookie for this domain
+        entry.exact_domain = false;
+        entry.domain = parsed.domain;
+    } else {
+        entry.exact_domain = true;
+        entry.domain = domain;
+    }
+
+    if (parsed.have_path) {
+        antry.exact_path = false;
+        entry.path = parsed.path;
+    } else {
+        // TODO: Set the path to the current endpoint minus one level
+        entry.exact_path = true;
+        entry.path = path;
+    }
+
+    entry.secure = parsed.secure;
+
+    // Now copy all fields
+    char *p = malloc(entry.name.len + entry.value.len + entry.domain.len + entry.path.len);
+    if (p == NULL)
+        return;
+
+    memcpy(p, entry.name.ptr, entry.name.len);
+    entry.name.ptr = p;
+    p += entry.name.len;
+
+    memcpy(p, entry.value.ptr, entry.value.len);
+    entry.value.ptr = p;
+    p += entry.value.len;
+
+    memcpy(p, entry.domain.ptr, entry.domain.len);
+    entry.domain.ptr = p;
+    p += entry.domain.len;
+
+    memcpy(p, entry.path.ptr, entry.path.len);
+    entry.path.ptr = p;
+    p += entry.path.len;
+
+    cookie_jar->items[cookie_jar->count++] = entry;
+}
+
+static void save_cookies(HTTP_CookieJar *cookie_jar,
+    HTTP_Header *headers, int num_headers,
+    HTTP_String domain, HTTP_String path)
+{
+    // TODO: remove expired cookies
+
+    for (int i = 0; i < num_headers; i++)
+        if (http_streqcase(headers[i].name, HTTP_STR("Set-Cookie"))) // TODO: headers are case-insensitive, right?
+            save_one_cookie(cookie_jar, headers[i].value, domain, path);
 }
 
 int http_client_process_events(HTTP_Client *client,
@@ -4011,57 +4146,113 @@ int http_client_process_events(HTTP_Client *client,
     for (int i = 0; i < num_events; i++) {
 
         HTTP_ClientConn *conn = events[i].user;
+        if (conn == NULL)
+            continue; // If a socket is not couple to a connection,
+                      // it means the response was already returned
+                      // to the user.
 
         if (events[i].type == SOCKET_EVENT_DISCONNECT) {
 
-            if (conn != NULL) {
-                http_client_conn_free(conn);
-                conn->state = HTTP_CLIENT_CONN_FREE;
-                client->num_conns--;
-            }
+            conn->state = HTTP_CLIENT_CONN_COMPLETE;
+            conn->result = -1;
 
         } else if (events[i].type == SOCKET_EVENT_READY) {
 
-            if (conn == NULL)
-                continue;
-
-            // Store the handle if this is a new connection
-            if (conn->handle == SOCKET_HANDLE_INVALID)
-                conn->handle = events[i].handle;
-
             if (conn->state == HTTP_CLIENT_CONN_FLUSHING) {
 
-                // Send request data
-                int num = 0;
                 ByteView src = byte_queue_read_buf(&conn->output);
+
+                int num = 0;
                 if (src.len)
                     num = socket_send(&client->sockets, conn->handle, src.ptr, src.len);
+
+                if (conn->trace_bytes)
+                    print_bytes(HTTP_STR("<< "), src.ptr, num);
+
                 byte_queue_read_ack(&conn->output, num);
 
                 if (byte_queue_error(&conn->output)) {
                     socket_close(&client->sockets, conn->handle);
-                } else if (byte_queue_empty(&conn->output)) {
-                    // Request fully sent, now wait for response
-                    conn->state = HTTP_CLIENT_CONN_BUFFERING;
+                    continue;
                 }
 
-            } else if (conn->state == HTTP_CLIENT_CONN_BUFFERING) {
+                // Request fully sent, now wait for response
+                if (byte_queue_empty(&conn->output))
+                    conn->state = HTTP_CLIENT_CONN_BUFFERING;
+            }
+
+            if (conn->state == HTTP_CLIENT_CONN_BUFFERING) {
 
                 // Receive response data
                 int min_recv = 1<<10;
                 byte_queue_write_setmincap(&conn->input, min_recv);
 
-                int num = 0;
                 ByteView dst = byte_queue_write_buf(&conn->input);
+
+                int num = 0;
                 if (dst.len)
                     num = socket_recv(&client->sockets, conn->handle, dst.ptr, dst.len);
+
+                if (conn->trace_bytes)
+                    print_bytes(HTTP_STR(">> "), dst.ptr, num);
+
                 byte_queue_write_ack(&conn->input, num);
 
-                if (byte_queue_error(&conn->input))
+                if (byte_queue_error(&conn->input)) {
                     socket_close(&client->sockets, conn->handle);
-                else
-                    check_response_buffer(client, conn);
+                    continue;
+                }
+
+                ByteView src = byte_queue_read_buf(&conn->input);
+                int ret = http_parse_response(src.ptr, src.len, &conn->response);
+
+                if (ret == 0) {
+                    // Still waiting
+                    byte_queue_read_ack(&conn->input, 0);
+
+                    // If the queue reached its limit and we still didn't receive
+                    // a complete response, abort the exchange.
+                    if (byte_queue_full(&conn->input))
+                        socket_close(&client->sockets, conn->handle);
+                    continue;
+                }
+
+                if (ret < 0) {
+                    // Invalid response
+                    byte_queue_read_ack(&conn->input, 0);
+                    socket_close(&client->sockets, conn->handle);
+                    continue;
+                }
+
+                // Ready
+                assert(ret == 1);
+
+                conn->state = HTTP_CLIENT_CONN_COMPLETE;
+                conn->result = 0;
+
+                conn->response.context = client;
+
+                // Store received cookies in the cookie jar
+                save_cookies(&client->cookie_jar,
+                    conn->response.headers,
+                    conn->response.num_headers,
+                    conn->domain,
+                    conn->path);
+
+                // TODO: Handle redirects here
             }
+        }
+
+        if (conn->state == HTTP_CLIENT_CONN_COMPLETE) {
+
+            // Decouple from the socket
+            socket_set_user(&client->sockets, events[i].handle, NULL);
+
+            // Push to the ready queue
+            assert(client->num_ready < HTTP_CLIENT_CAPACITY);
+            int tail = (client->ready_head + client->num_ready) % HTTP_CLIENT_CAPACITY;
+            client->ready[tail] = conn - client->conns;
+            client->num_ready++;
         }
     }
 
@@ -4069,7 +4260,7 @@ int http_client_process_events(HTTP_Client *client,
 }
 
 bool http_client_next_response(HTTP_Client *client,
-    HTTP_Response **response)
+    HTTP_Response **response, void **user)
 {
     if (client->num_ready == 0)
         return false;
@@ -4079,7 +4270,15 @@ bool http_client_next_response(HTTP_Client *client,
     client->num_ready--;
 
     assert(conn->state == HTTP_CLIENT_CONN_COMPLETE);
-    *response = &conn->response;
+
+    if (conn->result == 0) {
+        *response = &conn->response;
+    } else {
+        assert(conn->result == -1);
+        *response = NULL;
+    }
+    *user = conn->user;
+
     return true;
 }
 
@@ -4087,16 +4286,25 @@ void http_free_response(HTTP_Response *response)
 {
     if (response == NULL || response->context == NULL)
         return;
-
-    HTTP_ClientConn *conn = (HTTP_ClientConn*) response->context;
-
-    // Free the connection resources
-    http_client_conn_free(conn);
-    conn->state = HTTP_CLIENT_CONN_FREE;
-    conn->client->num_conns--;
-
-    // Mark response as freed
+    HTTP_Client *client = response->context;
     response->context = NULL;
+
+    // TODO: I'm positive there is a better way to do this.
+    //       It should just be a bouds check + subtraction.
+    HTTP_ClientConn *conn = NULL;
+    for (int i = 0; i < HTTP_CLIENT_CAPACITY; i++)
+        if (&client->conns[i].response == response) {
+            conn = &client->conns[i];
+            break;
+        }
+    if (conn == NULL)
+        return;
+
+    conn->state = HTTP_CLIENT_CONN_FREE;
+    free(conn->domain.ptr);
+    byte_queue_free(&conn->input);
+    byte_queue_free(&conn->output);
+    client->num_conns--;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////

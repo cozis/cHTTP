@@ -824,6 +824,44 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 #define HTTP_CLIENT_CAPACITY (1<<7)
 #endif
 
+#ifndef HTTP_COOKIE_JAR_CAPACITY
+// Maximum number of cookies that can be associated to a
+// single client.
+#define HTTP_COOKIE_JAR_CAPACITY 128
+#endif
+
+typedef struct {
+
+    // Cookie name and value
+    HTTP_String name;
+    HTTP_String value;
+
+    // If the "exact_domain" is true, the cookie
+    // can only be sent to the exact domain referred
+    // to by "domain" (which is never empty). If
+    // "exact_domain" is false, then the cookie is
+    // compatible with subdomains.
+    bool exact_domain;
+    HTTP_String domain;
+
+    // If "exact_path" is set, the cookie is only
+    // compatible with requests to paths that match
+    // "path" exactly. If "exact_path" is not set,
+    // then any path that starts with "path" is
+    // compatible with the cookie.
+    bool exact_path;
+    HTTP_String path;
+
+    // This cookie can only be sent over HTTPS
+    bool secure;
+
+} HTTP_CookieJarEntry;
+
+typedef struct {
+    int count;
+    HTTP_CookieJarEntry items[HTTP_COOKIE_JAR_CAPACITY];
+} HTTP_CookieJar;
+
 typedef enum {
     HTTP_CLIENT_CONN_FREE,
     HTTP_CLIENT_CONN_WAIT_LINE,
@@ -840,14 +878,20 @@ typedef struct HTTP_Client HTTP_Client;
 typedef struct {
     HTTP_ClientConnState state;
 
-    // Handle to the socket
-    SocketHandle handle;
-
-    // Pointer back to the client
-    HTTP_Client *client;
-
     // Generation counter for request builder validation
     uint16_t gen;
+
+    // Opaque pointer set by the user while building
+    // the request. It's returned alongside the result.
+    void *user;
+
+    // TODO: comment
+    bool trace_bytes;
+
+    // Endpoint domain and path. These must be saved
+    // in case the server wants to set some cookies.
+    HTTP_String domain;
+    HTTP_String path;
 
     // Data received from the server
     ByteQueue input;
@@ -855,11 +899,11 @@ typedef struct {
     // Data being sent to the server
     ByteQueue output;
 
-    // HTTP method for the request
-    HTTP_Method method;
-
-    // Parsed URL for connection establishment
-    HTTP_URL url;
+    // If the request is COMPLETE, indicates
+    // whether it completed with an error (-1)
+    // or a success (0). If it was a success,
+    // the response field is valid.
+    int result;
 
     // Parsed response once complete
     HTTP_Response response;
@@ -872,6 +916,9 @@ struct HTTP_Client {
     // connection.
     uint32_t input_buffer_limit;
     uint32_t output_buffer_limit;
+
+    // List of cookies created during this session
+    HTTP_CookieJar cookie_jar;
 
     // Array of connections. The counter contains the
     // number of structs such that state!=FREE.
@@ -928,6 +975,12 @@ typedef struct {
 int http_client_get_builder(HTTP_Client *client,
     HTTP_Response *response, HTTP_RequestBuilder *builder);
 
+// TODO: comment
+void http_request_builder_set_user(HTTP_RequestBuilder builder, void *user);
+
+// TODO: comment
+void http_request_builder_set_trace_bytes(HTTP_RequestBuilder builder, bool trace_bytes);
+
 // Set the method and URL of the current request. This is the first
 // function of the request builder that the user must call.
 void http_request_builder_url(HTTP_RequestBuilder builder,
@@ -962,11 +1015,11 @@ int http_client_process_events(HTTP_Client *client,
 // may be availabe. This function returns one of the
 // buffered responses. If a request was available, true
 // is returned. If no more are avaiable, false is returned.
-// The returned response must either be freed using the
-// http_free_response function or reused by passing it
-// to http_client_get_builder.
+// The returned response must be freed using the
+// http_free_response function.
+// TODO: Better comment talking about output arguments
 bool http_client_next_response(HTTP_Client *client,
-    HTTP_Response **response);
+    HTTP_Response **response, void **user);
 
 // Free a response object. You can't access its fields
 // again after this.
