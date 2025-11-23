@@ -768,7 +768,7 @@ static int socket_manager_translate_events_nolock(
             s->server_secure_context = NULL;
             s->client_secure_context = NULL;
             if (secure)
-                &s->server_secure_context = sm->server_secure_context;
+                s->server_secure_context = &sm->server_secure_context;
 #endif
 
             socket_update(s);
