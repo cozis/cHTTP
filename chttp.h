@@ -193,6 +193,66 @@ int         http_get_param_i    (HTTP_String body, HTTP_String str);
 // domain an port. If port is -1, the default value of 80 is assumed.
 bool http_match_host(HTTP_Request *req, HTTP_String domain, int port);
 
+// Date and cookie types for Set-Cookie header parsing
+typedef enum {
+    HTTP_WEEKDAY_MON,
+    HTTP_WEEKDAY_TUE,
+    HTTP_WEEKDAY_WED,
+    HTTP_WEEKDAY_THU,
+    HTTP_WEEKDAY_FRI,
+    HTTP_WEEKDAY_SAT,
+    HTTP_WEEKDAY_SUN,
+} HTTP_WeekDay;
+
+typedef enum {
+    HTTP_MONTH_JAN,
+    HTTP_MONTH_FEB,
+    HTTP_MONTH_MAR,
+    HTTP_MONTH_APR,
+    HTTP_MONTH_MAY,
+    HTTP_MONTH_JUN,
+    HTTP_MONTH_JUL,
+    HTTP_MONTH_AUG,
+    HTTP_MONTH_SEP,
+    HTTP_MONTH_OCT,
+    HTTP_MONTH_NOV,
+    HTTP_MONTH_DEC,
+} HTTP_Month;
+
+typedef struct {
+    HTTP_WeekDay week_day;
+    int          day;
+    HTTP_Month   month;
+    int          year;
+    int          hour;
+    int          minute;
+    int          second;
+} HTTP_Date;
+
+typedef struct {
+    HTTP_String name;
+    HTTP_String value;
+
+    bool secure;
+    bool http_only;
+
+    bool have_date;
+    HTTP_Date date;
+
+    bool have_max_age;
+    uint32_t max_age;
+
+    bool have_domain;
+    HTTP_String domain;
+
+    bool have_path;
+    HTTP_String path;
+} HTTP_SetCookie;
+
+// Parses a Set-Cookie header value
+// Returns 0 on success, -1 on error
+int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out);
+
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/thread.h
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -764,6 +824,44 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 #define HTTP_CLIENT_CAPACITY (1<<7)
 #endif
 
+#ifndef HTTP_COOKIE_JAR_CAPACITY
+// Maximum number of cookies that can be associated to a
+// single client.
+#define HTTP_COOKIE_JAR_CAPACITY 128
+#endif
+
+typedef struct {
+
+    // Cookie name and value
+    HTTP_String name;
+    HTTP_String value;
+
+    // If the "exact_domain" is true, the cookie
+    // can only be sent to the exact domain referred
+    // to by "domain" (which is never empty). If
+    // "exact_domain" is false, then the cookie is
+    // compatible with subdomains.
+    bool exact_domain;
+    HTTP_String domain;
+
+    // If "exact_path" is set, the cookie is only
+    // compatible with requests to paths that match
+    // "path" exactly. If "exact_path" is not set,
+    // then any path that starts with "path" is
+    // compatible with the cookie.
+    bool exact_path;
+    HTTP_String path;
+
+    // This cookie can only be sent over HTTPS
+    bool secure;
+
+} HTTP_CookieJarEntry;
+
+typedef struct {
+    int count;
+    HTTP_CookieJarEntry items[HTTP_COOKIE_JAR_CAPACITY];
+} HTTP_CookieJar;
+
 // Maximum number of descriptors the client will want
 // to wait on. It's one per connection plus the wakeup
 // self-pipe.
@@ -794,17 +892,31 @@ typedef struct {
     // Generation counter for request builder validation
     uint16_t gen;
 
+    // Opaque pointer set by the user while building
+    // the request. It's returned alongside the result.
+    void *user;
+
+    // TODO: comment
+    bool trace_bytes;
+
+    // Allocated copy of the URL string
+    HTTP_String url_buffer;
+
+    // Parsed URL for connection establishment
+    // All url.* pointers reference into url_buffer
+    HTTP_URL url;
+
     // Data received from the server
     ByteQueue input;
 
     // Data being sent to the server
     ByteQueue output;
 
-    // HTTP method for the request
-    HTTP_Method method;
-
-    // Parsed URL for connection establishment
-    HTTP_URL url;
+    // If the request is COMPLETE, indicates
+    // whether it completed with an error (-1)
+    // or a success (0). If it was a success,
+    // the response field is valid.
+    int result;
 
     // Parsed response once complete
     HTTP_Response response;
@@ -817,6 +929,9 @@ struct HTTP_Client {
     // connection.
     uint32_t input_buffer_limit;
     uint32_t output_buffer_limit;
+
+    // List of cookies created during this session
+    HTTP_CookieJar cookie_jar;
 
     // Array of connections. The counter contains the
     // number of structs such that state!=FREE.
@@ -863,15 +978,14 @@ typedef struct {
     uint16_t gen;
 } HTTP_RequestBuilder;
 
-// Create a new request builder object. If the response
-// pointer is NULL, a brand new builder is created. If
-// response isn't NULL (and http_free_response wasn't
-// called on it yet), the connection associated to that
-// previous exchange is reused. Note that it's up to the
-// user to make sure the requests are targeting the same
-// host. Returns 0 on success, -1 on error.
-int http_client_get_builder(HTTP_Client *client,
-    HTTP_Response *response, HTTP_RequestBuilder *builder);
+// Create a new request builder object.
+HTTP_RequestBuilder http_client_get_builder(HTTP_Client *client);
+
+// TODO: comment
+void http_request_builder_set_user(HTTP_RequestBuilder builder, void *user);
+
+// TODO: comment
+void http_request_builder_set_trace_bytes(HTTP_RequestBuilder builder, bool trace_bytes);
 
 // Set the method and URL of the current request. This is the first
 // function of the request builder that the user must call.
@@ -907,11 +1021,11 @@ int http_client_process_events(HTTP_Client *client,
 // may be availabe. This function returns one of the
 // buffered responses. If a request was available, true
 // is returned. If no more are avaiable, false is returned.
-// The returned response must either be freed using the
-// http_free_response function or reused by passing it
-// to http_client_get_builder.
+// The returned response must be freed using the
+// http_free_response function.
+// TODO: Better comment talking about output arguments
 bool http_client_next_response(HTTP_Client *client,
-    HTTP_Response **response);
+    HTTP_Response **response, void **user);
 
 // Free a response object. You can't access its fields
 // again after this.

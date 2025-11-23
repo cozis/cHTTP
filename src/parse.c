@@ -1322,3 +1322,271 @@ bool http_match_host(HTTP_Request *req, HTTP_String domain, int port)
     HTTP_String host = req->headers[idx].value;
     return http_streq(host, domain);
 }
+
+
+// <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
+static int parse_date(Scanner *s, HTTP_Date *out)
+{
+    struct { HTTP_String str; HTTP_WeekDay val; } week_day_table[] = {
+        { HTTP_STR("Mon, "), HTTP_WEEKDAY_MON },
+        { HTTP_STR("Tue, "), HTTP_WEEKDAY_TUE },
+        { HTTP_STR("Wed, "), HTTP_WEEKDAY_WED },
+        { HTTP_STR("Thu, "), HTTP_WEEKDAY_THU },
+        { HTTP_STR("Fri, "), HTTP_WEEKDAY_FRI },
+        { HTTP_STR("Sat, "), HTTP_WEEKDAY_SAT },
+        { HTTP_STR("Sun, "), HTTP_WEEKDAY_SUN },
+    };
+
+    bool found = false;
+    for (int i = 0; i < HTTP_COUNT(week_day_table); i++)
+        if (consume_str(s, week_day_table[i].str)) {
+            out->week_day = week_day_table[i].val;
+            found = true;
+            break;
+        }
+    if (!found)
+        return -1;
+
+    if (1 >= s->len - s->cur
+        || !is_digit(s->src[s->cur+0])
+        || !is_digit(s->src[s->cur+1]))
+        return -1;
+    out->day
+        = (s->src[s->cur+0] - '0') * 10
+        + (s->src[s->cur+1] - '0') * 1;
+    s->cur += 2;
+
+    struct { HTTP_String str; HTTP_Month val; } month_table[] = {
+        { HTTP_STR(" Jan "), HTTP_MONTH_JAN },
+        { HTTP_STR(" Feb "), HTTP_MONTH_FEB },
+        { HTTP_STR(" Mar "), HTTP_MONTH_MAR },
+        { HTTP_STR(" Apr "), HTTP_MONTH_APR },
+        { HTTP_STR(" May "), HTTP_MONTH_MAY },
+        { HTTP_STR(" Jun "), HTTP_MONTH_JUN },
+        { HTTP_STR(" Jul "), HTTP_MONTH_JUL },
+        { HTTP_STR(" Aug "), HTTP_MONTH_AUG },
+        { HTTP_STR(" Sep "), HTTP_MONTH_SEP },
+        { HTTP_STR(" Oct "), HTTP_MONTH_OCT },
+        { HTTP_STR(" Nov "), HTTP_MONTH_NOV },
+        { HTTP_STR(" Dec "), HTTP_MONTH_DEC },
+    };
+
+    found = false;
+    for (int i = 0; i < HTTP_COUNT(month_table); i++)
+        if (consume_str(s, month_table[i].str)) {
+            out->month = month_table[i].val;
+            found = true;
+            break;
+        }
+    if (!found)
+        return -1;
+
+    if (3 >= s->len - s->cur
+        || !is_digit(s->src[s->cur+0])
+        || !is_digit(s->src[s->cur+1])
+        || !is_digit(s->src[s->cur+2])
+        || !is_digit(s->src[s->cur+3]))
+        return -1;
+    out->year
+        = (s->src[s->cur+0] - '0') * 1000
+        + (s->src[s->cur+1] - '0') * 100
+        + (s->src[s->cur+2] - '0') * 10
+        + (s->src[s->cur+3] - '0') * 1;
+    s->cur += 4;
+
+    if (s->cur == s->len || s->src[s->cur] != ' ')
+        return -1;
+    s->cur++;
+
+    if (7 >= s->len - s->cur
+        || !is_digit(s->src[s->cur+0])
+        || !is_digit(s->src[s->cur+1])
+        || s->src[s->cur+2] != ':'
+        || !is_digit(s->src[s->cur+3])
+        || !is_digit(s->src[s->cur+4])
+        || s->src[s->cur+5] != ':'
+        || !is_digit(s->src[s->cur+6])
+        || !is_digit(s->src[s->cur+7])
+        || s->src[s->cur+8] != ' '
+        || s->src[s->cur+9] != 'G'
+        || s->src[s->cur+10] != 'M'
+        || s->src[s->cur+11] != 'T')
+        return -1;
+    out->hour
+        = (s->src[s->cur+0] - '0') * 10
+        + (s->src[s->cur+1] - '0') * 1;
+    out->minute
+        = (s->src[s->cur+3] - '0') * 10
+        + (s->src[s->cur+4] - '0') * 1;
+    out->second
+        = (s->src[s->cur+6] - '0') * 10
+        + (s->src[s->cur+7] - '0') * 1;
+    s->cur += 12;
+    return 0;
+}
+
+// cookie-octet = %x21 / %x23-2B / %x2D-3A / %x3C-5B / %x5D-7E
+//              ; US-ASCII characters excluding CTLs,
+//              ; whitespace, DQUOTE, comma, semicolon,
+//              ; and backslash
+static bool is_cookie_octet(char c)
+{
+    return c == 0x21 ||
+           (c >= 0x23 && c <= 0x2B) ||
+           (c >= 0x2D && c <= 0x3A) ||
+           (c >= 0x3C && c <= 0x5B) ||
+           (c >= 0x5D && c <= 0x7E);
+}
+
+int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
+{
+    Scanner s = { str.ptr, str.len, 0 };
+
+    // cookie-name = token
+    if (s.cur == s.len || !is_tchar(s.src[s.cur]))
+        return -1;
+    int off = s.cur;
+    do
+        s.cur++;
+    while (s.cur < s.len && is_tchar(s.src[s.cur]));
+    out->name = (HTTP_String) { s.src + off, s.cur - off };
+
+    // cookie-pair = cookie-name "=" cookie-value
+    if (s.cur == s.len || s.src[s.cur] != '=')
+        return -1;
+    s.cur++;
+
+    // cookie-value = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
+    if (s.cur < s.len && s.src[s.cur] == '"') {
+        s.cur++; // Consume opening double quote
+        int off = s.cur;
+        while (s.cur < s.len && is_cookie_octet(s.src[s.cur]))
+            s.cur++;
+        if (s.cur == s.len || s.src[s.cur] != '"')
+            return -1; // Missing closing double quote
+        out->value = (HTTP_String) { s.src + off, s.cur - off };
+        s.cur++; // Consume closing double quote
+    } else {
+        int off = s.cur;
+        while (s.cur < s.len && is_cookie_octet(s.src[s.cur]))
+            s.cur++;
+        out->value = (HTTP_String) { s.src + off, s.cur - off };
+    }
+
+    // *( ";" SP cookie-av )
+    //
+    // cookie-av = expires-av / max-age-av / domain-av /
+    //             path-av / secure-av / httponly-av /
+    //             extension-av
+    out->secure = false;
+    out->http_only = false;
+    out->have_date = false;
+    out->have_max_age = false;
+    out->have_domain = false;
+    out->have_path = false;
+    while (consume_str(&s, HTTP_STR("; "))) {
+        if (consume_str(&s, HTTP_STR("Expires="))) {
+
+            // expires-av = "Expires=" sane-cookie-date
+            if (parse_date(&s, &out->date) < 0)
+                return -1;
+            out->have_date = true;
+
+        } else if (consume_str(&s, HTTP_STR("Max-Age="))) {
+
+            // max-age-av = "Max-Age=" non-zero-digit *DIGIT
+
+            uint32_t value = 0;
+            if (s.cur == s.len || !is_digit(s.src[s.cur]))
+                return -1;
+            do {
+                int d = s.src[s.cur++] - '0';
+                if (value > (UINT32_MAX - d) / 10)
+                    return -1;
+                value = value * 10 + d;
+            } while (s.cur < s.len && is_digit(s.src[s.cur]));
+
+            out->have_max_age = true;
+            out->max_age = value;
+
+        } else if (consume_str(&s, HTTP_STR("Domain="))) {
+
+            // domain-av = "Domain=" domain-value
+            // domain-value = <subdomain>
+            //              ; defined in RFC 1034, Section 3.5
+            //
+            // From RFC 1034:
+            //   <subdomain> ::= <label> | <subdomain> "." <label>
+            //   <label> ::= <letter> [ [ <ldh-str> ] <let-dig> ]
+            //   <ldh-str> ::= <let-dig-hyp> | <let-dig-hyp> <ldh-str>
+            //   <let-dig-hyp> ::= <let-dig> | "-"
+            //   <let-dig> ::= <letter> | <digit>
+            //   <letter> ::= any one of the 52 alphabetic characters A through Z in upper case and a through z in lower case
+            //   <digit> ::= any one of the ten digits 0 through 9
+            //
+            // If my understanding is correct, a domain is a list of labels
+            // concatenated by dots. Each label may contain letters, digits,
+            // hyphens, but the first character must be a letter and the last
+            // one can't be a hyphen.
+
+            int off = s.cur;
+            if (s.cur == s.len || !is_alpha(s.src[s.cur]))
+                return -1;
+            do
+                s.cur++;
+            while (s.cur < s.len && (
+                is_digit(s.src[s.cur]) ||
+                is_alpha(s.src[s.cur]) ||
+                s.src[s.cur] == '-'));
+
+            if (s.src[s.cur-1] == '-')
+                return -1;
+
+            while (s.cur < s.len && s.src[s.cur] == '.') {
+                s.cur++; // Consume dot
+
+                if (s.cur == s.len || !is_alpha(s.src[s.cur]))
+                    return -1;
+                do
+                    s.cur++;
+                while (s.cur < s.len && (
+                    is_digit(s.src[s.cur]) ||
+                    is_alpha(s.src[s.cur]) ||
+                    s.src[s.cur] == '-'));
+
+                if (s.src[s.cur-1] == '-')
+                    return -1;
+            }
+
+            out->have_domain = true;
+            out->domain = (HTTP_String) { s.src + off, s.cur - off };
+
+        } else if (consume_str(&s, HTTP_STR("Path="))) {
+
+            // path-av = "Path=" path-value
+            // path-value = <any CHAR except CTLs or ";">
+
+            int off = s.cur;
+            while (s.cur < s.len && s.src[s.cur] >= 0x20 && s.src[s.cur] != 0x7F && s.src[s.cur] != ';')
+                s.cur++;
+
+            out->have_path = true;
+            out->path = (HTTP_String) { s.src + off, s.cur - off };
+
+        } else if (consume_str(&s, HTTP_STR("Secure"))) {
+
+            // secure-av = "Secure"
+            out->secure = true;
+
+        } else if (consume_str(&s, HTTP_STR("HttpOnly"))) {
+
+            // httponly-av = "HttpOnly"
+            out->http_only = true;
+
+        } else {
+            return -1; // Invalid attribute
+        }
+    }
+
+    return 0;
+}

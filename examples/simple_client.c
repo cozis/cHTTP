@@ -12,9 +12,7 @@ int main(void)
     if (http_client_init(&client) < 0)
         return -1;
 
-    HTTP_RequestBuilder builder;
-    if (http_client_get_builder(&client, NULL, &builder) < 0)
-        return -1;
+    HTTP_RequestBuilder builder = http_client_get_builder(&client);
 
     http_request_builder_url(builder,
         HTTP_METHOD_GET,
@@ -49,7 +47,8 @@ int main(void)
             return -1;
 
         HTTP_Response *response;
-        while (http_client_next_response(&client, &response)) {
+        void *user;
+        while (http_client_next_response(&client, &response, &user)) {
             // TODO
             http_free_response(response);
         }
