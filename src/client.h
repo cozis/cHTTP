@@ -59,6 +59,12 @@ typedef struct HTTP_Client HTTP_Client;
 typedef struct {
     HTTP_ClientConnState state;
 
+    // Handle to the socket
+    SocketHandle handle;
+
+    // Pointer back to the client
+    HTTP_Client *client;
+
     // Generation counter for request builder validation
     uint16_t gen;
 
@@ -73,6 +79,9 @@ typedef struct {
     // in case the server wants to set some cookies.
     HTTP_String domain;
     HTTP_String path;
+
+    // Parsed URL for connection establishment
+    HTTP_URL url;
 
     // Data received from the server
     ByteQueue input;
@@ -146,15 +155,8 @@ typedef struct {
     uint16_t gen;
 } HTTP_RequestBuilder;
 
-// Create a new request builder object. If the response
-// pointer is NULL, a brand new builder is created. If
-// response isn't NULL (and http_free_response wasn't
-// called on it yet), the connection associated to that
-// previous exchange is reused. Note that it's up to the
-// user to make sure the requests are targeting the same
-// host. Returns 0 on success, -1 on error.
-int http_client_get_builder(HTTP_Client *client,
-    HTTP_Response *response, HTTP_RequestBuilder *builder);
+// Create a new request builder object.
+HTTP_RequestBuilder http_client_get_builder(HTTP_Client *client);
 
 // TODO: comment
 void http_request_builder_set_user(HTTP_RequestBuilder builder, void *user);

@@ -3659,6 +3659,11 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/client.c
 ////////////////////////////////////////////////////////////////////////////////////////
+static void http_client_conn_free(HTTP_ClientConn *conn)
+{
+    byte_queue_free(&conn->output);
+    byte_queue_free(&conn->input);
+}
 
 int http_client_init(HTTP_Client *client)
 {
@@ -3686,7 +3691,7 @@ void http_client_free(HTTP_Client *client)
 {
     socket_manager_free(&client->sockets);
 
-    for (int i = 0; i < cookie_jar->count; i++)
+    for (int i = 0; i < client->cookie_jar.count; i++)
         free(client->cookie_jar.items[i].name.ptr);
 
     for (int i = 0, j = 0; j < client->num_conns; i++) {
@@ -3757,12 +3762,14 @@ HTTP_RequestBuilder http_client_get_builder(HTTP_Client *client)
     client->num_conns++;
 
     client->conns[i].state = HTTP_CLIENT_CONN_WAIT_LINE;
+    client->conns[i].handle = SOCKET_HANDLE_INVALID;
+    client->conns[i].client = client;
     client->conns[i].user = NULL;
     client->conns[i].trace_bytes = false;
     byte_queue_init(&client->conns[i].input,  client->input_buffer_limit);
     byte_queue_init(&client->conns[i].output, client->output_buffer_limit);
 
-    return (HTTP_RequestBuilder) { client, conn - client->conns, conn->gen };
+    return (HTTP_RequestBuilder) { client, i, client->conns[i].gen };
 }
 
 // TODO: test this function
@@ -3776,7 +3783,7 @@ static bool is_subdomain(HTTP_String domain, HTTP_String subdomain)
 
     HTTP_String subdomain_suffix = {
         subdomain.ptr + subdomain.len - domain.len,
-        entry.domain.len
+        domain.len
     };
     if (subdomain_suffix.ptr[-1] != '.' || !http_streq(domain, subdomain_suffix))
         return false;
@@ -3821,7 +3828,7 @@ static bool should_send_cookie(HTTP_CookieJarEntry entry, HTTP_URL url)
     }
 
     if (entry.secure) {
-        if (!http_streq(url.scheme, HTTP_STR("https"))
+        if (!http_streq(url.scheme, HTTP_STR("https")))
             return false; // Cookie was marked as secure but the target URL is not HTTPS
     }
 
@@ -3893,13 +3900,13 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
 
     conn->domain = domain;
     conn->path   = path;
+    conn->url    = parsed_url;
 
     // Write method
     HTTP_String method_str = get_method_string(method);
     byte_queue_write(&conn->output, method_str.ptr, method_str.len);
 
-    HTTP_String path = parsed_url.path;
-    byte_queue_write(&conn->output, path.ptr, path.len);
+    byte_queue_write(&conn->output, parsed_url.path.ptr, parsed_url.path.len);
 
     HTTP_String query = parsed_url.query;
     if (query.len > 0) {
@@ -3923,18 +3930,19 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
 
     // Find all entries from the cookie jar that should
     // be sent to this server and append headers for them
-    HTTP_CookieJar *cookie_jar = &conn->client->cookie_jar;
+    HTTP_Client *client = builder.client;
+    HTTP_CookieJar *cookie_jar = &client->cookie_jar;
     for (int i = 0; i < cookie_jar->count; i++) {
         HTTP_CookieJarEntry entry = cookie_jar->items[i];
         if (should_send_cookie(entry, parsed_url)) {
             // TODO: Adding one header per cookie may cause the number of
             //       headers to increase significantly. Should probably group
             //       3-4 cookies in the same headers.
-            byte_queue_write(&conn->output, HTTP_STR("Cookie: "));
-            byte_queue_write(&conn->output, entry.name);
-            byte_queue_write(&conn->output, HTTP_STR("="));
-            byte_queue_write(&conn->output, entry.value);
-            byte_queue_write(&conn->output, HTTP_STR("\r\n"));
+            byte_queue_write(&conn->output, "Cookie: ", 8);
+            byte_queue_write(&conn->output, entry.name.ptr, entry.name.len);
+            byte_queue_write(&conn->output, "=", 1);
+            byte_queue_write(&conn->output, entry.value.ptr, entry.value.len);
+            byte_queue_write(&conn->output, "\r\n", 2);
         }
     }
 
@@ -3997,23 +4005,23 @@ url_to_connect_target(HTTP_URL url,
 
     if (authority.port < 1) {
         if (http_streq(url.scheme, HTTP_STR("https")))
-            target.port = 443;
+            target->port = 443;
         else
-            target.port = 80;
+            target->port = 80;
     } else {
         target->port = authority.port;
     }
 
     // Set up target based on host type
     if (authority.host.mode == HTTP_HOST_MODE_NAME) {
-        target.type = CONNECT_TARGET_NAME;
-        target.name = authority.host.name;
+        target->type = CONNECT_TARGET_NAME;
+        target->name = authority.host.name;
     } else if (authority.host.mode == HTTP_HOST_MODE_IPV4) {
-        target.type = CONNECT_TARGET_IPV4;
-        target.ipv4 = authority.host.ipv4;
+        target->type = CONNECT_TARGET_IPV4;
+        target->ipv4 = authority.host.ipv4;
     } else if (authority.host.mode == HTTP_HOST_MODE_IPV6) {
-        target.type = CONNECT_TARGET_IPV6;
-        target.ipv6 = authority.host.ipv6;
+        target->type = CONNECT_TARGET_IPV6;
+        target->ipv6 = authority.host.ipv6;
     } else {
         return -1;
     }
@@ -4044,11 +4052,11 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
         goto error;
 
     ConnectTarget target;
-    if (url_to_connect_target(url, &target) < 0)
+    if (url_to_connect_target(conn->url, &target) < 0)
         goto error;
 
-    bool secure = http_streq(url.scheme, HTTP_STR("https"));
-    if (socket_connect(&conn->client->sockets, 1, &target, secure, conn) < 0)
+    bool secure = http_streq(conn->url.scheme, HTTP_STR("https"));
+    if (socket_connect(&client->sockets, 1, &target, secure, conn) < 0)
         goto error;
 
     conn->state = HTTP_CLIENT_CONN_FLUSHING;
@@ -4071,7 +4079,7 @@ static void save_one_cookie(HTTP_CookieJar *cookie_jar,
         return; // Cookie jar capacity reached
 
     HTTP_SetCookie parsed;
-    if (http_parse_set_cookie(headers[i].value, &parsed) < 0)
+    if (http_parse_set_cookie(set_cookie.value, &parsed) < 0)
         return; // Ignore invalid Set-Cookie headers
 
     HTTP_CookieJarEntry entry;
@@ -4089,7 +4097,7 @@ static void save_one_cookie(HTTP_CookieJar *cookie_jar,
     }
 
     if (parsed.have_path) {
-        antry.exact_path = false;
+        entry.exact_path = false;
         entry.path = parsed.path;
     } else {
         // TODO: Set the path to the current endpoint minus one level
@@ -4131,7 +4139,7 @@ static void save_cookies(HTTP_CookieJar *cookie_jar,
 
     for (int i = 0; i < num_headers; i++)
         if (http_streqcase(headers[i].name, HTTP_STR("Set-Cookie"))) // TODO: headers are case-insensitive, right?
-            save_one_cookie(cookie_jar, headers[i].value, domain, path);
+            save_one_cookie(cookie_jar, headers[i], domain, path);
 }
 
 int http_client_process_events(HTTP_Client *client,
@@ -4158,6 +4166,10 @@ int http_client_process_events(HTTP_Client *client,
 
         } else if (events[i].type == SOCKET_EVENT_READY) {
 
+            // Store the handle if this is a new connection
+            if (conn->handle == SOCKET_HANDLE_INVALID)
+                conn->handle = events[i].handle;
+
             if (conn->state == HTTP_CLIENT_CONN_FLUSHING) {
 
                 ByteView src = byte_queue_read_buf(&conn->output);
@@ -4167,7 +4179,7 @@ int http_client_process_events(HTTP_Client *client,
                     num = socket_send(&client->sockets, conn->handle, src.ptr, src.len);
 
                 if (conn->trace_bytes)
-                    print_bytes(HTTP_STR("<< "), src.ptr, num);
+                    print_bytes(HTTP_STR("<< "), (HTTP_String){src.ptr, num});
 
                 byte_queue_read_ack(&conn->output, num);
 
@@ -4194,7 +4206,7 @@ int http_client_process_events(HTTP_Client *client,
                     num = socket_recv(&client->sockets, conn->handle, dst.ptr, dst.len);
 
                 if (conn->trace_bytes)
-                    print_bytes(HTTP_STR(">> "), dst.ptr, num);
+                    print_bytes(HTTP_STR(">> "), (HTTP_String){dst.ptr, num});
 
                 byte_queue_write_ack(&conn->input, num);
 
