@@ -824,6 +824,11 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 #define HTTP_CLIENT_CAPACITY (1<<7)
 #endif
 
+// Maximum number of descriptors the client will want
+// to wait on. It's one per connection plus the wakeup
+// self-pipe.
+#define HTTP_CLIENT_POLL_CAPACITY (HTTP_CLIENT_CAPACITY+1)
+
 #ifndef HTTP_COOKIE_JAR_CAPACITY
 // Maximum number of cookies that can be associated to a
 // single client.
@@ -861,11 +866,6 @@ typedef struct {
     int count;
     HTTP_CookieJarEntry items[HTTP_COOKIE_JAR_CAPACITY];
 } HTTP_CookieJar;
-
-// Maximum number of descriptors the client will want
-// to wait on. It's one per connection plus the wakeup
-// self-pipe.
-#define HTTP_CLIENT_POLL_CAPACITY (HTTP_CLIENT_CAPACITY+1)
 
 typedef enum {
     HTTP_CLIENT_CONN_FREE,
@@ -953,7 +953,6 @@ struct HTTP_Client {
     // allocating the exact number of sockets we
     // will need.
     Socket socket_pool[HTTP_CLIENT_CAPACITY];
-
 };
 
 // Initialize an HTTP client object. This allows one to

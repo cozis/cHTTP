@@ -2590,16 +2590,9 @@ int socket_manager_wakeup(SocketManager *sm)
     return ret;
 }
 
-static int socket_manager_register_events_nolock(
+static void socket_manager_register_events_nolock(
     SocketManager *sm, EventRegister *reg)
 {
-    // The poll array must be able to hold descriptors
-    // for a socket manager at full capacity. Note that
-    // other than having a number of connection sockets,
-    // the manager also needs 2 for the listeners and
-    // one for the wakeup self-pipe.
-    if (reg->max_polled < sm->max_used+3)
-        return -1;
     reg->num_polled = 0;
 
     reg->polled[reg->num_polled].fd = sm->wait_sock;
@@ -2644,7 +2637,7 @@ static int socket_manager_register_events_nolock(
         // empty list.
         if (s->state == SOCKET_STATE_DIED || s->state == SOCKET_STATE_ESTABLISHED_READY) {
             reg->num_polled = 0;
-            return 0;
+            return;
         }
 
         if (s->events) {
@@ -2655,8 +2648,6 @@ static int socket_manager_register_events_nolock(
             reg->num_polled++;
         }
     }
-
-    return 0;
 }
 
 int socket_manager_register_events(SocketManager *sm,
@@ -2665,11 +2656,11 @@ int socket_manager_register_events(SocketManager *sm,
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
-    int ret = socket_manager_register_events_nolock(sm, reg);
+    socket_manager_register_events_nolock(sm, reg);
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
-    return ret;
+    return 0;
 }
 
 static SocketHandle
@@ -2979,13 +2970,14 @@ int socket_connect(SocketManager *sm, int num_targets,
             s->addrs[i] = resolved[i];
     }
 
-    s->state = SOCKET_STATE_PENDING;
-    s->sock = NATIVE_SOCKET_INVALID;
-    s->user = user;
+    s->state  = SOCKET_STATE_PENDING;
+    s->sock   = NATIVE_SOCKET_INVALID;
+    s->events = 0;
+    s->user   = user;
 #ifdef HTTPS_ENABLED
     s->server_secure_context = NULL;
     s->client_secure_context = NULL;
-    s->ssl = NULL;
+    s->ssl    = NULL;
     if (secure)
         s->client_secure_context = &sm->client_secure_context;
 #endif
@@ -3659,6 +3651,7 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/client.c
 ////////////////////////////////////////////////////////////////////////////////////////
+
 static void http_client_conn_free(HTTP_ClientConn *conn)
 {
     byte_queue_free(&conn->output);
@@ -3879,19 +3872,31 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
     if (conn->state != HTTP_CLIENT_CONN_WAIT_LINE)
         return; // Request line already written
 
-    // Allocate a copy of the URL string so the parsed URL pointers remain valid
+    // Allocate a copy of the URL string so the parsed
+    // URL pointers remain valid
     char *url_copy = malloc(url.len);
-    if (url_copy == NULL)
-        return; // TODO: set error
+    if (url_copy == NULL) {
+        conn->state = HTTP_CLIENT_CONN_COMPLETE;
+        conn->result = -1;
+        return;
+    }
     memcpy(url_copy, url.ptr, url.len);
 
     conn->url_buffer.ptr = url_copy;
     conn->url_buffer.len = url.len;
 
     // Parse the copied URL (all url.* pointers will reference url_buffer)
-    if (http_parse_url(conn->url_buffer.ptr, conn->url_buffer.len, &conn->url) != 1) {
-        free(conn->url_buffer.ptr);
-        return; // TODO: set error
+    if (http_parse_url(conn->url_buffer.ptr, conn->url_buffer.len, &conn->url) < 0) {
+        conn->state = HTTP_CLIENT_CONN_COMPLETE;
+        conn->result = -1;
+        return;
+    }
+
+    if (!http_streq(conn->url.scheme, HTTP_STR("http")) &&
+        !http_streq(conn->url.scheme, HTTP_STR("https"))) {
+        conn->state = HTTP_CLIENT_CONN_COMPLETE;
+        conn->result = -1;
+        return;
     }
 
     // Write method
@@ -4030,6 +4035,9 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
     HTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
         return -1;
+
+    if (conn->state == HTTP_CLIENT_CONN_COMPLETE)
+        goto error; // Early completion due to an error
 
     if (conn->state == HTTP_CLIENT_CONN_WAIT_HEADER) {
         // No body, just end headers
@@ -4537,7 +4545,7 @@ http_server_conn_process_events(HTTP_Server *server, HTTP_ServerConn *conn)
 
         byte_queue_write_ack(&conn->input, num);
 
-        if (byte_queue_error(&conn->output)) {
+        if (byte_queue_error(&conn->input)) {
             socket_close(&server->sockets, conn->handle);
         } else {
             check_request_buffer(server, conn);

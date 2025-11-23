@@ -134,7 +134,6 @@ struct HTTP_Client {
     // allocating the exact number of sockets we
     // will need.
     Socket socket_pool[HTTP_CLIENT_CAPACITY];
-
 };
 
 // Initialize an HTTP client object. This allows one to

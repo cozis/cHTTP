@@ -620,16 +620,9 @@ int socket_manager_wakeup(SocketManager *sm)
     return ret;
 }
 
-static int socket_manager_register_events_nolock(
+static void socket_manager_register_events_nolock(
     SocketManager *sm, EventRegister *reg)
 {
-    // The poll array must be able to hold descriptors
-    // for a socket manager at full capacity. Note that
-    // other than having a number of connection sockets,
-    // the manager also needs 2 for the listeners and
-    // one for the wakeup self-pipe.
-    if (reg->max_polled < sm->max_used+3)
-        return -1;
     reg->num_polled = 0;
 
     reg->polled[reg->num_polled].fd = sm->wait_sock;
@@ -674,7 +667,7 @@ static int socket_manager_register_events_nolock(
         // empty list.
         if (s->state == SOCKET_STATE_DIED || s->state == SOCKET_STATE_ESTABLISHED_READY) {
             reg->num_polled = 0;
-            return 0;
+            return;
         }
 
         if (s->events) {
@@ -685,8 +678,6 @@ static int socket_manager_register_events_nolock(
             reg->num_polled++;
         }
     }
-
-    return 0;
 }
 
 int socket_manager_register_events(SocketManager *sm,
@@ -695,11 +686,11 @@ int socket_manager_register_events(SocketManager *sm,
     if (mutex_lock(&sm->mutex) < 0)
         return -1;
 
-    int ret = socket_manager_register_events_nolock(sm, reg);
+    socket_manager_register_events_nolock(sm, reg);
 
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
-    return ret;
+    return 0;
 }
 
 static SocketHandle

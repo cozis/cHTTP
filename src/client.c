@@ -1,3 +1,4 @@
+
 static void http_client_conn_free(HTTP_ClientConn *conn)
 {
     byte_queue_free(&conn->output);
@@ -218,19 +219,31 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
     if (conn->state != HTTP_CLIENT_CONN_WAIT_LINE)
         return; // Request line already written
 
-    // Allocate a copy of the URL string so the parsed URL pointers remain valid
+    // Allocate a copy of the URL string so the parsed
+    // URL pointers remain valid
     char *url_copy = malloc(url.len);
-    if (url_copy == NULL)
-        return; // TODO: set error
+    if (url_copy == NULL) {
+        conn->state = HTTP_CLIENT_CONN_COMPLETE;
+        conn->result = -1;
+        return;
+    }
     memcpy(url_copy, url.ptr, url.len);
 
     conn->url_buffer.ptr = url_copy;
     conn->url_buffer.len = url.len;
 
     // Parse the copied URL (all url.* pointers will reference url_buffer)
-    if (http_parse_url(conn->url_buffer.ptr, conn->url_buffer.len, &conn->url) != 1) {
-        free(conn->url_buffer.ptr);
-        return; // TODO: set error
+    if (http_parse_url(conn->url_buffer.ptr, conn->url_buffer.len, &conn->url) < 0) {
+        conn->state = HTTP_CLIENT_CONN_COMPLETE;
+        conn->result = -1;
+        return;
+    }
+
+    if (!http_streq(conn->url.scheme, HTTP_STR("http")) &&
+        !http_streq(conn->url.scheme, HTTP_STR("https"))) {
+        conn->state = HTTP_CLIENT_CONN_COMPLETE;
+        conn->result = -1;
+        return;
     }
 
     // Write method
@@ -369,6 +382,9 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
     HTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
         return -1;
+
+    if (conn->state == HTTP_CLIENT_CONN_COMPLETE)
+        goto error; // Early completion due to an error
 
     if (conn->state == HTTP_CLIENT_CONN_WAIT_HEADER) {
         // No body, just end headers

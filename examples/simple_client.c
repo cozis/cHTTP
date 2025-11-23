@@ -14,6 +14,8 @@ int main(void)
 
     HTTP_RequestBuilder builder = http_client_get_builder(&client);
 
+    http_request_builder_set_trace_bytes(builder, true);
+
     http_request_builder_url(builder,
         HTTP_METHOD_GET,
         HTTP_STR("http://coz.is")
@@ -27,14 +29,14 @@ int main(void)
 
     for (;;) {
 
-        void *ptrs[HTTP_CLIENT_CAPACITY+1];
-        struct pollfd polled[HTTP_CLIENT_CAPACITY+1];
+        void *ptrs[HTTP_CLIENT_POLL_CAPACITY];
+        struct pollfd polled[HTTP_CLIENT_POLL_CAPACITY];
 
         EventRegister reg = {
             .ptrs=ptrs,
             .polled=polled,
             .num_polled=0,
-            .max_polled=HTTP_CLIENT_CAPACITY+1,
+            .max_polled=HTTP_CLIENT_POLL_CAPACITY,
         };
 
         if (http_client_register_events(&client, &reg) < 0)
@@ -49,7 +51,7 @@ int main(void)
         HTTP_Response *response;
         void *user;
         while (http_client_next_response(&client, &response, &user)) {
-            // TODO
+            printf("Received response\n");
             http_free_response(response);
         }
     }
