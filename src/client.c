@@ -224,9 +224,12 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
         return; // TODO: set error
     memcpy(url_copy, url.ptr, url.len);
 
-    // Parse the copied URL (url.scheme.ptr will point to url_copy)
-    if (http_parse_url(url_copy, url.len, &conn->url) != 1) {
-        free(url_copy);
+    conn->url_buffer.ptr = url_copy;
+    conn->url_buffer.len = url.len;
+
+    // Parse the copied URL (all url.* pointers will reference url_buffer)
+    if (http_parse_url(conn->url_buffer.ptr, conn->url_buffer.len, &conn->url) != 1) {
+        free(conn->url_buffer.ptr);
         return; // TODO: set error
     }
 
@@ -393,7 +396,7 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
 
 error:
     conn->state = HTTP_CLIENT_CONN_FREE;
-    free((void*)conn->url.scheme.ptr);
+    free(conn->url_buffer.ptr);
     byte_queue_free(&conn->input);
     byte_queue_free(&conn->output);
     client->num_conns--;
@@ -641,7 +644,7 @@ void http_free_response(HTTP_Response *response)
         return;
 
     conn->state = HTTP_CLIENT_CONN_FREE;
-    free((void*)conn->url.scheme.ptr);
+    free(conn->url_buffer.ptr);
     byte_queue_free(&conn->input);
     byte_queue_free(&conn->output);
     client->num_conns--;
