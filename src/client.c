@@ -218,28 +218,21 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
     if (conn->state != HTTP_CLIENT_CONN_WAIT_LINE)
         return; // Request line already written
 
-    // Parse the URL to extract components
+    // Allocate a copy of the URL string so the parsed URL pointers remain valid
+    char *url_copy = malloc(url.len);
+    if (url_copy == NULL)
+        return; // TODO: set error
+    memcpy(url_copy, url.ptr, url.len);
+
+    // Parse the copied URL
     HTTP_URL parsed_url;
-    if (http_parse_url(url.ptr, url.len, &parsed_url) != 1)
+    if (http_parse_url(url_copy, url.len, &parsed_url) != 1) {
+        free(url_copy);
         return; // TODO: set error
+    }
 
-    HTTP_String domain = parsed_url.authority.host.text;
-    HTTP_String path   = parsed_url.path;
-    char *p = malloc(domain.len + path.len);
-    if (p == NULL)
-        return; // TODO: set error
-
-    memcpy(p, domain.ptr, domain.len);
-    domain.ptr = p;
-    p += domain.len;
-
-    memcpy(p, path.ptr, path.len);
-    path.ptr = p;
-    p += path.len;
-
-    conn->domain = domain;
-    conn->path   = path;
-    conn->url    = parsed_url;
+    conn->url_buffer = url_copy;
+    conn->url = parsed_url;
 
     // Write method
     HTTP_String method_str = get_method_string(method);
@@ -404,7 +397,7 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
 
 error:
     conn->state = HTTP_CLIENT_CONN_FREE;
-    free(conn->domain.ptr);
+    free(conn->url_buffer);
     byte_queue_free(&conn->input);
     byte_queue_free(&conn->output);
     client->num_conns--;
@@ -587,8 +580,8 @@ int http_client_process_events(HTTP_Client *client,
                 save_cookies(&client->cookie_jar,
                     conn->response.headers,
                     conn->response.num_headers,
-                    conn->domain,
-                    conn->path);
+                    conn->url.authority.host.text,
+                    conn->url.path);
 
                 // TODO: Handle redirects here
             }
@@ -652,7 +645,7 @@ void http_free_response(HTTP_Response *response)
         return;
 
     conn->state = HTTP_CLIENT_CONN_FREE;
-    free(conn->domain.ptr);
+    free(conn->url_buffer);
     byte_queue_free(&conn->input);
     byte_queue_free(&conn->output);
     client->num_conns--;

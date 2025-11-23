@@ -894,12 +894,10 @@ typedef struct {
     // TODO: comment
     bool trace_bytes;
 
-    // Endpoint domain and path. These must be saved
-    // in case the server wants to set some cookies.
-    HTTP_String domain;
-    HTTP_String path;
-
     // Parsed URL for connection establishment
+    // The url_buffer contains the allocated copy of the URL string,
+    // and url.* pointers reference into this buffer
+    char *url_buffer;
     HTTP_URL url;
 
     // Data received from the server
