@@ -21,6 +21,8 @@ int http_client_init(HTTP_Client *client)
     client->input_buffer_limit = 1<<20;
     client->output_buffer_limit = 1<<20;
 
+    client->cookie_jar.count = 0;
+
     client->num_conns = 0;
     for (int i = 0; i < HTTP_CLIENT_CAPACITY; i++) {
         client->conns[i].state = HTTP_CLIENT_CONN_FREE;
@@ -39,6 +41,9 @@ int http_client_init(HTTP_Client *client)
 void http_client_free(HTTP_Client *client)
 {
     socket_manager_free(&client->sockets);
+
+    for (int i = 0; i < cookie_jar->count; i++)
+        free(client->cookie_jar.items[i].name.ptr);
 
     for (int i = 0, j = 0; j < client->num_conns; i++) {
         HTTP_ClientConn *conn = &client->conns[i];
@@ -187,6 +192,9 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
     }
     byte_queue_write(&conn->output, "\r\n", 2);
 
+    // TODO: Find all entries from the cookie jar that should
+    //       be sent to this server and append headers for them
+
     conn->state = HTTP_CLIENT_CONN_WAIT_HEADER;
 }
 
@@ -298,6 +306,65 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
     return 0;
 }
 
+static void save_cookies(HTTP_CookieJar *cookie_jar, HTTP_Header *headers, int num_headers)
+{
+    for (int i = 0; i < num_headers; i++) {
+        if (http_streqcase(headers[i].name, HTTP_STR("Set-Cookie"))) {
+
+            HTTP_SetCookie parsed;
+            if (http_parse_set_cookie(headers[i].value, &parsed) < 0)
+                continue; // Ignore invalid Set-Cookie headers
+
+            if (cookie_jar->count == HTTP_COOKIE_JAR_CAPACITY)
+                break;
+
+            HTTP_CookieJarEntry entry;
+            entry.name = parsed.name;
+            entry.value = parsed.value;
+
+            if (parsed.have_domain) {
+                // TODO: Check that the server can set a cookie for this domain
+                entry.domain = parsed.domain;
+            } else {
+                // TODO: Set the domain to the specific one used for this interaction
+                entry.domain = xxx;
+            }
+
+            if (parsed.have_path) {
+                entry.path = parsed.path;
+            } else {
+                // TODO: Set the path to the current endpoint minus one level
+                entry.path = xxx;
+            }
+
+            entry.secure = parsed.secure;
+
+            // Now copy all fields
+            char *p = malloc(entry.name.len + entry.value.len + entry.domain.len + entry.path.len);
+            if (p == NULL)
+                break;
+
+            memcpy(p, entry.name.ptr, entry.name.len);
+            entry.name.ptr = p;
+            p += entry.name.len;
+
+            memcpy(p, entry.value.ptr, entry.value.len);
+            entry.value.ptr = p;
+            p += entry.value.len;
+
+            memcpy(p, entry.domain.ptr, entry.domain.len);
+            entry.domain.ptr = p;
+            p += entry.domain.len;
+
+            memcpy(p, entry.path.ptr, entry.path.len);
+            entry.path.ptr = p;
+            p += entry.path.len;
+
+            cookie_jar->items[cookie_jar->count++] = entry;
+        }
+    }
+}
+
 // Look at the input buffer to see if a complete response
 // was buffered. If it was, change the connection's status
 // to COMPLETE and push it to the ready queue.
@@ -329,6 +396,8 @@ check_response_buffer(HTTP_Client *client, HTTP_ClientConn *conn)
 
         conn->state = HTTP_CLIENT_CONN_COMPLETE;
         conn->response.context = conn;
+
+        save_cookies(&client->cookie_jar, conn->response.headers, conn->response.num_headers);
 
         // Push to the ready queue
         assert(client->num_ready < HTTP_CLIENT_CAPACITY);

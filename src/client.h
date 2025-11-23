@@ -5,6 +5,25 @@
 #define HTTP_CLIENT_CAPACITY (1<<7)
 #endif
 
+#ifndef HTTP_COOKIE_JAR_CAPACITY
+// Maximum number of cookies that can be associated to a
+// single client.
+#define HTTP_COOKIE_JAR_CAPACITY 128
+#endif
+
+typedef struct {
+    HTTP_String name;
+    HTTP_String value;
+    HTTP_String domain;
+    HTTP_String path;
+    bool        secure;
+} HTTP_CookieJarEntry;
+
+typedef struct {
+    int count;
+    HTTP_CookieJarEntry items[HTTP_COOKIE_JAR_CAPACITY];
+} HTTP_CookieJar;
+
 typedef enum {
     HTTP_CLIENT_CONN_FREE,
     HTTP_CLIENT_CONN_WAIT_LINE,
@@ -53,6 +72,9 @@ struct HTTP_Client {
     // connection.
     uint32_t input_buffer_limit;
     uint32_t output_buffer_limit;
+
+    // List of cookies created during this session
+    HTTP_CookieJar cookie_jar;
 
     // Array of connections. The counter contains the
     // number of structs such that state!=FREE.
