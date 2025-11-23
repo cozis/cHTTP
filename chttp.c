@@ -3720,14 +3720,6 @@ int http_client_wakeup(HTTP_Client *client)
     return 0;
 }
 
-int http_client_register_events(HTTP_Client *client,
-    EventRegister *reg)
-{
-    if (socket_manager_register_events(&client->sockets, reg) < 0)
-        return -1;
-    return 0;
-}
-
 // Get a connection pointer from a request builder.
 // If the builder is invalid, returns NULL.
 static HTTP_ClientConn*
@@ -4154,6 +4146,14 @@ static void save_cookies(HTTP_CookieJar *cookie_jar,
             save_one_cookie(cookie_jar, headers[i], domain, path);
 }
 
+int http_client_register_events(HTTP_Client *client,
+    EventRegister *reg)
+{
+    if (socket_manager_register_events(&client->sockets, reg) < 0)
+        return -1;
+    return 0;
+}
+
 int http_client_process_events(HTTP_Client *client,
     EventRegister *reg)
 {
@@ -4329,6 +4329,40 @@ void http_free_response(HTTP_Response *response)
     byte_queue_free(&conn->input);
     byte_queue_free(&conn->output);
     client->num_conns--;
+}
+
+#ifdef _WIN32
+#define POLL WSAPoll
+#else
+#define POLL poll
+#endif
+
+int http_client_wait_response(HTTP_Client *client, HTTP_Response **response, void **user)
+{
+    for (;;) {
+        void *ptrs[HTTP_CLIENT_POLL_CAPACITY];
+        struct pollfd polled[HTTP_CLIENT_POLL_CAPACITY];
+
+        EventRegister reg = {
+            .ptrs=ptrs,
+            .polled=polled,
+            .num_polled=0,
+            .max_polled=HTTP_CLIENT_POLL_CAPACITY,
+        };
+        if (http_client_register_events(client, &reg) < 0)
+            return -1;
+
+        if (reg.num_polled > 0)
+            POLL(reg.polled, reg.num_polled, -1);
+
+        if (http_client_process_events(client, &reg) < 0)
+            return -1;
+
+        if (http_client_next_response(client, response, user))
+            break;
+    }
+
+    return 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////

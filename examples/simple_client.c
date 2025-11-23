@@ -17,9 +17,7 @@ int main(void)
     http_request_builder_set_trace_bytes(builder, true);
 
     http_request_builder_url(builder,
-        HTTP_METHOD_GET,
-        HTTP_STR("http://coz.is")
-    );
+        HTTP_METHOD_GET, HTTP_STR("http://coz.is"));
 
     http_request_builder_header(builder,
         HTTP_STR("Greeting: Hello from the cHTTP example!"));
@@ -27,39 +25,12 @@ int main(void)
     if (http_request_builder_send(builder) < 0)
         return -1;
 
-    for (;;) {
+    void *user;
+    HTTP_Response *response;
+    if (http_client_wait_response(&client, &response, &user) < 0)
+        return -1;
 
-        void *ptrs[HTTP_CLIENT_POLL_CAPACITY];
-        struct pollfd polled[HTTP_CLIENT_POLL_CAPACITY];
-
-        EventRegister reg = {
-            .ptrs=ptrs,
-            .polled=polled,
-            .num_polled=0,
-            .max_polled=HTTP_CLIENT_POLL_CAPACITY,
-        };
-
-        if (http_client_register_events(&client, &reg) < 0)
-            return -1;
-
-        if (reg.num_polled > 0)
-            POLL(reg.polled, reg.num_polled, -1);
-
-        if (http_client_process_events(&client, &reg) < 0)
-            return -1;
-
-        bool done = false;
-
-        HTTP_Response *response;
-        void *user;
-        while (http_client_next_response(&client, &response, &user)) {
-            printf("Received response\n");
-            http_free_response(response);
-            done = true;
-        }
-
-        if (done) break;
-    }
+    printf("Received a response!\n");
 
     http_client_free(&client);
     return 0;

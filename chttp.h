@@ -1026,6 +1026,9 @@ int http_client_process_events(HTTP_Client *client,
 bool http_client_next_response(HTTP_Client *client,
     HTTP_Response **response, void **user);
 
+// TODO: comment
+int http_client_wait_response(HTTP_Client *client, HTTP_Response **response, void **user);
+
 // Free a response object. You can't access its fields
 // again after this.
 void http_free_response(HTTP_Response *response);
