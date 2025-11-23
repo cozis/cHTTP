@@ -1424,8 +1424,8 @@ static int parse_date(Scanner *s, HTTP_Date *out)
     out->year
         = (s->src[s->cur+0] - '0') * 1000
         + (s->src[s->cur+1] - '0') * 100
-        + (s->src[s->cur+1] - '0') * 10
-        + (s->src[s->cur+1] - '0') * 1;
+        + (s->src[s->cur+2] - '0') * 10
+        + (s->src[s->cur+3] - '0') * 1;
     s->cur += 4;
 
     if (s->cur == s->len || s->src[s->cur] != ' ')
@@ -1469,46 +1469,57 @@ static bool is_cookie_octet(char c)
 }
 
 typedef struct {
+
     HTTP_String name;
     HTTP_String value;
+
     bool secure;
+    bool http_only;
+
+    bool have_date;
+    HTTP_Date date;
+
+    bool have_max_age;
+    uint32_t max_age;
+
+    bool have_domain;
+    HTTP_String domain;
+
 } HTTP_SetCookie;
 
 void http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
 {
-    char *src = str.ptr;
-    int   len = str.len;
-    int   cur = 0;
+    Scanner s = { str.ptr, str.len, 0 };
 
     // cookie-name = token
-    if (cur == len || !is_tchar(src[cur]))
+    if (s.cur == s.len || !is_tchar(s.src[s.cur]))
         return -1;
-    int off = cur;
+    int off = s.cur;
     do
-        cur++;
-    while (cur < len && is_tchar(src[cur]));
-    out->name = (HTTP_String) { src + off, cur - off };
+        s.cur++;
+    while (s.cur < s.len && is_tchar(s.src[s.cur]));
+    out->name = (HTTP_String) { s.src + off, s.cur - off };
 
     // cookie-pair = cookie-name "=" cookie-value
-    if (cur == len || src[cur] != '=')
+    if (s.cur == s.len || s.src[s.cur] != '=')
         return -1;
-    cur++;
+    s.cur++;
 
     // cookie-value = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
-    if (cur < len && src[cur] == '"') {
-        cur++; // Consume opening double quote
-        int off = cur;
-        while (cur < len && is_cookie_octet(src[cur]))
-            cur++;
-        if (cur == len || src[cur] != '"')
+    if (s.cur < s.len && s.src[s.cur] == '"') {
+        s.cur++; // Consume opening double quote
+        int off = s.cur;
+        while (s.cur < s.len && is_cookie_octet(s.src[s.cur]))
+            s.cur++;
+        if (s.cur == s.len || s.src[s.cur] != '"')
             return -1; // Missing closing double quote
-        out->value = (HTTP_String) { src + off, cur - off };
-        cur++; // Consume closing double quote
+        out->value = (HTTP_String) { s.src + off, s.cur - off };
+        s.cur++; // Consume closing double quote
     } else {
-        int off = cur;
-        while (cur < len && is_cookie_octet(src[cur]))
-            cur++;
-        out->value = (HTTP_String) { src + off, cur - off };
+        int off = s.cur;
+        while (s.cur < s.len && is_cookie_octet(s.src[s.cur]))
+            s.cur++;
+        out->value = (HTTP_String) { s.src + off, s.cur - off };
     }
 
     // *( ";" SP cookie-av )
@@ -1516,93 +1527,104 @@ void http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
     // cookie-av = expires-av / max-age-av / domain-av /
     //             path-av / secure-av / httponly-av /
     //             extension-av
-    while (cur < len && src[cur] == ';') {
-        cur++; // Consume semicolon
+    out->secure = false;
+    out->http_only = false;
+    out->have_date = false;
+    out->have_max_age = false;
+    out->have_domain = false;
+    while (consume_str(&s, HTTP_STR("; "))) {
+        if (consume_str(&s, HTTP_STR("Expires="))) {
 
-        if (cur == len || src[cur] != ' ')
-            return -1; // Missing space after semicolon
-        cur++;
+            // expires-av = "Expires=" sane-cookie-date
+            if (parse_date(&s, &out->date) < 0)
+                return -1;
+            out->have_date = true;
 
-        // expires-av = "Expires=" sane-cookie-date
-        if (7 < len - cur
-            && src[cur+0] == 'E'
-            && src[cur+1] == 'x'
-            && src[cur+2] == 'p'
-            && src[cur+3] == 'i'
-            && src[cur+4] == 'r'
-            && src[cur+5] == 'e'
-            && src[cur+6] == 's'
-            && src[cur+7] == '=') {
-            cur += 8;
-
-            // TODO
+        } else if (consume_str(&s, HTTP_STR("Max-Age="))) {
 
             // max-age-av = "Max-Age=" non-zero-digit *DIGIT
-        } else if (7 < len - cur
-            && src[cur+0] == 'M'
-            && src[cur+1] == 'a'
-            && src[cur+2] == 'x'
-            && src[cur+3] == '-'
-            && src[cur+4] == 'A'
-            && src[cur+5] == 'g'
-            && src[cur+6] == 'e'
-            && src[cur+7] == '=') {
-            cur += 8;
+
+            uint32_t value = 0;
+            if (s.cur == s.len || !is_digit(s.src[s.cur]))
+                return -1;
+            do {
+                int d = s.src[s.cur++] - '0';
+                if (value > (UINT32_MAX - d) / 10)
+                    return -1;
+                value = value * 10 + d;
+            } while (s.cur < s.len && is_digit(s.src[s.cur]));
+
+            out->have_max_age = true;
+            out->max_age = value;
+
+        } else if (consume_str(&s, HTTP_STR("Domain="))) {
 
             // domain-av = "Domain=" domain-value
-        } else if (6 < len - cur
-            && src[cur+0] == 'D'
-            && src[cur+1] == 'o'
-            && src[cur+2] == 'm'
-            && src[cur+3] == 'a'
-            && src[cur+4] == 'i'
-            && src[cur+5] == 'n'
-            && src[cur+6] == '=') {
-            cur += 7;
-
             // domain-value = <subdomain>
             //              ; defined in RFC 1034, Section 3.5
-            // TODO
+            //
+            // From RFC 1034:
+            //   <subdomain> ::= <label> | <subdomain> "." <label>
+            //   <label> ::= <letter> [ [ <ldh-str> ] <let-dig> ]
+            //   <ldh-str> ::= <let-dig-hyp> | <let-dig-hyp> <ldh-str>
+            //   <let-dig-hyp> ::= <let-dig> | "-"
+            //   <let-dig> ::= <letter> | <digit>
+            //   <letter> ::= any one of the 52 alphabetic characters A through Z in upper case and a through z in lower case
+            //   <digit> ::= any one of the ten digits 0 through 9
+            //
+            // If my understanding is correct, a domain is a list of labels
+            // concatenated by dots. Each label may contain letters, digits,
+            // hyphens, but the first character must be a letter and the last
+            // one can't be a hyphen.
+
+            int off = s.cur;
+            if (s.cur == s.len || !is_alpha(s.src[s.cur]))
+                return -1;
+            do
+                s.cur++;
+            while (s.cur < s.len && (
+                is_digit(s.src[s.cur]) ||
+                is_alpha(s.src[s.cur]) ||
+                s.src[s.cur] == '-'));
+
+            if (s.src[s.cur-1] == '-')
+                return -1;
+
+            while (s.cur < s.len && s.src[s.cur] == '.') {
+                s.cur++; // Consume dot
+
+                if (s.cur == s.len || !is_alpha(s.src[s.cur]))
+                    return -1;
+                do
+                    s.cur++;
+                while (s.cur < s.len && (
+                    is_digit(s.src[s.cur]) ||
+                    is_alpha(s.src[s.cur]) ||
+                    s.src[s.cur] == '-'));
+
+                if (s.src[s.cur-1] == '-')
+                    return -1;
+            }
+
+            out->have_domain = true;
+            out->domain = (HTTP_String) { s.src + off, s.cur - off };
+
+        } else if (consume_str(&s, HTTP_STR("Path="))) {
 
             // path-av = "Path=" path-value
-
-        } else if (4 < len - cur
-            && src[cur+0] == 'P'
-            && src[cur+1] == 'a'
-            && src[cur+2] == 't'
-            && src[cur+3] == 'h'
-            && src[cur+4] == '=') {
-            cur += 5;
-
             // path-value = <any CHAR except CTLs or ";">
-            //
-            // TODO
+
+            assert(0); // TODO
+
+        } else if (consume_str(&s, HTTP_STR("Secure"))) {
 
             // secure-av = "Secure"
-        } else if (5 < len - cur
-            && src[cur+0] == 'S'
-            && src[cur+1] == 'e'
-            && src[cur+2] == 'c'
-            && src[cur+3] == 'u'
-            && src[cur+4] == 'r'
-            && src[cur+5] == 'e') {
-            cur += 6;
+            out->secure = true;
 
-            // TODO
+        } else if (consume_str(&s, HTTP_STR("HttpOnly"))) {
 
             // httponly-av = "HttpOnly"
-        } else if (
-            && src[cur+0] == 'H'
-            && src[cur+1] == 't'
-            && src[cur+2] == 't'
-            && src[cur+3] == 'p'
-            && src[cur+4] == 'O'
-            && src[cur+5] == 'n'
-            && src[cur+6] == 'l'
-            && src[cur+7] == 'y') {
-            cur += 8;
-
-            // TODO
+            out->http_only = false;
 
         } else {
             return -1; // Invalid attribute
