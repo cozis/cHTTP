@@ -1323,40 +1323,6 @@ bool http_match_host(HTTP_Request *req, HTTP_String domain, int port)
     return http_streq(host, domain);
 }
 
-typedef enum {
-    HTTP_WEEKDAY_MON,
-    HTTP_WEEKDAY_TUE,
-    HTTP_WEEKDAY_WED,
-    HTTP_WEEKDAY_THU,
-    HTTP_WEEKDAY_FRI,
-    HTTP_WEEKDAY_SAT,
-    HTTP_WEEKDAY_SUN,
-} HTTP_WeekDay;
-
-typedef enum {
-    HTTP_MONTH_JAN,
-    HTTP_MONTH_FEB,
-    HTTP_MONTH_MAR,
-    HTTP_MONTH_APR,
-    HTTP_MONTH_MAY,
-    HTTP_MONTH_JUN,
-    HTTP_MONTH_JUL,
-    HTTP_MONTH_AUG,
-    HTTP_MONTH_SEP,
-    HTTP_MONTH_OCT,
-    HTTP_MONTH_NOV,
-    HTTP_MONTH_DEC,
-} HTTP_Month;
-
-typedef struct {
-    HTTP_WeekDay week_day;
-    int          day;
-    HTTP_Month   month;
-    int          year;
-    int          hour;
-    int          minute;
-    int          second;
-} HTTP_Date;
 
 // <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
 static int parse_date(Scanner *s, HTTP_Date *out)
@@ -1465,29 +1431,14 @@ static int parse_date(Scanner *s, HTTP_Date *out)
 //              ; and backslash
 static bool is_cookie_octet(char c)
 {
-    // TODO
+    return c == 0x21 ||
+           (c >= 0x23 && c <= 0x2B) ||
+           (c >= 0x2D && c <= 0x3A) ||
+           (c >= 0x3C && c <= 0x5B) ||
+           (c >= 0x5D && c <= 0x7E);
 }
 
-typedef struct {
-
-    HTTP_String name;
-    HTTP_String value;
-
-    bool secure;
-    bool http_only;
-
-    bool have_date;
-    HTTP_Date date;
-
-    bool have_max_age;
-    uint32_t max_age;
-
-    bool have_domain;
-    HTTP_String domain;
-
-} HTTP_SetCookie;
-
-void http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
+int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
 {
     Scanner s = { str.ptr, str.len, 0 };
 
@@ -1532,6 +1483,7 @@ void http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
     out->have_date = false;
     out->have_max_age = false;
     out->have_domain = false;
+    out->have_path = false;
     while (consume_str(&s, HTTP_STR("; "))) {
         if (consume_str(&s, HTTP_STR("Expires="))) {
 
@@ -1614,7 +1566,12 @@ void http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
             // path-av = "Path=" path-value
             // path-value = <any CHAR except CTLs or ";">
 
-            assert(0); // TODO
+            int off = s.cur;
+            while (s.cur < s.len && s.src[s.cur] >= 0x20 && s.src[s.cur] != 0x7F && s.src[s.cur] != ';')
+                s.cur++;
+
+            out->have_path = true;
+            out->path = (HTTP_String) { s.src + off, s.cur - off };
 
         } else if (consume_str(&s, HTTP_STR("Secure"))) {
 
@@ -1624,10 +1581,12 @@ void http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
         } else if (consume_str(&s, HTTP_STR("HttpOnly"))) {
 
             // httponly-av = "HttpOnly"
-            out->http_only = false;
+            out->http_only = true;
 
         } else {
             return -1; // Invalid attribute
         }
     }
+
+    return 0;
 }
