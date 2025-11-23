@@ -2435,8 +2435,22 @@ static void socket_update(Socket *s)
                         else
                             addr = s->addr;
 
-                        if (addr.name)
+                        if (addr.name) {
+
+                            // Set expected hostname for verification
+                            if (SSL_set1_host(s->ssl, addr.name->data) != 1) {
+                                s->state = SOCKET_STATE_DIED;
+                                s->events = 0;
+                                break;
+                            }
+
+                            // Optional but recommended: be strict about wildcards
+                            SSL_set_hostflags(s->ssl,
+                                X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+
+                            // Also set for SNI (Server Name Indication)
                             SSL_set_tlsext_host_name(s->ssl, addr.name->data);
+                        }
                     }
 
                     int ret = SSL_connect(s->ssl);
@@ -2738,7 +2752,7 @@ static int socket_manager_translate_events_nolock(
             s->server_secure_context = NULL;
             s->client_secure_context = NULL;
             if (secure)
-                &s->server_secure_context = sm->server_secure_context;
+                s->server_secure_context = &sm->server_secure_context;
 #endif
 
             socket_update(s);
