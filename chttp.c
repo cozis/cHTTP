@@ -3885,23 +3885,19 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
         return; // TODO: set error
     memcpy(url_copy, url.ptr, url.len);
 
-    // Parse the copied URL
-    HTTP_URL parsed_url;
-    if (http_parse_url(url_copy, url.len, &parsed_url) != 1) {
+    // Parse the copied URL (url.scheme.ptr will point to url_copy)
+    if (http_parse_url(url_copy, url.len, &conn->url) != 1) {
         free(url_copy);
         return; // TODO: set error
     }
-
-    conn->url_buffer = url_copy;
-    conn->url = parsed_url;
 
     // Write method
     HTTP_String method_str = get_method_string(method);
     byte_queue_write(&conn->output, method_str.ptr, method_str.len);
 
-    byte_queue_write(&conn->output, parsed_url.path.ptr, parsed_url.path.len);
+    byte_queue_write(&conn->output, conn->url.path.ptr, conn->url.path.len);
 
-    HTTP_String query = parsed_url.query;
+    HTTP_String query = conn->url.query;
     if (query.len > 0) {
         byte_queue_write(&conn->output, "?", 1);
         byte_queue_write(&conn->output, query.ptr, query.len);
@@ -3914,10 +3910,10 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
 
     // Add Host header automatically
     byte_queue_write_fmt(&conn->output, "Host: %.*s",
-        parsed_url.authority.host.text.len,
-        parsed_url.authority.host.text.ptr);
-    if (parsed_url.authority.port > 0)
-        byte_queue_write_fmt(&conn->output, ":%d", parsed_url.authority.port);
+        conn->url.authority.host.text.len,
+        conn->url.authority.host.text.ptr);
+    if (conn->url.authority.port > 0)
+        byte_queue_write_fmt(&conn->output, ":%d", conn->url.authority.port);
 
     byte_queue_write(&conn->output, "\r\n", 2);
 
@@ -3927,7 +3923,7 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
     HTTP_CookieJar *cookie_jar = &client->cookie_jar;
     for (int i = 0; i < cookie_jar->count; i++) {
         HTTP_CookieJarEntry entry = cookie_jar->items[i];
-        if (should_send_cookie(entry, parsed_url)) {
+        if (should_send_cookie(entry, conn->url)) {
             // TODO: Adding one header per cookie may cause the number of
             //       headers to increase significantly. Should probably group
             //       3-4 cookies in the same headers.
@@ -4058,7 +4054,7 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
 
 error:
     conn->state = HTTP_CLIENT_CONN_FREE;
-    free(conn->url_buffer);
+    free((void*)conn->url.scheme.ptr);
     byte_queue_free(&conn->input);
     byte_queue_free(&conn->output);
     client->num_conns--;
@@ -4306,7 +4302,7 @@ void http_free_response(HTTP_Response *response)
         return;
 
     conn->state = HTTP_CLIENT_CONN_FREE;
-    free(conn->url_buffer);
+    free((void*)conn->url.scheme.ptr);
     byte_queue_free(&conn->input);
     byte_queue_free(&conn->output);
     client->num_conns--;

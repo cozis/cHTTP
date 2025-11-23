@@ -895,9 +895,7 @@ typedef struct {
     bool trace_bytes;
 
     // Parsed URL for connection establishment
-    // The url_buffer contains the allocated copy of the URL string,
-    // and url.* pointers reference into this buffer
-    char *url_buffer;
+    // url.scheme.ptr points to the allocated copy of the URL string
     HTTP_URL url;
 
     // Data received from the server
