@@ -249,16 +249,22 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
     // Write method
     HTTP_String method_str = get_method_string(method);
     byte_queue_write(&conn->output, method_str.ptr, method_str.len);
+    byte_queue_write(&conn->output, " ", 1);
 
-    byte_queue_write(&conn->output, conn->url.path.ptr, conn->url.path.len);
+    // Write path
+    if (conn->url.path.len == 0)
+        byte_queue_write(&conn->output, "/", 1);
+    else
+        byte_queue_write(&conn->output, conn->url.path.ptr, conn->url.path.len);
 
+    // Write query string
     HTTP_String query = conn->url.query;
     if (query.len > 0) {
         byte_queue_write(&conn->output, "?", 1);
         byte_queue_write(&conn->output, query.ptr, query.len);
     }
 
-    HTTP_String version = HTTP_STR("HTTP/1.1");
+    HTTP_String version = HTTP_STR(" HTTP/1.1");
     byte_queue_write(&conn->output, version.ptr, version.len);
 
     byte_queue_write(&conn->output, "\r\n", 2);

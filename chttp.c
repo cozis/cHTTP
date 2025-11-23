@@ -2305,7 +2305,12 @@ static void socket_update(Socket *s)
                         continue;
                     }
                 }
-                AddressAndPort addr = s->addrs[s->next_addr];
+
+                AddressAndPort addr;
+                if (s->num_addr == 1)
+                    addr = s->addr;
+                else
+                    addr = s->addrs[s->next_addr];
 
                 int family = (addr.is_ipv4 ? AF_INET : AF_INET6);
                 NATIVE_SOCKET sock = socket(family, SOCK_STREAM, 0);
@@ -2970,18 +2975,19 @@ int socket_connect(SocketManager *sm, int num_targets,
             s->addrs[i] = resolved[i];
     }
 
-    s->state  = SOCKET_STATE_PENDING;
-    s->sock   = NATIVE_SOCKET_INVALID;
-    s->events = 0;
-    s->user   = user;
+    s->state = SOCKET_STATE_PENDING;
+    s->sock = NATIVE_SOCKET_INVALID;
+    s->user = user;
 #ifdef HTTPS_ENABLED
     s->server_secure_context = NULL;
     s->client_secure_context = NULL;
-    s->ssl    = NULL;
+    s->ssl = NULL;
     if (secure)
         s->client_secure_context = &sm->client_secure_context;
 #endif
     sm->num_used++;
+
+    socket_update(s);
     return 0;
 }
 
@@ -3902,16 +3908,22 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
     // Write method
     HTTP_String method_str = get_method_string(method);
     byte_queue_write(&conn->output, method_str.ptr, method_str.len);
+    byte_queue_write(&conn->output, " ", 1);
 
-    byte_queue_write(&conn->output, conn->url.path.ptr, conn->url.path.len);
+    // Write path
+    if (conn->url.path.len == 0)
+        byte_queue_write(&conn->output, "/", 1);
+    else
+        byte_queue_write(&conn->output, conn->url.path.ptr, conn->url.path.len);
 
+    // Write query string
     HTTP_String query = conn->url.query;
     if (query.len > 0) {
         byte_queue_write(&conn->output, "?", 1);
         byte_queue_write(&conn->output, query.ptr, query.len);
     }
 
-    HTTP_String version = HTTP_STR("HTTP/1.1");
+    HTTP_String version = HTTP_STR(" HTTP/1.1");
     byte_queue_write(&conn->output, version.ptr, version.len);
 
     byte_queue_write(&conn->output, "\r\n", 2);

@@ -335,7 +335,12 @@ static void socket_update(Socket *s)
                         continue;
                     }
                 }
-                AddressAndPort addr = s->addrs[s->next_addr];
+
+                AddressAndPort addr;
+                if (s->num_addr == 1)
+                    addr = s->addr;
+                else
+                    addr = s->addrs[s->next_addr];
 
                 int family = (addr.is_ipv4 ? AF_INET : AF_INET6);
                 NATIVE_SOCKET sock = socket(family, SOCK_STREAM, 0);
@@ -1011,6 +1016,8 @@ int socket_connect(SocketManager *sm, int num_targets,
         s->client_secure_context = &sm->client_secure_context;
 #endif
     sm->num_used++;
+
+    socket_update(s);
     return 0;
 }
 

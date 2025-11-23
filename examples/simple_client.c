@@ -48,12 +48,17 @@ int main(void)
         if (http_client_process_events(&client, &reg) < 0)
             return -1;
 
+        bool done = false;
+
         HTTP_Response *response;
         void *user;
         while (http_client_next_response(&client, &response, &user)) {
             printf("Received response\n");
             http_free_response(response);
+            done = true;
         }
+
+        if (done) break;
     }
 
     http_client_free(&client);
