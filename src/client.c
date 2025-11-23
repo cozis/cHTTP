@@ -143,6 +143,67 @@ int http_client_get_builder(HTTP_Client *client,
     return 0;
 }
 
+// TODO: test this function
+static bool is_subdomain(HTTP_String domain, HTTP_String subdomain)
+{
+    if (http_streq(domain, subdomain))
+        return true; // Exact match
+
+    if (domain.len > subdomain.len)
+        return false;
+
+    HTTP_String subdomain_suffix = {
+        subdomain.ptr + subdomain.len - domain.len,
+        entry.domain.len
+    };
+    if (subdomain_suffix.ptr[-1] != '.' || !http_streq(domain, subdomain_suffix))
+        return false;
+
+    return true;
+}
+
+// TODO: test this function
+static bool is_subpath(HTTP_String path, HTTP_String subpath)
+{
+    if (path.len > subpath.len)
+        return false;
+
+    if (subpath.len != path.len && subpath.ptr[path.len] != '/')
+        return false;
+
+    subpath.len = path.len;
+    return http_streq(path, subpath);
+}
+
+static bool should_send_cookie(HTTP_CookieJarEntry entry, HTTP_URL url)
+{
+    if (entry.exact_domain) {
+        // Cookie domain and URL domain must match exactly
+        if (!http_streq(entry.domain, url.authority.host.text))
+            return false;
+    } else {
+        // The URL's domain must match or be a subdomain of the cookie's domain
+        if (!is_subdomain(entry.domain, url.authority.host.text))
+            return false;
+    }
+
+    if (entry.exact_path) {
+        // Cookie path and URL path must match exactly
+        if (!http_streq(entry.path, url.path))
+            return false;
+    } else {
+        if (!is_subpath(entry.path, url.path))
+            return false;
+    }
+
+    if (entry.secure) {
+        if (!http_streq(url.scheme, HTTP_STR("https"))
+            return false; // Cookie was marked as secure but the target URL is not HTTPS
+    }
+
+    return true;
+}
+
 void http_request_builder_url(HTTP_RequestBuilder builder,
     HTTP_Method method, HTTP_String url)
 {
@@ -165,16 +226,15 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
     // Convert method enum to string
     const char *method_str;
     switch (method) {
-        case HTTP_METHOD_GET:     method_str = "GET"; break;
-        case HTTP_METHOD_HEAD:    method_str = "HEAD"; break;
-        case HTTP_METHOD_POST:    method_str = "POST"; break;
-        case HTTP_METHOD_PUT:     method_str = "PUT"; break;
-        case HTTP_METHOD_DELETE:  method_str = "DELETE"; break;
+        case HTTP_METHOD_GET:     method_str = "GET";     break;
+        case HTTP_METHOD_HEAD:    method_str = "HEAD";    break;
+        case HTTP_METHOD_POST:    method_str = "POST";    break;
+        case HTTP_METHOD_PUT:     method_str = "PUT";     break;
+        case HTTP_METHOD_DELETE:  method_str = "DELETE";  break;
         case HTTP_METHOD_CONNECT: method_str = "CONNECT"; break;
         case HTTP_METHOD_OPTIONS: method_str = "OPTIONS"; break;
-        case HTTP_METHOD_TRACE:   method_str = "TRACE"; break;
-        case HTTP_METHOD_PATCH:   method_str = "PATCH"; break;
-        default: return;
+        case HTTP_METHOD_TRACE:   method_str = "TRACE";   break;
+        case HTTP_METHOD_PATCH:   method_str = "PATCH";   break;
     }
 
     // Build request line: METHOD path HTTP/1.1\r\n
@@ -192,8 +252,22 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
     }
     byte_queue_write(&conn->output, "\r\n", 2);
 
-    // TODO: Find all entries from the cookie jar that should
-    //       be sent to this server and append headers for them
+    // Find all entries from the cookie jar that should
+    // be sent to this server and append headers for them
+    HTTP_CookieJar *cookie_jar = &conn->client->cookie_jar;
+    for (int i = 0; i < cookie_jar->count; i++) {
+        HTTP_CookieJarEntry entry = cookie_jar->items[i];
+        if (should_send_cookie(entry, parsed_url)) {
+            // TODO: Adding one header per cookie may cause the number of
+            //       headers to increase significantly. Should probably group
+            //       3-4 cookies in the same headers.
+            byte_queue_write(&conn->output, HTTP_STR("Cookie: "));
+            byte_queue_write(&conn->output, entry.name);
+            byte_queue_write(&conn->output, HTTP_STR("="));
+            byte_queue_write(&conn->output, entry.value);
+            byte_queue_write(&conn->output, HTTP_STR("\r\n"));
+        }
+    }
 
     conn->state = HTTP_CLIENT_CONN_WAIT_HEADER;
 }
@@ -324,16 +398,20 @@ static void save_cookies(HTTP_CookieJar *cookie_jar, HTTP_Header *headers, int n
 
             if (parsed.have_domain) {
                 // TODO: Check that the server can set a cookie for this domain
+                entry.exact_domain = false;
                 entry.domain = parsed.domain;
             } else {
                 // TODO: Set the domain to the specific one used for this interaction
+                entry.exact_domain = true;
                 entry.domain = xxx;
             }
 
             if (parsed.have_path) {
+                antry.exact_path = false;
                 entry.path = parsed.path;
             } else {
                 // TODO: Set the path to the current endpoint minus one level
+                entry.exact_path = true;
                 entry.path = xxx;
             }
 

@@ -12,11 +12,30 @@
 #endif
 
 typedef struct {
+
+    // Cookie name and value
     HTTP_String name;
     HTTP_String value;
+
+    // If the "exact_domain" is true, the cookie
+    // can only be sent to the exact domain referred
+    // to by "domain" (which is never empty). If
+    // "exact_domain" is false, then the cookie is
+    // compatible with subdomains.
+    bool exact_domain;
     HTTP_String domain;
+
+    // If "exact_path" is set, the cookie is only
+    // compatible with requests to paths that match
+    // "path" exactly. If "exact_path" is not set,
+    // then any path that starts with "path" is
+    // compatible with the cookie.
+    bool exact_path;
     HTTP_String path;
-    bool        secure;
+
+    // This cookie can only be sent over HTTPS
+    bool secure;
+
 } HTTP_CookieJarEntry;
 
 typedef struct {
