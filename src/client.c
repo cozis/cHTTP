@@ -93,7 +93,7 @@ HTTP_RequestBuilder http_client_get_builder(HTTP_Client *client)
     }
     client->num_conns++;
 
-    client->conns[i].state = HTTP_CLIENT_CONN_WAIT_LINE;
+    client->conns[i].state = HTTP_CLIENT_CONN_WAIT_METHOD;
     client->conns[i].handle = SOCKET_HANDLE_INVALID;
     client->conns[i].client = client;
     client->conns[i].user = NULL;
@@ -201,14 +201,32 @@ void http_request_builder_set_trace_bytes(HTTP_RequestBuilder builder, bool trac
     conn->trace_bytes = trace_bytes;
 }
 
-void http_request_builder_url(HTTP_RequestBuilder builder,
-    HTTP_Method method, HTTP_String url)
+void http_request_builder_method(HTTP_RequestBuilder builder,
+    HTTP_Method method)
 {
     HTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
         return; // Invalid builder
 
-    if (conn->state != HTTP_CLIENT_CONN_WAIT_LINE)
+    if (conn->state != HTTP_CLIENT_CONN_WAIT_METHOD)
+        return; // Request line already written
+
+    // Write method
+    HTTP_String method_str = get_method_string(method);
+    byte_queue_write(&conn->output, method_str.ptr, method_str.len);
+    byte_queue_write(&conn->output, " ", 1);
+
+    conn->state = HTTP_CLIENT_CONN_WAIT_URL;
+}
+
+void http_request_builder_target(HTTP_RequestBuilder builder,
+    HTTP_String url)
+{
+    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    if (conn == NULL)
+        return; // Invalid builder
+
+    if (conn->state != HTTP_CLIENT_CONN_WAIT_URL)
         return; // Request line already written
 
     // Allocate a copy of the URL string so the parsed
@@ -237,11 +255,6 @@ void http_request_builder_url(HTTP_RequestBuilder builder,
         conn->result = -1;
         return;
     }
-
-    // Write method
-    HTTP_String method_str = get_method_string(method);
-    byte_queue_write(&conn->output, method_str.ptr, method_str.len);
-    byte_queue_write(&conn->output, " ", 1);
 
     // Write path
     if (conn->url.path.len == 0)

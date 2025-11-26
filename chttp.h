@@ -879,7 +879,8 @@ typedef struct {
 
 typedef enum {
     HTTP_CLIENT_CONN_FREE,
-    HTTP_CLIENT_CONN_WAIT_LINE,
+    HTTP_CLIENT_CONN_WAIT_METHOD,
+    HTTP_CLIENT_CONN_WAIT_URL,
     HTTP_CLIENT_CONN_WAIT_HEADER,
     HTTP_CLIENT_CONN_WAIT_BODY,
     HTTP_CLIENT_CONN_FLUSHING,
@@ -991,23 +992,32 @@ typedef struct {
 HTTP_RequestBuilder http_client_get_builder(HTTP_Client *client);
 
 // TODO: comment
-void http_request_builder_set_user(HTTP_RequestBuilder builder, void *user);
+void http_request_builder_set_user(HTTP_RequestBuilder builder,
+    void *user);
 
 // TODO: comment
-void http_request_builder_set_trace_bytes(HTTP_RequestBuilder builder, bool trace_bytes);
+void http_request_builder_set_trace_bytes(HTTP_RequestBuilder builder,
+    bool trace_bytes);
 
-// Set the method and URL of the current request. This is the first
+// Set the method of the current request. This is the first
 // function of the request builder that the user must call.
-void http_request_builder_url(HTTP_RequestBuilder builder,
-    HTTP_Method method, HTTP_String url);
+void http_request_builder_method(HTTP_RequestBuilder builder,
+    HTTP_Method method);
+
+// Set the URL of the current request. This must be set after
+// the method and before any header/body
+void http_request_builder_target(HTTP_RequestBuilder builder,
+    HTTP_String url);
 
 // After the URL, the user may set zero or more headers.
-void http_request_builder_header(HTTP_RequestBuilder builder, HTTP_String str);
+void http_request_builder_header(HTTP_RequestBuilder builder,
+    HTTP_String str);
 
 // Append bytes to the request's body. You can call this
 // any amount of times, as long as it's after having set
 // the URL.
-void http_request_builder_body(HTTP_RequestBuilder builder, HTTP_String str);
+void http_request_builder_body(HTTP_RequestBuilder builder,
+    HTTP_String str);
 
 // Mark this request as complete. This invalidates the
 // builder.
