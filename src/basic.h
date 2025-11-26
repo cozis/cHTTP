@@ -1,4 +1,27 @@
 
+enum {
+
+    HTTP_OK                = 0,
+
+    // A generic error occurred
+    HTTP_ERROR_UNSPECIFIED = -1,
+
+    // Out of memory
+    HTTP_ERROR_OOM         = -2,
+
+    // Invalid URL
+    HTTP_ERROR_BADURL      = -3,
+
+    // Parallel request limit reached
+    HTTP_ERROR_REQLIMIT    = -4,
+
+    // Invalid handle
+    HTTP_ERROR_BADHANDLE   = -5,
+
+    // TLS support not built-in
+    HTTP_ERROR_NOTLS       = -6,
+};
+
 // String type used throughout cHTTP.
 typedef struct {
 	char *ptr;
@@ -22,6 +45,9 @@ HTTP_String http_trim(HTTP_String s);
 // Print the contents of a byte string with the given prefix.
 // This is primarily used for debugging purposes.
 void print_bytes(HTTP_String prefix, HTTP_String src);
+
+// TODO: comment
+char *http_strerror(int code);
 
 // Macro to simplify converting string literals to
 // HTTP_String.
@@ -51,3 +77,6 @@ void print_bytes(HTTP_String prefix, HTTP_String src);
 // Useful for passing HTTP_String to printf-style functions with "%.*s" format.
 // Example: printf("%.*s", HTTP_UNPACK(str));
 #define HTTP_UNPACK(X) (X).len, (X).ptr
+
+// TODO: comment
+#define HTTP_UNREACHABLE __builtin_trap()

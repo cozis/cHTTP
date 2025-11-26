@@ -1,31 +1,42 @@
 #include "../chttp.h"
 
-#ifdef _WIN32
-#define POLL WSAPoll
-#else
-#define POLL poll
-#endif
-
 int main(void)
 {
+    int ret;
+
     HTTP_Client client;
-    if (http_client_init(&client) < 0)
+    ret = http_client_init(&client);
+    if (ret < 0) {
+        printf("Couldn't initialize client (%s)\n", http_strerror(ret));
         return -1;
+    }
 
     HTTP_RequestBuilder builder = http_client_get_builder(&client);
-    http_request_builder_trace(builder, true);
+
     http_request_builder_method(builder, HTTP_METHOD_GET);
     http_request_builder_target(builder, HTTP_STR("http://coz.is"));
     http_request_builder_header(builder, HTTP_STR("Greeting: Hello from the cHTTP example!"));
-    if (http_request_builder_send(builder) < 0)
-        return -1;
 
+    ret = http_request_builder_send(builder);
+    if (ret < 0) {
+        printf("Couldn't build request (%s)\n", http_strerror(ret));
+        return -1;
+    }
+
+    int result;
     void *user;
     HTTP_Response *response;
-    if (http_client_wait_response(&client, &response, &user) < 0)
+    ret = http_client_wait_response(&client, &result, &user, &response);
+    if (ret < 0) {
+        printf("Couldn't wait for response (%s)\n", http_strerror(ret));
         return -1;
+    }
 
-    printf("Received a response!\n");
+    if (result == HTTP_OK) {
+        printf("Received %d bytes\n", response->body.len);
+    } else {
+        printf("Couldn't receive response (%s)\n", http_strerror(result));
+    }
 
     http_client_free(&client);
     return 0;

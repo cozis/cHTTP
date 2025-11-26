@@ -178,9 +178,8 @@ int http_server_add_certificate(HTTP_Server *server,
 int http_server_wakeup(HTTP_Server *server);
 
 // Resets the event register with the list of descriptors
-// the server wants monitored. Returns 0 on success, -1 if
-// the event register's capacity isn't large enough.
-int http_server_register_events(HTTP_Server *server,
+// the server wants monitored.
+void http_server_register_events(HTTP_Server *server,
     EventRegister *reg);
 
 // The caller has waited for poll() to return and some
@@ -204,6 +203,10 @@ typedef struct {
 // For each request returned by this function, the user
 // must build a response using the response builder API.
 bool http_server_next_request(HTTP_Server *server,
+    HTTP_Request **request, HTTP_ResponseBuilder *builder);
+
+// TODO: comment
+int http_server_wait_request(HTTP_Server *server,
     HTTP_Request **request, HTTP_ResponseBuilder *builder);
 
 // This function is called to set the status code of

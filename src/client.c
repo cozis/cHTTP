@@ -21,10 +21,8 @@ int http_client_init(HTTP_Client *client)
     client->num_ready = 0;
     client->ready_head = 0;
 
-    if (socket_manager_init(&client->sockets,
-        client->socket_pool, HTTP_CLIENT_CAPACITY) < 0)
-        return -1;
-    return 0;
+    return socket_manager_init(&client->sockets,
+        client->socket_pool, HTTP_CLIENT_CAPACITY);
 }
 
 void http_client_free(HTTP_Client *client)
@@ -56,9 +54,7 @@ void http_client_set_output_limit(HTTP_Client *client, uint32_t limit)
 
 int http_client_wakeup(HTTP_Client *client)
 {
-    if (socket_manager_wakeup(&client->sockets) < 0)
-        return -1;
-    return 0;
+    return socket_manager_wakeup(&client->sockets);
 }
 
 // Get a connection pointer from a request builder.
@@ -234,7 +230,7 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
     char *url_copy = malloc(url.len);
     if (url_copy == NULL) {
         conn->state = HTTP_CLIENT_CONN_COMPLETE;
-        conn->result = -1;
+        conn->result = HTTP_ERROR_OOM;
         return;
     }
     memcpy(url_copy, url.ptr, url.len);
@@ -245,14 +241,14 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
     // Parse the copied URL (all url.* pointers will reference url_buffer)
     if (http_parse_url(conn->url_buffer.ptr, conn->url_buffer.len, &conn->url) < 0) {
         conn->state = HTTP_CLIENT_CONN_COMPLETE;
-        conn->result = -1;
+        conn->result = HTTP_ERROR_BADURL;
         return;
     }
 
     if (!http_streq(conn->url.scheme, HTTP_STR("http")) &&
         !http_streq(conn->url.scheme, HTTP_STR("https"))) {
         conn->state = HTTP_CLIENT_CONN_COMPLETE;
-        conn->result = -1;
+        conn->result = HTTP_ERROR_BADURL;
         return;
     }
 
@@ -260,7 +256,9 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
     if (conn->url.path.len == 0)
         byte_queue_write(&conn->output, "/", 1);
     else
-        byte_queue_write(&conn->output, conn->url.path.ptr, conn->url.path.len);
+        byte_queue_write(&conn->output,
+            conn->url.path.ptr,
+            conn->url.path.len);
 
     // Write query string
     HTTP_String query = conn->url.query;
@@ -352,47 +350,45 @@ void http_request_builder_body(HTTP_RequestBuilder builder,
     byte_queue_write(&conn->output, str.ptr, str.len);
 }
 
-static int
-url_to_connect_target(HTTP_URL url,
-    ConnectTarget *target)
+static ConnectTarget url_to_connect_target(HTTP_URL url)
 {
     HTTP_Authority authority = url.authority;
 
+    ConnectTarget target;
     if (authority.port < 1) {
         if (http_streq(url.scheme, HTTP_STR("https")))
-            target->port = 443;
+            target.port = 443;
         else
-            target->port = 80;
+            target.port = 80;
     } else {
-        target->port = authority.port;
+        target.port = authority.port;
     }
 
-    // Set up target based on host type
     if (authority.host.mode == HTTP_HOST_MODE_NAME) {
-        target->type = CONNECT_TARGET_NAME;
-        target->name = authority.host.name;
+        target.type = CONNECT_TARGET_NAME;
+        target.name = authority.host.name;
     } else if (authority.host.mode == HTTP_HOST_MODE_IPV4) {
-        target->type = CONNECT_TARGET_IPV4;
-        target->ipv4 = authority.host.ipv4;
+        target.type = CONNECT_TARGET_IPV4;
+        target.ipv4 = authority.host.ipv4;
     } else if (authority.host.mode == HTTP_HOST_MODE_IPV6) {
-        target->type = CONNECT_TARGET_IPV6;
-        target->ipv6 = authority.host.ipv6;
+        target.type = CONNECT_TARGET_IPV6;
+        target.ipv6 = authority.host.ipv6;
     } else {
-        return -1;
+        HTTP_UNREACHABLE;
     }
 
-    return 0;
+    return target;
 }
 
 int http_request_builder_send(HTTP_RequestBuilder builder)
 {
     HTTP_Client *client = builder.client;
     if (client == NULL)
-        return -1;
+        return HTTP_ERROR_REQLIMIT;
 
     HTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
-        return -1;
+        return HTTP_ERROR_BADHANDLE;
 
     if (conn->state == HTTP_CLIENT_CONN_COMPLETE)
         goto error; // Early completion due to an error
@@ -409,17 +405,14 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
     if (byte_queue_error(&conn->output))
         goto error;
 
-    ConnectTarget target;
-    if (url_to_connect_target(conn->url, &target) < 0)
-        goto error;
-
+    ConnectTarget target = url_to_connect_target(conn->url);
     bool secure = http_streq(conn->url.scheme, HTTP_STR("https"));
     if (socket_connect(&client->sockets, 1, &target, secure, conn) < 0)
         goto error;
 
     conn->state = HTTP_CLIENT_CONN_FLUSHING;
     conn->gen++;
-    return 0;
+    return HTTP_OK;
 
 error:
     conn->state = HTTP_CLIENT_CONN_FREE;
@@ -427,7 +420,7 @@ error:
     byte_queue_free(&conn->input);
     byte_queue_free(&conn->output);
     client->num_conns--;
-    return -1;
+    return conn->result;
 }
 
 static void save_one_cookie(HTTP_CookieJar *cookie_jar,
@@ -500,22 +493,20 @@ static void save_cookies(HTTP_CookieJar *cookie_jar,
             save_one_cookie(cookie_jar, headers[i], domain, path);
 }
 
-int http_client_register_events(HTTP_Client *client,
+void http_client_register_events(HTTP_Client *client,
     EventRegister *reg)
 {
-    if (socket_manager_register_events(&client->sockets, reg) < 0)
-        return -1;
-    return 0;
+    socket_manager_register_events(&client->sockets, reg);
 }
 
 int http_client_process_events(HTTP_Client *client,
     EventRegister *reg)
 {
     SocketEvent events[HTTP_CLIENT_CAPACITY];
-    int num_events = socket_manager_translate_events(
-        &client->sockets, events, reg);
-    if (num_events < 0)
-        return -1;
+    int ret = socket_manager_translate_events(&client->sockets, events, reg);
+    if (ret < 0)
+        return ret;
+    int num_events = ret;
 
     for (int i = 0; i < num_events; i++) {
 
@@ -638,11 +629,11 @@ int http_client_process_events(HTTP_Client *client,
         }
     }
 
-    return 0;
+    return HTTP_OK;
 }
 
 bool http_client_next_response(HTTP_Client *client,
-    HTTP_Response **response, void **user)
+    int *result, void **user, HTTP_Response **response)
 {
     if (client->num_ready == 0)
         return false;
@@ -653,13 +644,13 @@ bool http_client_next_response(HTTP_Client *client,
 
     assert(conn->state == HTTP_CLIENT_CONN_COMPLETE);
 
-    if (conn->result == 0) {
+    *result = conn->result;
+    *user   = conn->user;
+    if (conn->result == HTTP_OK) {
         *response = &conn->response;
     } else {
-        assert(conn->result == -1);
         *response = NULL;
     }
-    *user = conn->user;
 
     return true;
 }
@@ -695,30 +686,27 @@ void http_free_response(HTTP_Response *response)
 #define POLL poll
 #endif
 
-int http_client_wait_response(HTTP_Client *client, HTTP_Response **response, void **user)
+int http_client_wait_response(HTTP_Client *client,
+    int *result, void **user, HTTP_Response **response)
 {
     for (;;) {
+
         void *ptrs[HTTP_CLIENT_POLL_CAPACITY];
         struct pollfd polled[HTTP_CLIENT_POLL_CAPACITY];
 
-        EventRegister reg = {
-            .ptrs=ptrs,
-            .polled=polled,
-            .num_polled=0,
-            .max_polled=HTTP_CLIENT_POLL_CAPACITY,
-        };
-        if (http_client_register_events(client, &reg) < 0)
-            return -1;
+        EventRegister reg = { ptrs, polled, 0 };
+        http_client_register_events(client, &reg);
 
         if (reg.num_polled > 0)
             POLL(reg.polled, reg.num_polled, -1);
 
-        if (http_client_process_events(client, &reg) < 0)
-            return -1;
+        int ret = http_client_process_events(client, &reg);
+        if (ret < 0)
+            return ret;
 
-        if (http_client_next_response(client, response, user))
+        if (http_client_next_response(client, result, user, response))
             break;
     }
 
-    return 0;
+    return HTTP_OK;
 }

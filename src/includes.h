@@ -15,7 +15,6 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <unistd.h>
-#include <pthread.h>
 #include <poll.h>
 #include <fcntl.h>
 #include <errno.h>

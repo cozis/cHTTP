@@ -34,10 +34,8 @@ int http_server_init(HTTP_Server *server)
     server->num_ready = 0;
     server->ready_head = 0;
 
-    if (socket_manager_init(&server->sockets,
-        server->socket_pool, HTTP_SERVER_CAPACITY) < 0)
-        return -1;
-    return 0;
+    return socket_manager_init(&server->sockets,
+        server->socket_pool, HTTP_SERVER_CAPACITY);
 }
 
 void http_server_free(HTTP_Server *server)
@@ -82,45 +80,35 @@ void http_server_set_backlog(HTTP_Server *server, int backlog)
 int http_server_listen_tcp(HTTP_Server *server,
     HTTP_String addr, Port port)
 {
-    if (socket_manager_listen_tcp(&server->sockets, addr,
-        port, server->backlog, server->reuse_addr) < 0)
-        return -1;
-    return 0;
+    return socket_manager_listen_tcp(&server->sockets,
+        addr, port, server->backlog, server->reuse_addr);
 }
 
 int http_server_listen_tls(HTTP_Server *server,
     HTTP_String addr, Port port, HTTP_String cert_file_name,
     HTTP_String key_file_name)
 {
-    if (socket_manager_listen_tls(&server->sockets, addr,
-        port, server->backlog, server->reuse_addr,
-        cert_file_name, key_file_name) < 0)
-        return -1;
-    return 0;
+    return socket_manager_listen_tls(&server->sockets,
+        addr, port, server->backlog, server->reuse_addr,
+        cert_file_name, key_file_name);
 }
 
 int http_server_add_certificate(HTTP_Server *server,
     HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
-    if (socket_manager_add_certificate(&server->sockets,
-        domain, cert_file, key_file) < 0)
-        return -1;
-    return 0;
+    return socket_manager_add_certificate(&server->sockets,
+        domain, cert_file, key_file);
 }
 
 int http_server_wakeup(HTTP_Server *server)
 {
-    if (socket_manager_wakeup(&server->sockets) < 0)
-        return -1;
-    return 0;
+    return socket_manager_wakeup(&server->sockets);
 }
 
-int http_server_register_events(HTTP_Server *server,
+void http_server_register_events(HTTP_Server *server,
     EventRegister *reg)
 {
-    if (socket_manager_register_events(&server->sockets, reg) < 0)
-        return -1;
-    return 0;
+    socket_manager_register_events(&server->sockets, reg);
 }
 
 // Look at the head of the input buffer to see if
@@ -233,9 +221,10 @@ int http_server_process_events(HTTP_Server *server,
     EventRegister *reg)
 {
     SocketEvent events[HTTP_SERVER_CAPACITY];
-    int num_events = socket_manager_translate_events(&server->sockets, events, reg);
-    if (num_events < 0)
-        return -1;
+    int ret = socket_manager_translate_events(&server->sockets, events, reg);
+    if (ret < 0)
+        return ret;
+    int num_events = ret;
 
     for (int i = 0; i < num_events; i++) {
 
@@ -277,7 +266,7 @@ int http_server_process_events(HTTP_Server *server,
         }
     }
 
-    return 0;
+    return HTTP_OK;
 }
 
 bool http_server_next_request(HTTP_Server *server,
@@ -294,6 +283,30 @@ bool http_server_next_request(HTTP_Server *server,
     *request = &conn->request;
     *builder = (HTTP_ResponseBuilder) { server, conn - server->conns, conn->gen };
     return true;
+}
+
+int http_server_wait_request(HTTP_Server *server,
+    HTTP_Request **request, HTTP_ResponseBuilder *builder)
+{
+    for (;;) {
+        void *ptrs[HTTP_SERVER_POLL_CAPACITY];
+        struct pollfd polled[HTTP_SERVER_POLL_CAPACITY];
+
+        EventRegister reg = { ptrs, polled, 0 };
+        http_server_register_events(server, &reg);
+
+        if (reg.num_polled > 0)
+            POLL(reg.polled, reg.num_polled, -1);
+
+        int ret = http_server_process_events(server, &reg);
+        if (ret < 0)
+            return ret;
+
+        if (http_server_next_request(server, request, builder))
+            break;
+    }
+
+    return HTTP_OK;
 }
 
 // Get a connection pointer from a response builder.

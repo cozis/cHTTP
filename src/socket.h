@@ -182,11 +182,6 @@ typedef struct {
 // header.
 typedef struct {
 
-    // This guards access to the main thread using
-    // the manager from other threads calling the
-    // wakeup function.
-    Mutex mutex;
-
     // TCP listener sockets. The first is intended
     // for plaintext, while the second is for TLS.
     // The socket manager will accept and add new
@@ -276,14 +271,11 @@ typedef struct {
     void **ptrs;
     struct pollfd *polled;
     int num_polled;
-    int max_polled;
 } EventRegister;
 
 // Resets the event register with the list of descriptors
-// the socket manager wants monitored. Returns 0 on
-// success, -1 if the event register's capacity isn't
-// large enough.
-int socket_manager_register_events(SocketManager *sm,
+// the socket manager wants monitored.
+void socket_manager_register_events(SocketManager *sm,
     EventRegister *reg);
 
 // After poll() is called on the previously registered
@@ -328,15 +320,15 @@ int socket_recv(SocketManager *sm, SocketHandle handle,
 int socket_send(SocketManager *sm, SocketHandle handle,
     char *src, int len);
 
-int socket_close(SocketManager *sm, SocketHandle handle);
+void socket_close(SocketManager *sm, SocketHandle handle);
 
 // Returns -1 on error, 0 if the socket was accepted
 // from the plaintext listener, or 1 if it was accepted
 // by the secure listener.
-int socket_is_secure(SocketManager *sm, SocketHandle handle);
+bool socket_is_secure(SocketManager *sm, SocketHandle handle);
 
 // Set the user pointer of a socket
-int socket_set_user(SocketManager *sm, SocketHandle handle, void *user);
+void socket_set_user(SocketManager *sm, SocketHandle handle, void *user);
 
 // Returns true iff the socket is ready for reading or
 // writing.

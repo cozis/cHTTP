@@ -39,7 +39,7 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b, bool *global_c
         WSADATA wsaData;
         WORD wVersionRequested = MAKEWORD(2, 2);
         if (WSAStartup(wVersionRequested, &wsaData))
-            return -1;
+            return HTTP_ERROR_UNSPECIFIED;
 
         sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (sock == INVALID_SOCKET && *global_cleanup)
@@ -49,7 +49,7 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b, bool *global_c
     if (sock == INVALID_SOCKET) {
         if (*global_cleanup)
             WSACleanup();
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
     }
 
     // Bind to loopback address with port 0 (dynamic port assignment)
@@ -64,21 +64,21 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b, bool *global_c
         closesocket(sock);
         if (*global_cleanup)
             WSACleanup();
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
     }
 
     if (getsockname(sock, (struct sockaddr*)&addr, &addr_len) == SOCKET_ERROR) {
         closesocket(sock);
         if (*global_cleanup)
             WSACleanup();
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
     }
 
     if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closesocket(sock);
         if (*global_cleanup)
             WSACleanup();
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
     }
 
     // Optional: Set socket to non-blocking mode
@@ -88,20 +88,20 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b, bool *global_c
         closesocket(sock);
         if (*global_cleanup)
             WSACleanup();
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
     }
 
     *a = sock;
     *b = sock;
-    return 0;
+    return HTTP_OK;
 #else
     *global_cleanup = false;
     int fds[2];
     if (pipe(fds) < 0)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
     *a = fds[0];
     *b = fds[1];
-    return 0;
+    return HTTP_OK;
 #endif
 }
 
@@ -110,20 +110,20 @@ static int set_socket_blocking(NATIVE_SOCKET sock, bool value)
 #ifdef _WIN32
     u_long mode = !value;
     if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
+    return HTTP_OK;
 #endif
 
 #ifdef __linux__
     int flags = fcntl(sock, F_GETFL, 0);
     if (flags < 0)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
     if (value) flags &= ~O_NONBLOCK;
     else       flags |= O_NONBLOCK;
     if (fcntl(sock, F_SETFL, flags) < 0)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
+    return HTTP_OK;
 #endif
-
-    return 0;
 }
 
 static NATIVE_SOCKET create_listen_socket(HTTP_String addr,
@@ -193,13 +193,15 @@ static void close_socket_pair(NATIVE_SOCKET a, NATIVE_SOCKET b)
 int socket_manager_init(SocketManager *sm, Socket *socks,
     int num_socks)
 {
-    if (mutex_init(&sm->mutex) < 0)
-        return -1;
     sm->plain_sock  = NATIVE_SOCKET_INVALID;
     sm->secure_sock = NATIVE_SOCKET_INVALID;
-    if (create_socket_pair(&sm->wait_sock, &sm->signal_sock,
-        &sm->global_cleanup) < 0)
-        return -1;
+
+    int ret = create_socket_pair(
+        &sm->wait_sock,
+        &sm->signal_sock,
+        &sm->global_cleanup);
+    if (ret < 0) return ret;
+
     sm->at_least_one_secure_connect = false;
 
     sm->num_used = 0;
@@ -210,7 +212,7 @@ int socket_manager_init(SocketManager *sm, Socket *socks,
         socks[i].state = SOCKET_STATE_FREE;
         socks[i].gen = 1;
     }
-    return 0;
+    return HTTP_OK;
 }
 
 void socket_manager_free(SocketManager *sm)
@@ -233,8 +235,6 @@ void socket_manager_free(SocketManager *sm)
     if (sm->global_cleanup)
         WSACleanup();
 #endif
-
-    mutex_free(&sm->mutex);
 }
 
 int socket_manager_listen_tcp(SocketManager *sm,
@@ -242,13 +242,13 @@ int socket_manager_listen_tcp(SocketManager *sm,
     bool reuse_addr)
 {
     if (sm->plain_sock != NATIVE_SOCKET_INVALID)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
 
     sm->plain_sock = create_listen_socket(addr, port, reuse_addr, backlog);
     if (sm->plain_sock == NATIVE_SOCKET_INVALID)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
 
-    return 0;
+    return HTTP_OK;
 }
 
 int socket_manager_listen_tls(SocketManager *sm,
@@ -256,35 +256,39 @@ int socket_manager_listen_tls(SocketManager *sm,
     bool reuse_addr, HTTP_String cert_file,
     HTTP_String key_file)
 {
+#ifndef HTTPS_ENABLED
+    return HTTP_ERROR_NOTLS;
+#endif
+
     if (sm->secure_sock != NATIVE_SOCKET_INVALID)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
 
     sm->secure_sock = create_listen_socket(addr, port, reuse_addr, backlog);
     if (sm->secure_sock == NATIVE_SOCKET_INVALID)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
 
     if (server_secure_context_init(&sm->server_secure_context,
         cert_file, key_file) < 0) {
         CLOSE_NATIVE_SOCKET(sm->secure_sock);
         sm->secure_sock = NATIVE_SOCKET_INVALID;
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
     }
 
-    return 0;
+    return HTTP_OK;
 }
 
 int socket_manager_add_certificate(SocketManager *sm,
     HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
 {
     if (sm->secure_sock == NATIVE_SOCKET_INVALID)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
 
     int ret = server_secure_context_add_certificate(
         &sm->server_secure_context, domain, cert_file, key_file);
     if (ret < 0)
-        return -1;
+        return ret;
 
-    return 0;
+    return HTTP_OK;
 }
 
 static bool is_secure(Socket *s)
@@ -680,27 +684,21 @@ static void socket_update(Socket *s)
 
 int socket_manager_wakeup(SocketManager *sm)
 {
-    if (mutex_lock(&sm->mutex) < 0)
-        return -1;
-
-    // Send a byte through the signal socket to wake up any thread
-    // blocked on poll() with the wait socket
+    // NOTE: It's assumed send/write operate atomically
+    //       on The descriptor.
     char byte = 1;
     int ret = 0;
 #ifdef _WIN32
     if (send(sm->signal_sock, &byte, 1, 0) < 0)
-        ret = -1;
+        return HTTP_ERROR_UNSPECIFIED;
 #else
     if (write(sm->signal_sock, &byte, 1) < 0)
-        ret = -1;
+        return HTTP_ERROR_UNSPECIFIED;
 #endif
-
-    if (mutex_unlock(&sm->mutex) < 0)
-        return -1;
-    return ret;
+    return HTTP_OK;
 }
 
-static void socket_manager_register_events_nolock(
+void socket_manager_register_events(
     SocketManager *sm, EventRegister *reg)
 {
     reg->num_polled = 0;
@@ -760,19 +758,6 @@ static void socket_manager_register_events_nolock(
     }
 }
 
-int socket_manager_register_events(SocketManager *sm,
-    EventRegister *reg)
-{
-    if (mutex_lock(&sm->mutex) < 0)
-        return -1;
-
-    socket_manager_register_events_nolock(sm, reg);
-
-    if (mutex_unlock(&sm->mutex) < 0)
-        return -1;
-    return 0;
-}
-
 static SocketHandle
 socket_to_handle(SocketManager *sm, Socket *s)
 {
@@ -790,7 +775,7 @@ static Socket *handle_to_socket(SocketManager *sm, SocketHandle handle)
     return &sm->sockets[idx];
 }
 
-static int socket_manager_translate_events_nolock(
+int socket_manager_translate_events(
     SocketManager *sm, SocketEvent *events,
     EventRegister *reg)
 {
@@ -913,19 +898,6 @@ static int socket_manager_translate_events_nolock(
     return num_events;
 }
 
-int socket_manager_translate_events(SocketManager *sm,
-    SocketEvent *events, EventRegister *reg)
-{
-    if (mutex_lock(&sm->mutex) < 0)
-        return -1;
-
-    int ret = socket_manager_translate_events_nolock(sm, events, reg);
-
-    if (mutex_unlock(&sm->mutex) < 0)
-        return -1;
-    return ret;
-}
-
 static int resolve_connect_targets(ConnectTarget *targets,
     int num_targets, AddressAndPort *resolved, int max_resolved)
 {
@@ -946,7 +918,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
                 RegisteredName *name = malloc(sizeof(RegisteredName) + targets[i].name.len + 1);
                 if (name == NULL) {
                     free_addr_list(resolved, num_resolved);
-                    return -1;
+                    return HTTP_ERROR_OOM;
                 }
                 name->refs = 0;
                 memcpy(name->data, targets[i].name.ptr, targets[i].name.len);
@@ -956,7 +928,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
                 // 512 bytes is more than enough for a DNS hostname (max 253 chars)
                 char hostname[1<<9];
                 if (targets[i].name.len >= (int) sizeof(hostname))
-                    return -1;
+                    return HTTP_ERROR_OOM;
                 memcpy(hostname, targets[i].name.ptr, targets[i].name.len);
                 hostname[targets[i].name.len] = '\0';
 #endif
@@ -968,7 +940,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
                     free(name);
 #endif
                     free_addr_list(resolved, num_resolved);
-                    return -1;
+                    return HTTP_ERROR_UNSPECIFIED;
                 }
 
                 for (struct addrinfo *rp = res; rp; rp = rp->ai_next) {
@@ -1040,17 +1012,17 @@ int socket_connect(SocketManager *sm, int num_targets,
     ConnectTarget *targets, bool secure, void *user)
 {
     if (sm->num_used == sm->max_used)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
 
 #ifdef HTTPS_ENABLED
     if (!sm->at_least_one_secure_connect) {
         if (client_secure_context_init(&sm->client_secure_context) < 0)
-            return -1;
+            return HTTP_ERROR_UNSPECIFIED;
         sm->at_least_one_secure_connect = true;
     }
 #else
     if (secure)
-        return -1;
+        return HTTP_ERROR_NOTLS;
 #endif
 
     AddressAndPort resolved[MAX_CONNECT_TARGETS];
@@ -1058,7 +1030,7 @@ int socket_connect(SocketManager *sm, int num_targets,
         targets, num_targets, resolved, MAX_CONNECT_TARGETS);
 
     if (num_resolved <= 0)
-        return -1;
+        return HTTP_ERROR_UNSPECIFIED;
 
     Socket *s = sm->sockets;
     while (s->state != SOCKET_STATE_FREE) {
@@ -1075,7 +1047,7 @@ int socket_connect(SocketManager *sm, int num_targets,
         s->next_addr = 0;
         s->addrs = malloc(num_resolved * sizeof(AddressAndPort));
         if (s->addrs == NULL)
-            return -1;
+            return HTTP_ERROR_OOM;
         for (int i = 0; i < num_resolved; i++)
             s->addrs[i] = resolved[i];
     }
@@ -1093,7 +1065,7 @@ int socket_connect(SocketManager *sm, int num_targets,
     sm->num_used++;
 
     socket_update(s);
-    return 0;
+    return HTTP_OK;
 }
 
 static bool would_block(void)
@@ -1115,7 +1087,7 @@ static bool interrupted(void)
 #endif
 }
 
-static int socket_recv_nolock(SocketManager *sm, SocketHandle handle,
+int socket_recv(SocketManager *sm, SocketHandle handle,
     char *dst, int max)
 {
     Socket *s = handle_to_socket(sm, handle);
@@ -1166,20 +1138,7 @@ static int socket_recv_nolock(SocketManager *sm, SocketHandle handle,
     }
 }
 
-int socket_recv(SocketManager *sm, SocketHandle handle,
-    char *dst, int max)
-{
-    if (mutex_lock(&sm->mutex) < 0)
-        return -1;
-
-    int ret = socket_recv_nolock(sm, handle, dst, max);
-
-    if (mutex_unlock(&sm->mutex) < 0)
-        return -1;
-    return ret;
-}
-
-static int socket_send_nolock(SocketManager *sm, SocketHandle handle,
+int socket_send(SocketManager *sm, SocketHandle handle,
     char *src, int len)
 {
     Socket *s = handle_to_socket(sm, handle);
@@ -1227,93 +1186,46 @@ static int socket_send_nolock(SocketManager *sm, SocketHandle handle,
     }
 }
 
-int socket_send(SocketManager *sm, SocketHandle handle,
-    char *src, int len)
+void socket_close(SocketManager *sm, SocketHandle handle)
 {
-    if (mutex_lock(&sm->mutex) < 0)
-        return -1;
-
-    int ret = socket_send_nolock(sm, handle, src, len);
-
-    if (mutex_unlock(&sm->mutex) < 0)
-        return -1;
-    return ret;
-}
-
-int socket_close(SocketManager *sm, SocketHandle handle)
-{
-    if (mutex_lock(&sm->mutex) < 0)
-        return -1;
-
     int ret;
     Socket *s = handle_to_socket(sm, handle);
     if (s == NULL)
-        ret = -1;
-    else {
-        // Only transition to SHUTDOWN if socket is not already DIED
-        if (s->state != SOCKET_STATE_DIED) {
-            UPDATE_STATE(s->state, SOCKET_STATE_SHUTDOWN);
-            s->events = 0;
-            socket_update(s);
-        }
+        return;
+
+    if (s->state != SOCKET_STATE_DIED) {
+        UPDATE_STATE(s->state, SOCKET_STATE_SHUTDOWN);
+        s->events = 0;
+        socket_update(s);
     }
-
-    if (mutex_unlock(&sm->mutex) < 0)
-        return -1;
-    return ret;
 }
 
-int socket_is_secure(SocketManager *sm, SocketHandle handle)
+bool socket_is_secure(SocketManager *sm, SocketHandle handle)
 {
-    if (mutex_lock(&sm->mutex) < 0)
-        return -1;
-
     Socket *s = handle_to_socket(sm, handle);
-
-    int ret;
     if (s == NULL)
-        ret = -1;
-    else
-        ret = is_secure(s);
-
-    if (mutex_unlock(&sm->mutex) < 0)
-        return -1;
-    return ret;
+        return false;
+    return is_secure(s);
 }
 
-int socket_set_user(SocketManager *sm, SocketHandle handle, void *user)
+void socket_set_user(SocketManager *sm, SocketHandle handle, void *user)
 {
-    if (mutex_lock(&sm->mutex) < 0)
-        return -1;
-
-    int ret;
     Socket *s = handle_to_socket(sm, handle);
     if (s == NULL)
-        ret = -1;
-    else {
-        s->user = user;
-        ret = 0;
-    }
+        return;
 
-    if (mutex_unlock(&sm->mutex) < 0)
-        return -1;
-    return ret;
+    s->user = user;
 }
 
 bool socket_ready(SocketManager *sm, SocketHandle handle)
 {
-    if (mutex_lock(&sm->mutex) < 0) {
-        assert(0); // TODO
-    }
-
     bool ready = false;
     Socket *s = handle_to_socket(sm, handle);
-    if (s && s->events == 0 && s->state != SOCKET_STATE_DIED) {
-        ready = true;
-    }
+    if (s == NULL)
+       return false;
 
-    if (mutex_unlock(&sm->mutex) < 0) {
-        assert(0); // TODO
-    }
-    return ready;
+   if (s->events == 0 && s->state != SOCKET_STATE_DIED)
+        return true;
+
+    return false;
 }

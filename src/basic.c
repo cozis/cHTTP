@@ -94,3 +94,17 @@ void print_bytes(HTTP_String prefix, HTTP_String src)
     }
     putc('\n', stream);
 }
+
+char *http_strerror(int code)
+{
+    switch (code) {
+        case HTTP_OK: return "No error";
+        case HTTP_ERROR_UNSPECIFIED: return "Unspecified error";
+        case HTTP_ERROR_OOM: return "Out of memory";
+        case HTTP_ERROR_BADURL: return "Invalid URL";
+        case HTTP_ERROR_REQLIMIT: return "Parallel request limit reached";
+        case HTTP_ERROR_BADHANDLE: return "Invalid handle";
+        case HTTP_ERROR_NOTLS: return "TLS support not built-in";
+    }
+    return "???";
+}

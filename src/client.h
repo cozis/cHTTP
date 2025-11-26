@@ -196,9 +196,8 @@ void http_request_builder_body(HTTP_RequestBuilder builder,
 int http_request_builder_send(HTTP_RequestBuilder builder);
 
 // Resets the event register with the list of descriptors
-// the client wants monitored. Returns 0 on success, -1 if
-// the event register's capacity isn't large enough.
-int http_client_register_events(HTTP_Client *client,
+// the client wants monitored.
+void http_client_register_events(HTTP_Client *client,
     EventRegister *reg);
 
 // The caller has waited for poll() to return and some
@@ -215,10 +214,11 @@ int http_client_process_events(HTTP_Client *client,
 // http_free_response function.
 // TODO: Better comment talking about output arguments
 bool http_client_next_response(HTTP_Client *client,
-    HTTP_Response **response, void **user);
+    int *result, void **user, HTTP_Response **response);
 
 // TODO: comment
-int http_client_wait_response(HTTP_Client *client, HTTP_Response **response, void **user);
+int http_client_wait_response(HTTP_Client *client,
+    int *result, void **user, HTTP_Response **response);
 
 // Free a response object. You can't access its fields
 // again after this.

@@ -23,7 +23,6 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <unistd.h>
-#include <pthread.h>
 #include <poll.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -40,6 +39,29 @@
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/basic.h
 ////////////////////////////////////////////////////////////////////////////////////////
+
+enum {
+
+    HTTP_OK                = 0,
+
+    // A generic error occurred
+    HTTP_ERROR_UNSPECIFIED = -1,
+
+    // Out of memory
+    HTTP_ERROR_OOM         = -2,
+
+    // Invalid URL
+    HTTP_ERROR_BADURL      = -3,
+
+    // Parallel request limit reached
+    HTTP_ERROR_REQLIMIT    = -4,
+
+    // Invalid handle
+    HTTP_ERROR_BADHANDLE   = -5,
+
+    // TLS support not built-in
+    HTTP_ERROR_NOTLS       = -6,
+};
 
 // String type used throughout cHTTP.
 typedef struct {
@@ -64,6 +86,9 @@ HTTP_String http_trim(HTTP_String s);
 // Print the contents of a byte string with the given prefix.
 // This is primarily used for debugging purposes.
 void print_bytes(HTTP_String prefix, HTTP_String src);
+
+// TODO: comment
+char *http_strerror(int code);
 
 // Macro to simplify converting string literals to
 // HTTP_String.
@@ -93,6 +118,9 @@ void print_bytes(HTTP_String prefix, HTTP_String src);
 // Useful for passing HTTP_String to printf-style functions with "%.*s" format.
 // Example: printf("%.*s", HTTP_UNPACK(str));
 #define HTTP_UNPACK(X) (X).len, (X).ptr
+
+// TODO: comment
+#define HTTP_UNREACHABLE __builtin_trap()
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/parse.h
@@ -252,21 +280,6 @@ typedef struct {
 // Parses a Set-Cookie header value
 // Returns 0 on success, -1 on error
 int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out);
-
-////////////////////////////////////////////////////////////////////////////////////////
-// src/thread.h
-////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef _WIN32
-typedef CRITICAL_SECTION Mutex;
-#else
-typedef pthread_mutex_t Mutex;
-#endif
-
-int mutex_init(Mutex *mutex);
-int mutex_free(Mutex *mutex);
-int mutex_lock(Mutex *mutex);
-int mutex_unlock(Mutex *mutex);
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/secure_context.h
@@ -499,11 +512,6 @@ typedef struct {
 // header.
 typedef struct {
 
-    // This guards access to the main thread using
-    // the manager from other threads calling the
-    // wakeup function.
-    Mutex mutex;
-
     // TCP listener sockets. The first is intended
     // for plaintext, while the second is for TLS.
     // The socket manager will accept and add new
@@ -593,14 +601,11 @@ typedef struct {
     void **ptrs;
     struct pollfd *polled;
     int num_polled;
-    int max_polled;
 } EventRegister;
 
 // Resets the event register with the list of descriptors
-// the socket manager wants monitored. Returns 0 on
-// success, -1 if the event register's capacity isn't
-// large enough.
-int socket_manager_register_events(SocketManager *sm,
+// the socket manager wants monitored.
+void socket_manager_register_events(SocketManager *sm,
     EventRegister *reg);
 
 // After poll() is called on the previously registered
@@ -645,15 +650,15 @@ int socket_recv(SocketManager *sm, SocketHandle handle,
 int socket_send(SocketManager *sm, SocketHandle handle,
     char *src, int len);
 
-int socket_close(SocketManager *sm, SocketHandle handle);
+void socket_close(SocketManager *sm, SocketHandle handle);
 
 // Returns -1 on error, 0 if the socket was accepted
 // from the plaintext listener, or 1 if it was accepted
 // by the secure listener.
-int socket_is_secure(SocketManager *sm, SocketHandle handle);
+bool socket_is_secure(SocketManager *sm, SocketHandle handle);
 
 // Set the user pointer of a socket
-int socket_set_user(SocketManager *sm, SocketHandle handle, void *user);
+void socket_set_user(SocketManager *sm, SocketHandle handle, void *user);
 
 // Returns true iff the socket is ready for reading or
 // writing.
@@ -1025,9 +1030,8 @@ void http_request_builder_body(HTTP_RequestBuilder builder,
 int http_request_builder_send(HTTP_RequestBuilder builder);
 
 // Resets the event register with the list of descriptors
-// the client wants monitored. Returns 0 on success, -1 if
-// the event register's capacity isn't large enough.
-int http_client_register_events(HTTP_Client *client,
+// the client wants monitored.
+void http_client_register_events(HTTP_Client *client,
     EventRegister *reg);
 
 // The caller has waited for poll() to return and some
@@ -1044,10 +1048,11 @@ int http_client_process_events(HTTP_Client *client,
 // http_free_response function.
 // TODO: Better comment talking about output arguments
 bool http_client_next_response(HTTP_Client *client,
-    HTTP_Response **response, void **user);
+    int *result, void **user, HTTP_Response **response);
 
 // TODO: comment
-int http_client_wait_response(HTTP_Client *client, HTTP_Response **response, void **user);
+int http_client_wait_response(HTTP_Client *client,
+    int *result, void **user, HTTP_Response **response);
 
 // Free a response object. You can't access its fields
 // again after this.
@@ -1236,9 +1241,8 @@ int http_server_add_certificate(HTTP_Server *server,
 int http_server_wakeup(HTTP_Server *server);
 
 // Resets the event register with the list of descriptors
-// the server wants monitored. Returns 0 on success, -1 if
-// the event register's capacity isn't large enough.
-int http_server_register_events(HTTP_Server *server,
+// the server wants monitored.
+void http_server_register_events(HTTP_Server *server,
     EventRegister *reg);
 
 // The caller has waited for poll() to return and some
@@ -1262,6 +1266,10 @@ typedef struct {
 // For each request returned by this function, the user
 // must build a response using the response builder API.
 bool http_server_next_request(HTTP_Server *server,
+    HTTP_Request **request, HTTP_ResponseBuilder *builder);
+
+// TODO: comment
+int http_server_wait_request(HTTP_Server *server,
     HTTP_Request **request, HTTP_ResponseBuilder *builder);
 
 // This function is called to set the status code of
