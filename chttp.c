@@ -1179,12 +1179,11 @@ static int parse_response(Scanner *s, HTTP_Response *res)
         return -1;
     }
 
-    if (s->len - s->cur < 5
-        || s->src[s->cur+0] != ' '
+    if (s->len - s->cur < 4
+        || !is_digit(s->src[s->cur+0])
         || !is_digit(s->src[s->cur+1])
         || !is_digit(s->src[s->cur+2])
-        || !is_digit(s->src[s->cur+3])
-        || s->src[s->cur+4] != ' ')
+        || s->src[s->cur+3] != ' ')
         return -1;
     s->cur += 5;
 
@@ -1969,6 +1968,35 @@ int server_secure_context_add_certificate(ServerSecureContext *ctx,
 // src/socket.c
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#define TRACE_STATE_CHANGES
+
+#ifndef TRACE_STATE_CHANGES
+#define UPDATE_STATE(a, b) a = b
+#else
+static char *state_to_str(SocketState state)
+{
+    switch (state) {
+    case SOCKET_STATE_FREE      : return "FREE";
+    case SOCKET_STATE_PENDING   : return "PENDING";
+    case SOCKET_STATE_CONNECTING: return "CONNECTING";
+    case SOCKET_STATE_CONNECTED : return "CONNECTED";
+    case SOCKET_STATE_ACCEPTED  : return "ACCEPTED";
+    case SOCKET_STATE_ESTABLISHED_WAIT : return "ESTABLISHED_WAIT";
+    case SOCKET_STATE_ESTABLISHED_READY: return "ESTABLISHED_READY";
+    case SOCKET_STATE_SHUTDOWN  : return "SHUTDOWN";
+    case SOCKET_STATE_DIED      : return "DIED";
+    }
+    return "???";
+}
+#define UPDATE_STATE(a, b) {    \
+    printf("%s -> %s  %s:%d\n", \
+        state_to_str(a),        \
+        state_to_str(b),        \
+        __FILE__, __LINE__);    \
+    a = b;                      \
+}
+#endif
+
 static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b)
 {
 #ifdef _WIN32
@@ -2300,7 +2328,7 @@ static void socket_update(Socket *s)
                     s->next_addr++;
                     if (s->next_addr == s->num_addr) {
                         // All addresses have been tried and failed
-                        s->state = SOCKET_STATE_DIED;
+                        UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                         s->events = 0;
                         continue;
                     }
@@ -2315,14 +2343,14 @@ static void socket_update(Socket *s)
                 int family = (addr.is_ipv4 ? AF_INET : AF_INET6);
                 NATIVE_SOCKET sock = socket(family, SOCK_STREAM, 0);
                 if (sock == NATIVE_SOCKET_INVALID) {
-                    s->state = SOCKET_STATE_DIED;
+                    UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                     s->events = 0;
                     continue;
                 }
 
                 if (set_socket_blocking(sock, false) < 0) {
                     CLOSE_NATIVE_SOCKET(sock);
-                    s->state = SOCKET_STATE_DIED;
+                    UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                     s->events = 0;
                     continue;
                 }
@@ -2345,25 +2373,25 @@ static void socket_update(Socket *s)
                 if (ret == 0) {
                     // Connect resolved immediately
                     s->sock = sock;
-                    s->state = SOCKET_STATE_CONNECTED;
+                    UPDATE_STATE(s->state, SOCKET_STATE_CONNECTED);
                     s->events = 0;
                     again = true;
                 } else if (connect_pending()) {
                     // Connect is pending, which is expected
                     s->sock = sock;
-                    s->state = SOCKET_STATE_CONNECTING;
+                    UPDATE_STATE(s->state, SOCKET_STATE_CONNECTING);
                     s->events = POLLOUT;
                 } else if (connect_failed_because_of_peer()) {
                     // Conenct failed due to the peer host
                     // We should try a different address.
                     s->sock = sock;
-                    s->state = SOCKET_STATE_PENDING;
+                    UPDATE_STATE(s->state, SOCKET_STATE_PENDING);
                     s->events = 0;
                     again = true;
                 } else {
                     // An error occurred that we can't recover from
                     s->sock = sock;
-                    s->state = SOCKET_STATE_DIED;
+                    UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                     s->events = 0;
                     again = true;
                 }
@@ -2379,23 +2407,23 @@ static void socket_update(Socket *s)
                 socklen_t len = sizeof(err);
                 if (getsockopt(s->sock, SOL_SOCKET, SO_ERROR, (void*) &err, &len) < 0) {
                     // Failed to get socket error status
-                    s->state = SOCKET_STATE_DIED;
+                    UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                     s->events = 0;
                     continue;
                 }
 
                 if (err == 0) {
                     // Connection succeded
-                    s->state = SOCKET_STATE_CONNECTED;
+                    UPDATE_STATE(s->state, SOCKET_STATE_CONNECTED);
                     s->events = 0;
                     again = true;
                 } else if (connect_failed_because_of_peer_2(err)) {
                     // Try the next address
-                    s->state = SOCKET_STATE_PENDING;
+                    UPDATE_STATE(s->state, SOCKET_STATE_PENDING);
                     s->events = 0;
                     again = true;
                 } else {
-                    s->state = SOCKET_STATE_DIED;
+                    UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                     s->events = 0;
                 }
             }
@@ -2412,19 +2440,19 @@ static void socket_update(Socket *s)
                         free(s->addrs);
 
                     s->events = 0;
-                    s->state = SOCKET_STATE_ESTABLISHED_READY;
+                    UPDATE_STATE(s->state, SOCKET_STATE_ESTABLISHED_READY);
                 } else {
 #ifdef HTTPS_ENABLED
                     if (s->ssl == NULL) {
                         s->ssl = SSL_new(s->client_secure_context->p);
                         if (s->ssl == NULL) {
-                            s->state = SOCKET_STATE_DIED;
+                            UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                             s->events = 0;
                             break;
                         }
 
                         if (SSL_set_fd(s->ssl, s->sock) != 1) {
-                            s->state = SOCKET_STATE_DIED;
+                            UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                             s->events = 0;
                             break;
                         }
@@ -2439,7 +2467,7 @@ static void socket_update(Socket *s)
 
                             // Set expected hostname for verification
                             if (SSL_set1_host(s->ssl, addr.name->data) != 1) {
-                                s->state = SOCKET_STATE_DIED;
+                                UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                                 s->events = 0;
                                 break;
                             }
@@ -2468,7 +2496,7 @@ static void socket_update(Socket *s)
                             free(s->addrs);
                         }
 
-                        s->state = SOCKET_STATE_ESTABLISHED_READY;
+                        UPDATE_STATE(s->state, SOCKET_STATE_ESTABLISHED_READY);
                         s->events = 0;
                         break;
                     }
@@ -2484,7 +2512,7 @@ static void socket_update(Socket *s)
                         break;
                     }
 
-                    s->state = SOCKET_STATE_PENDING;
+                    UPDATE_STATE(s->state, SOCKET_STATE_PENDING);
                     s->events = 0;
                     again = true;
 #endif
@@ -2495,7 +2523,7 @@ static void socket_update(Socket *s)
         case SOCKET_STATE_ACCEPTED:
             {
                 if (!is_secure(s)) {
-                    s->state = SOCKET_STATE_ESTABLISHED_READY;
+                    UPDATE_STATE(s->state, SOCKET_STATE_ESTABLISHED_READY);
                     s->events = 0;
                 } else {
 #ifdef HTTPS_ENABLED
@@ -2504,13 +2532,13 @@ static void socket_update(Socket *s)
 
                         s->ssl = SSL_new(s->server_secure_context->p);
                         if (s->ssl == NULL) {
-                            s->state = SOCKET_STATE_DIED;
+                            UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                             s->events = 0;
                             break;
                         }
 
                         if (SSL_set_fd(s->ssl, s->sock) != 1) {
-                            s->state = SOCKET_STATE_DIED;
+                            UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                             s->events = 0;
                             break;
                         }
@@ -2519,7 +2547,7 @@ static void socket_update(Socket *s)
                     int ret = SSL_accept(s->ssl);
                     if (ret == 1) {
                         // Handshake done
-                        s->state = SOCKET_STATE_ESTABLISHED_READY;
+                        UPDATE_STATE(s->state, SOCKET_STATE_ESTABLISHED_READY);
                         s->events = 0;
                         break;
                     }
@@ -2536,7 +2564,7 @@ static void socket_update(Socket *s)
                     }
 
                     // Server socket error - close the connection
-                    s->state = SOCKET_STATE_DIED;
+                    UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                     s->events = 0;
 #endif
                 }
@@ -2544,20 +2572,20 @@ static void socket_update(Socket *s)
             break;
 
         case SOCKET_STATE_ESTABLISHED_WAIT:
-            s->state = SOCKET_STATE_ESTABLISHED_READY;
+            UPDATE_STATE(s->state, SOCKET_STATE_ESTABLISHED_READY);
             s->events = 0;
             break;
 
         case SOCKET_STATE_SHUTDOWN:
             {
                 if (!is_secure(s)) {
-                    s->state = SOCKET_STATE_DIED;
+                    UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                     s->events = 0;
                 } else {
 #ifdef HTTPS_ENABLED
                     int ret = SSL_shutdown(s->ssl);
                     if (ret == 1) {
-                        s->state = SOCKET_STATE_DIED;
+                        UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                         s->events = 0;
                         break;
                     }
@@ -2573,7 +2601,7 @@ static void socket_update(Socket *s)
                         break;
                     }
 
-                    s->state = SOCKET_STATE_DIED;
+                    UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                     s->events = 0;
 #endif
                 }
@@ -2758,7 +2786,7 @@ static int socket_manager_translate_events_nolock(
             socket_update(s);
             if (s->state == SOCKET_STATE_DIED) {
                 CLOSE_NATIVE_SOCKET(sock);
-                s->state = SOCKET_STATE_FREE;
+                UPDATE_STATE(s->state, SOCKET_STATE_FREE);
                 s->gen++;
                 if (s->gen == 0)
                     s->gen = 1;
@@ -2800,7 +2828,7 @@ static int socket_manager_translate_events_nolock(
             };
 
             // Free resources associated to socket
-            s->state = SOCKET_STATE_FREE;
+            UPDATE_STATE(s->state, SOCKET_STATE_FREE);
             if (s->sock != NATIVE_SOCKET_INVALID)
                 CLOSE_NATIVE_SOCKET(s->sock);
             if (s->sock == SOCKET_STATE_PENDING ||
@@ -2989,7 +3017,7 @@ int socket_connect(SocketManager *sm, int num_targets,
             s->addrs[i] = resolved[i];
     }
 
-    s->state = SOCKET_STATE_PENDING;
+    UPDATE_STATE(s->state, SOCKET_STATE_PENDING);
     s->sock = NATIVE_SOCKET_INVALID;
     s->user = user;
 #ifdef HTTPS_ENABLED
@@ -3032,7 +3060,7 @@ static int socket_recv_nolock(SocketManager *sm, SocketHandle handle,
         return 0;
 
     if (s->state != SOCKET_STATE_ESTABLISHED_READY) {
-        s->state = SOCKET_STATE_DIED;
+        UPDATE_STATE(s->state, SOCKET_STATE_DIED);
         s->events = 0;
         return 0;
     }
@@ -3040,14 +3068,14 @@ static int socket_recv_nolock(SocketManager *sm, SocketHandle handle,
     if (!is_secure(s)) {
         int ret = recv(s->sock, dst, max, 0);
         if (ret == 0) {
-            s->state = SOCKET_STATE_DIED;
+            UPDATE_STATE(s->state, SOCKET_STATE_DIED);
             s->events = 0;
         } else if (ret < 0) {
             if (would_block()) {
-                s->state = SOCKET_STATE_ESTABLISHED_WAIT;
+                UPDATE_STATE(s->state, SOCKET_STATE_ESTABLISHED_WAIT);
                 s->events = POLLIN;
             } else if (!interrupted()) {
-                s->state = SOCKET_STATE_DIED;
+                UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                 s->events = 0;
             }
             ret = 0;
@@ -3062,7 +3090,7 @@ static int socket_recv_nolock(SocketManager *sm, SocketHandle handle,
                 s->state  = SOCKET_STATE_ESTABLISHED_WAIT;
                 s->events = POLLIN;
             } else if (err == SSL_ERROR_WANT_WRITE) {
-                s->state = SOCKET_STATE_ESTABLISHED_WAIT;
+                UPDATE_STATE(s->state, SOCKET_STATE_ESTABLISHED_WAIT);
                 s->events = POLLOUT;
             } else {
                 s->state  = SOCKET_STATE_DIED;
@@ -3096,7 +3124,7 @@ static int socket_send_nolock(SocketManager *sm, SocketHandle handle,
         return 0;
 
     if (s->state != SOCKET_STATE_ESTABLISHED_READY) {
-        s->state = SOCKET_STATE_DIED;
+        UPDATE_STATE(s->state, SOCKET_STATE_DIED);
         s->events = 0;
         return 0;
     }
@@ -3105,10 +3133,10 @@ static int socket_send_nolock(SocketManager *sm, SocketHandle handle,
         int ret = send(s->sock, src, len, 0);
         if (ret < 0) {
             if (would_block()) {
-                s->state = SOCKET_STATE_ESTABLISHED_WAIT;
+                UPDATE_STATE(s->state, SOCKET_STATE_ESTABLISHED_WAIT);
                 s->events = POLLOUT;
             } else if (!interrupted()) {
-                s->state = SOCKET_STATE_DIED;
+                UPDATE_STATE(s->state, SOCKET_STATE_DIED);
                 s->events = 0;
             }
             ret = 0;
@@ -3161,7 +3189,7 @@ int socket_close(SocketManager *sm, SocketHandle handle)
     else {
         // Only transition to SHUTDOWN if socket is not already DIED
         if (s->state != SOCKET_STATE_DIED) {
-            s->state = SOCKET_STATE_SHUTDOWN;
+            UPDATE_STATE(s->state, SOCKET_STATE_SHUTDOWN);
             s->events = 0;
             socket_update(s);
         }
@@ -3207,6 +3235,24 @@ int socket_set_user(SocketManager *sm, SocketHandle handle, void *user)
     if (mutex_unlock(&sm->mutex) < 0)
         return -1;
     return ret;
+}
+
+bool socket_ready(SocketManager *sm, SocketHandle handle)
+{
+    if (mutex_lock(&sm->mutex) < 0) {
+        assert(0); // TODO
+    }
+
+    bool ready = false;
+    Socket *s = handle_to_socket(sm, handle);
+    if (s && s->events == 0 && s->state != SOCKET_STATE_DIED) {
+        ready = true;
+    }
+
+    if (mutex_unlock(&sm->mutex) < 0) {
+        assert(0); // TODO
+    }
+    return ready;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -4196,88 +4242,92 @@ int http_client_process_events(HTTP_Client *client,
             if (conn->handle == SOCKET_HANDLE_INVALID)
                 conn->handle = events[i].handle;
 
-            if (conn->state == HTTP_CLIENT_CONN_FLUSHING) {
+            while (socket_ready(&client->sockets, conn->handle)) {
 
-                ByteView src = byte_queue_read_buf(&conn->output);
+                if (conn->state == HTTP_CLIENT_CONN_FLUSHING) {
 
-                int num = 0;
-                if (src.len)
-                    num = socket_send(&client->sockets, conn->handle, src.ptr, src.len);
+                    ByteView src = byte_queue_read_buf(&conn->output);
 
-                if (conn->trace_bytes)
-                    print_bytes(HTTP_STR("<< "), (HTTP_String){src.ptr, num});
+                    int num = 0;
+                    if (src.len)
+                        num = socket_send(&client->sockets, conn->handle, src.ptr, src.len);
 
-                byte_queue_read_ack(&conn->output, num);
+                    if (conn->trace_bytes)
+                        print_bytes(HTTP_STR("<< "), (HTTP_String){src.ptr, num});
 
-                if (byte_queue_error(&conn->output)) {
-                    socket_close(&client->sockets, conn->handle);
-                    continue;
-                }
+                    byte_queue_read_ack(&conn->output, num);
 
-                // Request fully sent, now wait for response
-                if (byte_queue_empty(&conn->output))
-                    conn->state = HTTP_CLIENT_CONN_BUFFERING;
-            }
-
-            if (conn->state == HTTP_CLIENT_CONN_BUFFERING) {
-
-                // Receive response data
-                int min_recv = 1<<10;
-                byte_queue_write_setmincap(&conn->input, min_recv);
-
-                ByteView dst = byte_queue_write_buf(&conn->input);
-
-                int num = 0;
-                if (dst.len)
-                    num = socket_recv(&client->sockets, conn->handle, dst.ptr, dst.len);
-
-                if (conn->trace_bytes)
-                    print_bytes(HTTP_STR(">> "), (HTTP_String){dst.ptr, num});
-
-                byte_queue_write_ack(&conn->input, num);
-
-                if (byte_queue_error(&conn->input)) {
-                    socket_close(&client->sockets, conn->handle);
-                    continue;
-                }
-
-                ByteView src = byte_queue_read_buf(&conn->input);
-                int ret = http_parse_response(src.ptr, src.len, &conn->response);
-
-                if (ret == 0) {
-                    // Still waiting
-                    byte_queue_read_ack(&conn->input, 0);
-
-                    // If the queue reached its limit and we still didn't receive
-                    // a complete response, abort the exchange.
-                    if (byte_queue_full(&conn->input))
+                    if (byte_queue_error(&conn->output)) {
                         socket_close(&client->sockets, conn->handle);
-                    continue;
+                        continue;
+                    }
+
+                    // Request fully sent, now wait for response
+                    if (byte_queue_empty(&conn->output))
+                        conn->state = HTTP_CLIENT_CONN_BUFFERING;
                 }
 
-                if (ret < 0) {
-                    // Invalid response
-                    byte_queue_read_ack(&conn->input, 0);
-                    socket_close(&client->sockets, conn->handle);
-                    continue;
+                if (conn->state == HTTP_CLIENT_CONN_BUFFERING) {
+
+                    // Receive response data
+                    int min_recv = 1<<10;
+                    byte_queue_write_setmincap(&conn->input, min_recv);
+
+                    ByteView dst = byte_queue_write_buf(&conn->input);
+
+                    int num = 0;
+                    if (dst.len)
+                        num = socket_recv(&client->sockets, conn->handle, dst.ptr, dst.len);
+
+                    if (conn->trace_bytes)
+                        print_bytes(HTTP_STR(">> "), (HTTP_String){dst.ptr, num});
+
+                    byte_queue_write_ack(&conn->input, num);
+
+                    if (byte_queue_error(&conn->input)) {
+                        socket_close(&client->sockets, conn->handle);
+                        continue;
+                    }
+
+                    ByteView src = byte_queue_read_buf(&conn->input);
+                    int ret = http_parse_response(src.ptr, src.len, &conn->response);
+
+                    if (ret == 0) {
+                        // Still waiting
+                        byte_queue_read_ack(&conn->input, 0);
+
+                        // If the queue reached its limit and we still didn't receive
+                        // a complete response, abort the exchange.
+                        if (byte_queue_full(&conn->input))
+                            socket_close(&client->sockets, conn->handle);
+                        continue;
+                    }
+
+                    if (ret < 0) {
+                        // Invalid response
+                        byte_queue_read_ack(&conn->input, 0);
+                        socket_close(&client->sockets, conn->handle);
+                        continue;
+                    }
+
+                    // Ready
+                    assert(ret > 0);
+
+                    conn->state = HTTP_CLIENT_CONN_COMPLETE;
+                    conn->result = 0;
+
+                    conn->response.context = client;
+
+                    // Store received cookies in the cookie jar
+                    save_cookies(&client->cookie_jar,
+                        conn->response.headers,
+                        conn->response.num_headers,
+                        conn->url.authority.host.text,
+                        conn->url.path);
+
+                    // TODO: Handle redirects here
+                    break;
                 }
-
-                // Ready
-                assert(ret == 1);
-
-                conn->state = HTTP_CLIENT_CONN_COMPLETE;
-                conn->result = 0;
-
-                conn->response.context = client;
-
-                // Store received cookies in the cookie jar
-                save_cookies(&client->cookie_jar,
-                    conn->response.headers,
-                    conn->response.num_headers,
-                    conn->url.authority.host.text,
-                    conn->url.path);
-
-                // TODO: Handle redirects here
             }
         }
 

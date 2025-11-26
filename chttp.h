@@ -649,6 +649,10 @@ int socket_is_secure(SocketManager *sm, SocketHandle handle);
 // Set the user pointer of a socket
 int socket_set_user(SocketManager *sm, SocketHandle handle, void *user);
 
+// Returns true iff the socket is ready for reading or
+// writing.
+bool socket_ready(SocketManager *sm, SocketHandle handle);
+
 ////////////////////////////////////////////////////////////////////////////////////////
 // src/byte_queue.h
 ////////////////////////////////////////////////////////////////////////////////////////

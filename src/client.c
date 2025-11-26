@@ -523,88 +523,92 @@ int http_client_process_events(HTTP_Client *client,
             if (conn->handle == SOCKET_HANDLE_INVALID)
                 conn->handle = events[i].handle;
 
-            if (conn->state == HTTP_CLIENT_CONN_FLUSHING) {
+            while (socket_ready(&client->sockets, conn->handle)) {
 
-                ByteView src = byte_queue_read_buf(&conn->output);
+                if (conn->state == HTTP_CLIENT_CONN_FLUSHING) {
 
-                int num = 0;
-                if (src.len)
-                    num = socket_send(&client->sockets, conn->handle, src.ptr, src.len);
+                    ByteView src = byte_queue_read_buf(&conn->output);
 
-                if (conn->trace_bytes)
-                    print_bytes(HTTP_STR("<< "), (HTTP_String){src.ptr, num});
+                    int num = 0;
+                    if (src.len)
+                        num = socket_send(&client->sockets, conn->handle, src.ptr, src.len);
 
-                byte_queue_read_ack(&conn->output, num);
+                    if (conn->trace_bytes)
+                        print_bytes(HTTP_STR("<< "), (HTTP_String){src.ptr, num});
 
-                if (byte_queue_error(&conn->output)) {
-                    socket_close(&client->sockets, conn->handle);
-                    continue;
-                }
+                    byte_queue_read_ack(&conn->output, num);
 
-                // Request fully sent, now wait for response
-                if (byte_queue_empty(&conn->output))
-                    conn->state = HTTP_CLIENT_CONN_BUFFERING;
-            }
-
-            if (conn->state == HTTP_CLIENT_CONN_BUFFERING) {
-
-                // Receive response data
-                int min_recv = 1<<10;
-                byte_queue_write_setmincap(&conn->input, min_recv);
-
-                ByteView dst = byte_queue_write_buf(&conn->input);
-
-                int num = 0;
-                if (dst.len)
-                    num = socket_recv(&client->sockets, conn->handle, dst.ptr, dst.len);
-
-                if (conn->trace_bytes)
-                    print_bytes(HTTP_STR(">> "), (HTTP_String){dst.ptr, num});
-
-                byte_queue_write_ack(&conn->input, num);
-
-                if (byte_queue_error(&conn->input)) {
-                    socket_close(&client->sockets, conn->handle);
-                    continue;
-                }
-
-                ByteView src = byte_queue_read_buf(&conn->input);
-                int ret = http_parse_response(src.ptr, src.len, &conn->response);
-
-                if (ret == 0) {
-                    // Still waiting
-                    byte_queue_read_ack(&conn->input, 0);
-
-                    // If the queue reached its limit and we still didn't receive
-                    // a complete response, abort the exchange.
-                    if (byte_queue_full(&conn->input))
+                    if (byte_queue_error(&conn->output)) {
                         socket_close(&client->sockets, conn->handle);
-                    continue;
+                        continue;
+                    }
+
+                    // Request fully sent, now wait for response
+                    if (byte_queue_empty(&conn->output))
+                        conn->state = HTTP_CLIENT_CONN_BUFFERING;
                 }
 
-                if (ret < 0) {
-                    // Invalid response
-                    byte_queue_read_ack(&conn->input, 0);
-                    socket_close(&client->sockets, conn->handle);
-                    continue;
+                if (conn->state == HTTP_CLIENT_CONN_BUFFERING) {
+
+                    // Receive response data
+                    int min_recv = 1<<10;
+                    byte_queue_write_setmincap(&conn->input, min_recv);
+
+                    ByteView dst = byte_queue_write_buf(&conn->input);
+
+                    int num = 0;
+                    if (dst.len)
+                        num = socket_recv(&client->sockets, conn->handle, dst.ptr, dst.len);
+
+                    if (conn->trace_bytes)
+                        print_bytes(HTTP_STR(">> "), (HTTP_String){dst.ptr, num});
+
+                    byte_queue_write_ack(&conn->input, num);
+
+                    if (byte_queue_error(&conn->input)) {
+                        socket_close(&client->sockets, conn->handle);
+                        continue;
+                    }
+
+                    ByteView src = byte_queue_read_buf(&conn->input);
+                    int ret = http_parse_response(src.ptr, src.len, &conn->response);
+
+                    if (ret == 0) {
+                        // Still waiting
+                        byte_queue_read_ack(&conn->input, 0);
+
+                        // If the queue reached its limit and we still didn't receive
+                        // a complete response, abort the exchange.
+                        if (byte_queue_full(&conn->input))
+                            socket_close(&client->sockets, conn->handle);
+                        continue;
+                    }
+
+                    if (ret < 0) {
+                        // Invalid response
+                        byte_queue_read_ack(&conn->input, 0);
+                        socket_close(&client->sockets, conn->handle);
+                        continue;
+                    }
+
+                    // Ready
+                    assert(ret > 0);
+
+                    conn->state = HTTP_CLIENT_CONN_COMPLETE;
+                    conn->result = 0;
+
+                    conn->response.context = client;
+
+                    // Store received cookies in the cookie jar
+                    save_cookies(&client->cookie_jar,
+                        conn->response.headers,
+                        conn->response.num_headers,
+                        conn->url.authority.host.text,
+                        conn->url.path);
+
+                    // TODO: Handle redirects here
+                    break;
                 }
-
-                // Ready
-                assert(ret == 1);
-
-                conn->state = HTTP_CLIENT_CONN_COMPLETE;
-                conn->result = 0;
-
-                conn->response.context = client;
-
-                // Store received cookies in the cookie jar
-                save_cookies(&client->cookie_jar,
-                    conn->response.headers,
-                    conn->response.num_headers,
-                    conn->url.authority.host.text,
-                    conn->url.path);
-
-                // TODO: Handle redirects here
             }
         }
 

@@ -1067,12 +1067,11 @@ static int parse_response(Scanner *s, HTTP_Response *res)
         return -1;
     }
 
-    if (s->len - s->cur < 5
-        || s->src[s->cur+0] != ' '
+    if (s->len - s->cur < 4
+        || !is_digit(s->src[s->cur+0])
         || !is_digit(s->src[s->cur+1])
         || !is_digit(s->src[s->cur+2])
-        || !is_digit(s->src[s->cur+3])
-        || s->src[s->cur+4] != ' ')
+        || s->src[s->cur+3] != ' ')
         return -1;
     s->cur += 5;
 
