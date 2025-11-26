@@ -185,8 +185,8 @@ void http_server_register_events(HTTP_Server *server,
 // The caller has waited for poll() to return and some
 // I/O events to be triggered, so now the HTTP server
 // can continue its buffering and flushing operations.
-int http_server_process_events(HTTP_Server *server,
-    EventRegister *reg);
+void http_server_process_events(HTTP_Server *server,
+    EventRegister reg);
 
 typedef struct {
     HTTP_Server *server;
@@ -206,7 +206,7 @@ bool http_server_next_request(HTTP_Server *server,
     HTTP_Request **request, HTTP_ResponseBuilder *builder);
 
 // TODO: comment
-int http_server_wait_request(HTTP_Server *server,
+void http_server_wait_request(HTTP_Server *server,
     HTTP_Request **request, HTTP_ResponseBuilder *builder);
 
 // This function is called to set the status code of

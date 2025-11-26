@@ -1073,12 +1073,11 @@ static int parse_response(Scanner *s, HTTP_Response *res)
         || !is_digit(s->src[s->cur+2])
         || s->src[s->cur+3] != ' ')
         return -1;
-    s->cur += 5;
-
     res->status =
-        (s->src[s->cur-2] - '0') * 1 +
-        (s->src[s->cur-3] - '0') * 10 +
-        (s->src[s->cur-4] - '0') * 100;
+        (s->src[s->cur+0] - '0') * 100 +
+        (s->src[s->cur+1] - '0') * 10 +
+        (s->src[s->cur+2] - '0') * 1;
+    s->cur += 4;
 
     // Parse reason phrase: HTAB / SP / VCHAR / obs-text
     // Note: obs-text (obsolete text, octets 0x80-0xFF) is not validated

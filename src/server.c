@@ -217,14 +217,11 @@ http_server_conn_process_events(HTTP_Server *server, HTTP_ServerConn *conn)
     }
 }
 
-int http_server_process_events(HTTP_Server *server,
-    EventRegister *reg)
+void http_server_process_events(HTTP_Server *server,
+    EventRegister reg)
 {
     SocketEvent events[HTTP_SERVER_CAPACITY];
-    int ret = socket_manager_translate_events(&server->sockets, events, reg);
-    if (ret < 0)
-        return ret;
-    int num_events = ret;
+    int num_events = socket_manager_translate_events(&server->sockets, events, reg);
 
     for (int i = 0; i < num_events; i++) {
 
@@ -265,8 +262,6 @@ int http_server_process_events(HTTP_Server *server,
                 http_server_conn_process_events(server, conn);
         }
     }
-
-    return HTTP_OK;
 }
 
 bool http_server_next_request(HTTP_Server *server,
@@ -285,7 +280,7 @@ bool http_server_next_request(HTTP_Server *server,
     return true;
 }
 
-int http_server_wait_request(HTTP_Server *server,
+void http_server_wait_request(HTTP_Server *server,
     HTTP_Request **request, HTTP_ResponseBuilder *builder)
 {
     for (;;) {
@@ -298,15 +293,11 @@ int http_server_wait_request(HTTP_Server *server,
         if (reg.num_polled > 0)
             POLL(reg.polled, reg.num_polled, -1);
 
-        int ret = http_server_process_events(server, &reg);
-        if (ret < 0)
-            return ret;
+        http_server_process_events(server, reg);
 
         if (http_server_next_request(server, request, builder))
             break;
     }
-
-    return HTTP_OK;
 }
 
 // Get a connection pointer from a response builder.
@@ -495,7 +486,7 @@ void http_response_builder_body(HTTP_ResponseBuilder builder, HTTP_String str)
     if (conn == NULL)
         return;
 
-    if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER) {
+    if (conn->state == HTTP_SERVER_CONN_WAIT_HEADER) {
         append_special_headers(conn);
         conn->state = HTTP_SERVER_CONN_WAIT_BODY;
     }

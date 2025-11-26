@@ -24,11 +24,7 @@ int main(void)
 
         HTTP_Request *request;
         HTTP_ResponseBuilder builder;
-        int ret = http_server_wait_request(&server, &request, &builder);
-        if (ret < 0) {
-            fprintf(stderr, "Couldn't wait for request (%s)\n", http_strerror(ret));
-            return -1;
-        }
+        http_server_wait_request(&server, &request, &builder);
 
         http_response_builder_status(builder, 200);
         http_response_builder_body(builder, HTTP_STR("Hello, world!"));

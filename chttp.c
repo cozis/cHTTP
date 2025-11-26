@@ -1199,12 +1199,11 @@ static int parse_response(Scanner *s, HTTP_Response *res)
         || !is_digit(s->src[s->cur+2])
         || s->src[s->cur+3] != ' ')
         return -1;
-    s->cur += 5;
-
     res->status =
-        (s->src[s->cur-2] - '0') * 1 +
-        (s->src[s->cur-3] - '0') * 10 +
-        (s->src[s->cur-4] - '0') * 100;
+        (s->src[s->cur+0] - '0') * 100 +
+        (s->src[s->cur+1] - '0') * 10 +
+        (s->src[s->cur+2] - '0') * 1;
+    s->cur += 4;
 
     // Parse reason phrase: HTAB / SP / VCHAR / obs-text
     // Note: obs-text (obsolete text, octets 0x80-0xFF) is not validated
@@ -2708,16 +2707,16 @@ static Socket *handle_to_socket(SocketManager *sm, SocketHandle handle)
 
 int socket_manager_translate_events(
     SocketManager *sm, SocketEvent *events,
-    EventRegister *reg)
+    EventRegister reg)
 {
     int num_events = 0;
-    for (int i = 0; i < reg->num_polled; i++) {
+    for (int i = 0; i < reg.num_polled; i++) {
 
-        if (!reg->polled[i].revents)
+        if (!reg.polled[i].revents)
             continue;
 
-        if (reg->polled[i].fd == sm->plain_sock ||
-            reg->polled[i].fd == sm->secure_sock) {
+        if (reg.polled[i].fd == sm->plain_sock ||
+            reg.polled[i].fd == sm->secure_sock) {
 
             // We only listen for input events from the listener
             // if the socket pool isn't fool. This ensures that
@@ -2733,7 +2732,7 @@ int socket_manager_translate_events(
 
             // Determine whether the event came from
             // the encrypted listener or not.
-            bool secure = (reg->polled[i].fd == sm->secure_sock);
+            bool secure = (reg.polled[i].fd == sm->secure_sock);
 
             Socket *s = sm->sockets;
             while (s->state != SOCKET_STATE_FREE) {
@@ -2741,7 +2740,7 @@ int socket_manager_translate_events(
                 assert(s - sm->sockets < + sm->max_used);
             }
 
-            NATIVE_SOCKET sock = accept(reg->polled[i].fd, NULL, NULL);
+            NATIVE_SOCKET sock = accept(reg.polled[i].fd, NULL, NULL);
             if (sock == NATIVE_SOCKET_INVALID)
                 continue;
 
@@ -2774,7 +2773,7 @@ int socket_manager_translate_events(
 
             sm->num_used++;
 
-        } else if (reg->polled[i].fd == sm->wait_sock) {
+        } else if (reg.polled[i].fd == sm->wait_sock) {
 
             // Consume one byte from the wakeup signal
             char byte;
@@ -2785,10 +2784,8 @@ int socket_manager_translate_events(
 #endif
 
         } else {
-
-            Socket *s = reg->ptrs[i];
-            if (reg->polled[i].revents)
-                socket_update(s);
+            Socket *s = reg.ptrs[i];
+            socket_update(s);
         }
     }
 
@@ -3850,6 +3847,12 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
     if (conn->state != HTTP_CLIENT_CONN_WAIT_URL)
         return; // Request line already written
 
+    if (url.len == 0) {
+        conn->state = HTTP_CLIENT_CONN_COMPLETE;
+        conn->result = HTTP_ERROR_BADURL;
+        return;
+    }
+
     // Allocate a copy of the URL string so the parsed
     // URL pointers remain valid
     char *url_copy = malloc(url.len);
@@ -4124,14 +4127,11 @@ void http_client_register_events(HTTP_Client *client,
     socket_manager_register_events(&client->sockets, reg);
 }
 
-int http_client_process_events(HTTP_Client *client,
-    EventRegister *reg)
+void http_client_process_events(HTTP_Client *client,
+    EventRegister reg)
 {
     SocketEvent events[HTTP_CLIENT_CAPACITY];
-    int ret = socket_manager_translate_events(&client->sockets, events, reg);
-    if (ret < 0)
-        return ret;
-    int num_events = ret;
+    int num_events = socket_manager_translate_events(&client->sockets, events, reg);
 
     for (int i = 0; i < num_events; i++) {
 
@@ -4253,8 +4253,6 @@ int http_client_process_events(HTTP_Client *client,
             client->num_ready++;
         }
     }
-
-    return HTTP_OK;
 }
 
 bool http_client_next_response(HTTP_Client *client,
@@ -4311,7 +4309,7 @@ void http_free_response(HTTP_Response *response)
 #define POLL poll
 #endif
 
-int http_client_wait_response(HTTP_Client *client,
+void http_client_wait_response(HTTP_Client *client,
     int *result, void **user, HTTP_Response **response)
 {
     for (;;) {
@@ -4325,15 +4323,11 @@ int http_client_wait_response(HTTP_Client *client,
         if (reg.num_polled > 0)
             POLL(reg.polled, reg.num_polled, -1);
 
-        int ret = http_client_process_events(client, &reg);
-        if (ret < 0)
-            return ret;
+        http_client_process_events(client, reg);
 
         if (http_client_next_response(client, result, user, response))
             break;
     }
-
-    return HTTP_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -4558,14 +4552,11 @@ http_server_conn_process_events(HTTP_Server *server, HTTP_ServerConn *conn)
     }
 }
 
-int http_server_process_events(HTTP_Server *server,
-    EventRegister *reg)
+void http_server_process_events(HTTP_Server *server,
+    EventRegister reg)
 {
     SocketEvent events[HTTP_SERVER_CAPACITY];
-    int ret = socket_manager_translate_events(&server->sockets, events, reg);
-    if (ret < 0)
-        return ret;
-    int num_events = ret;
+    int num_events = socket_manager_translate_events(&server->sockets, events, reg);
 
     for (int i = 0; i < num_events; i++) {
 
@@ -4606,8 +4597,6 @@ int http_server_process_events(HTTP_Server *server,
                 http_server_conn_process_events(server, conn);
         }
     }
-
-    return HTTP_OK;
 }
 
 bool http_server_next_request(HTTP_Server *server,
@@ -4626,7 +4615,7 @@ bool http_server_next_request(HTTP_Server *server,
     return true;
 }
 
-int http_server_wait_request(HTTP_Server *server,
+void http_server_wait_request(HTTP_Server *server,
     HTTP_Request **request, HTTP_ResponseBuilder *builder)
 {
     for (;;) {
@@ -4639,15 +4628,11 @@ int http_server_wait_request(HTTP_Server *server,
         if (reg.num_polled > 0)
             POLL(reg.polled, reg.num_polled, -1);
 
-        int ret = http_server_process_events(server, &reg);
-        if (ret < 0)
-            return ret;
+        http_server_process_events(server, reg);
 
         if (http_server_next_request(server, request, builder))
             break;
     }
-
-    return HTTP_OK;
 }
 
 // Get a connection pointer from a response builder.
@@ -4836,7 +4821,7 @@ void http_response_builder_body(HTTP_ResponseBuilder builder, HTTP_String str)
     if (conn == NULL)
         return;
 
-    if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER) {
+    if (conn->state == HTTP_SERVER_CONN_WAIT_HEADER) {
         append_special_headers(conn);
         conn->state = HTTP_SERVER_CONN_WAIT_BODY;
     }

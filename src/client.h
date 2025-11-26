@@ -203,8 +203,8 @@ void http_client_register_events(HTTP_Client *client,
 // The caller has waited for poll() to return and some
 // I/O events to be triggered, so now the HTTP client
 // can continue its buffering and flushing operations.
-int http_client_process_events(HTTP_Client *client,
-    EventRegister *reg);
+void http_client_process_events(HTTP_Client *client,
+    EventRegister reg);
 
 // After some I/O events were processes, some responses
 // may be availabe. This function returns one of the
@@ -217,7 +217,7 @@ bool http_client_next_response(HTTP_Client *client,
     int *result, void **user, HTTP_Response **response);
 
 // TODO: comment
-int http_client_wait_response(HTTP_Client *client,
+void http_client_wait_response(HTTP_Client *client,
     int *result, void **user, HTTP_Response **response);
 
 // Free a response object. You can't access its fields

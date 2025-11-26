@@ -225,6 +225,12 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
     if (conn->state != HTTP_CLIENT_CONN_WAIT_URL)
         return; // Request line already written
 
+    if (url.len == 0) {
+        conn->state = HTTP_CLIENT_CONN_COMPLETE;
+        conn->result = HTTP_ERROR_BADURL;
+        return;
+    }
+
     // Allocate a copy of the URL string so the parsed
     // URL pointers remain valid
     char *url_copy = malloc(url.len);
@@ -499,14 +505,11 @@ void http_client_register_events(HTTP_Client *client,
     socket_manager_register_events(&client->sockets, reg);
 }
 
-int http_client_process_events(HTTP_Client *client,
-    EventRegister *reg)
+void http_client_process_events(HTTP_Client *client,
+    EventRegister reg)
 {
     SocketEvent events[HTTP_CLIENT_CAPACITY];
-    int ret = socket_manager_translate_events(&client->sockets, events, reg);
-    if (ret < 0)
-        return ret;
-    int num_events = ret;
+    int num_events = socket_manager_translate_events(&client->sockets, events, reg);
 
     for (int i = 0; i < num_events; i++) {
 
@@ -628,8 +631,6 @@ int http_client_process_events(HTTP_Client *client,
             client->num_ready++;
         }
     }
-
-    return HTTP_OK;
 }
 
 bool http_client_next_response(HTTP_Client *client,
@@ -686,7 +687,7 @@ void http_free_response(HTTP_Response *response)
 #define POLL poll
 #endif
 
-int http_client_wait_response(HTTP_Client *client,
+void http_client_wait_response(HTTP_Client *client,
     int *result, void **user, HTTP_Response **response)
 {
     for (;;) {
@@ -700,13 +701,9 @@ int http_client_wait_response(HTTP_Client *client,
         if (reg.num_polled > 0)
             POLL(reg.polled, reg.num_polled, -1);
 
-        int ret = http_client_process_events(client, &reg);
-        if (ret < 0)
-            return ret;
+        http_client_process_events(client, reg);
 
         if (http_client_next_response(client, result, user, response))
             break;
     }
-
-    return HTTP_OK;
 }

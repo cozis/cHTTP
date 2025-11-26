@@ -1,2 +1,3 @@
 - Add connection timeouts
 - Per RFC 6265, cookie values can be quoted. This parser would include the quotes in the value.
+- Make sure that the proxy example doesn't stall

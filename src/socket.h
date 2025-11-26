@@ -289,7 +289,7 @@ void socket_manager_register_events(SocketManager *sm,
 // socket structs provided to the socket manager
 // via the init function.
 int socket_manager_translate_events(SocketManager *sm,
-    SocketEvent *events, EventRegister *reg);
+    SocketEvent *events, EventRegister reg);
 
 typedef enum {
     CONNECT_TARGET_NAME,

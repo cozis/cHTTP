@@ -619,7 +619,7 @@ void socket_manager_register_events(SocketManager *sm,
 // socket structs provided to the socket manager
 // via the init function.
 int socket_manager_translate_events(SocketManager *sm,
-    SocketEvent *events, EventRegister *reg);
+    SocketEvent *events, EventRegister reg);
 
 typedef enum {
     CONNECT_TARGET_NAME,
@@ -1037,8 +1037,8 @@ void http_client_register_events(HTTP_Client *client,
 // The caller has waited for poll() to return and some
 // I/O events to be triggered, so now the HTTP client
 // can continue its buffering and flushing operations.
-int http_client_process_events(HTTP_Client *client,
-    EventRegister *reg);
+void http_client_process_events(HTTP_Client *client,
+    EventRegister reg);
 
 // After some I/O events were processes, some responses
 // may be availabe. This function returns one of the
@@ -1051,7 +1051,7 @@ bool http_client_next_response(HTTP_Client *client,
     int *result, void **user, HTTP_Response **response);
 
 // TODO: comment
-int http_client_wait_response(HTTP_Client *client,
+void http_client_wait_response(HTTP_Client *client,
     int *result, void **user, HTTP_Response **response);
 
 // Free a response object. You can't access its fields
@@ -1248,8 +1248,8 @@ void http_server_register_events(HTTP_Server *server,
 // The caller has waited for poll() to return and some
 // I/O events to be triggered, so now the HTTP server
 // can continue its buffering and flushing operations.
-int http_server_process_events(HTTP_Server *server,
-    EventRegister *reg);
+void http_server_process_events(HTTP_Server *server,
+    EventRegister reg);
 
 typedef struct {
     HTTP_Server *server;
@@ -1269,7 +1269,7 @@ bool http_server_next_request(HTTP_Server *server,
     HTTP_Request **request, HTTP_ResponseBuilder *builder);
 
 // TODO: comment
-int http_server_wait_request(HTTP_Server *server,
+void http_server_wait_request(HTTP_Server *server,
     HTTP_Request **request, HTTP_ResponseBuilder *builder);
 
 // This function is called to set the status code of

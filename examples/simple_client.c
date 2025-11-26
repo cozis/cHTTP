@@ -26,11 +26,7 @@ int main(void)
     int result;
     void *user;
     HTTP_Response *response;
-    ret = http_client_wait_response(&client, &result, &user, &response);
-    if (ret < 0) {
-        printf("Couldn't wait for response (%s)\n", http_strerror(ret));
-        return -1;
-    }
+    http_client_wait_response(&client, &result, &user, &response);
 
     if (result == HTTP_OK) {
         printf("Received %d bytes\n", response->body.len);

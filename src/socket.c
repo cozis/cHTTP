@@ -777,16 +777,16 @@ static Socket *handle_to_socket(SocketManager *sm, SocketHandle handle)
 
 int socket_manager_translate_events(
     SocketManager *sm, SocketEvent *events,
-    EventRegister *reg)
+    EventRegister reg)
 {
     int num_events = 0;
-    for (int i = 0; i < reg->num_polled; i++) {
+    for (int i = 0; i < reg.num_polled; i++) {
 
-        if (!reg->polled[i].revents)
+        if (!reg.polled[i].revents)
             continue;
 
-        if (reg->polled[i].fd == sm->plain_sock ||
-            reg->polled[i].fd == sm->secure_sock) {
+        if (reg.polled[i].fd == sm->plain_sock ||
+            reg.polled[i].fd == sm->secure_sock) {
 
             // We only listen for input events from the listener
             // if the socket pool isn't fool. This ensures that
@@ -802,7 +802,7 @@ int socket_manager_translate_events(
 
             // Determine whether the event came from
             // the encrypted listener or not.
-            bool secure = (reg->polled[i].fd == sm->secure_sock);
+            bool secure = (reg.polled[i].fd == sm->secure_sock);
 
             Socket *s = sm->sockets;
             while (s->state != SOCKET_STATE_FREE) {
@@ -810,7 +810,7 @@ int socket_manager_translate_events(
                 assert(s - sm->sockets < + sm->max_used);
             }
 
-            NATIVE_SOCKET sock = accept(reg->polled[i].fd, NULL, NULL);
+            NATIVE_SOCKET sock = accept(reg.polled[i].fd, NULL, NULL);
             if (sock == NATIVE_SOCKET_INVALID)
                 continue;
 
@@ -843,7 +843,7 @@ int socket_manager_translate_events(
 
             sm->num_used++;
 
-        } else if (reg->polled[i].fd == sm->wait_sock) {
+        } else if (reg.polled[i].fd == sm->wait_sock) {
 
             // Consume one byte from the wakeup signal
             char byte;
@@ -854,10 +854,8 @@ int socket_manager_translate_events(
 #endif
 
         } else {
-
-            Socket *s = reg->ptrs[i];
-            if (reg->polled[i].revents)
-                socket_update(s);
+            Socket *s = reg.ptrs[i];
+            socket_update(s);
         }
     }
 
