@@ -3943,7 +3943,7 @@ void http_request_builder_set_user(HTTP_RequestBuilder builder, void *user)
     conn->user = user;
 }
 
-void http_request_builder_set_trace_bytes(HTTP_RequestBuilder builder, bool trace_bytes)
+void http_request_builder_trace(HTTP_RequestBuilder builder, bool trace_bytes)
 {
     HTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)

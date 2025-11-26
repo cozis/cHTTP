@@ -13,13 +13,10 @@ int main(void)
         return -1;
 
     HTTP_RequestBuilder builder = http_client_get_builder(&client);
-
-    http_request_builder_set_trace_bytes(builder, true);
-
+    http_request_builder_trace(builder, true);
     http_request_builder_method(builder, HTTP_METHOD_GET);
     http_request_builder_target(builder, HTTP_STR("http://coz.is"));
     http_request_builder_header(builder, HTTP_STR("Greeting: Hello from the cHTTP example!"));
-
     if (http_request_builder_send(builder) < 0)
         return -1;
 

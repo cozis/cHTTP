@@ -167,7 +167,7 @@ void http_request_builder_set_user(HTTP_RequestBuilder builder,
     void *user);
 
 // TODO: comment
-void http_request_builder_set_trace_bytes(HTTP_RequestBuilder builder,
+void http_request_builder_trace(HTTP_RequestBuilder builder,
     bool trace_bytes);
 
 // Set the method of the current request. This is the first
