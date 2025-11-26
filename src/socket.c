@@ -28,12 +28,29 @@ static char *state_to_str(SocketState state)
 }
 #endif
 
-static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b)
+static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b, bool *global_cleanup)
 {
 #ifdef _WIN32
     SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET)
+
+    *global_cleanup = false;
+    if (sock == INVALID_SOCKET && WSAGetLastError() == WSANOTINITIALISED) {
+
+        WSADATA wsaData;
+        WORD wVersionRequested = MAKEWORD(2, 2);
+        if (WSAStartup(wVersionRequested, &wsaData))
+            return -1;
+
+        sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock == INVALID_SOCKET && *global_cleanup)
+            WSACleanup();
+    }
+
+    if (sock == INVALID_SOCKET) {
+        if (*global_cleanup)
+            WSACleanup();
         return -1;
+    }
 
     // Bind to loopback address with port 0 (dynamic port assignment)
     struct sockaddr_in addr;
@@ -45,16 +62,22 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b)
 
     if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closesocket(sock);
+        if (*global_cleanup)
+            WSACleanup();
         return -1;
     }
 
     if (getsockname(sock, (struct sockaddr*)&addr, &addr_len) == SOCKET_ERROR) {
         closesocket(sock);
+        if (*global_cleanup)
+            WSACleanup();
         return -1;
     }
 
     if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closesocket(sock);
+        if (*global_cleanup)
+            WSACleanup();
         return -1;
     }
 
@@ -63,6 +86,8 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b)
     u_long mode = 1;
     if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR) {
         closesocket(sock);
+        if (*global_cleanup)
+            WSACleanup();
         return -1;
     }
 
@@ -70,6 +95,7 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b)
     *b = sock;
     return 0;
 #else
+    *global_cleanup = false;
     int fds[2];
     if (pipe(fds) < 0)
         return -1;
@@ -171,7 +197,8 @@ int socket_manager_init(SocketManager *sm, Socket *socks,
         return -1;
     sm->plain_sock  = NATIVE_SOCKET_INVALID;
     sm->secure_sock = NATIVE_SOCKET_INVALID;
-    if (create_socket_pair(&sm->wait_sock, &sm->signal_sock) < 0)
+    if (create_socket_pair(&sm->wait_sock, &sm->signal_sock,
+        &sm->global_cleanup) < 0)
         return -1;
     sm->at_least_one_secure_connect = false;
 
@@ -201,6 +228,11 @@ void socket_manager_free(SocketManager *sm)
 
     if (sm->secure_sock != NATIVE_SOCKET_INVALID)
         CLOSE_NATIVE_SOCKET(sm->secure_sock);
+
+#ifdef _WIN32
+    if (sm->global_cleanup)
+        WSACleanup();
+#endif
 
     mutex_free(&sm->mutex);
 }

@@ -43,6 +43,7 @@ int main(void)
         HTTP_ResponseBuilder builder;
         if (http_server_next_request(&server, &request, &builder)) {
             http_response_builder_status(builder, 200);
+            http_response_builder_body(builder, HTTP_STR("Hello, world!"));
             http_response_builder_send(builder);
         }
     }

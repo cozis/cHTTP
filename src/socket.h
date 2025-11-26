@@ -213,6 +213,12 @@ typedef struct {
     ClientSecureContext client_secure_context;
     ServerSecureContext server_secure_context;
 
+    // If the socket manager needed to initialize some
+    // global state for its initialization, this flag
+    // will be set so that it will remember to cleanup
+    // that state during deinitialization.
+    bool global_cleanup;
+
     // Array of sockets. Structs with state FREE
     // are unused.
     int num_used;
