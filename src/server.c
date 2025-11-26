@@ -271,7 +271,9 @@ int http_server_process_events(HTTP_Server *server,
                 socket_set_user(&server->sockets, events[i].handle, conn);
             }
 
-            http_server_conn_process_events(server, conn);
+            while (socket_ready(&server->sockets, events[i].handle)
+                && conn->state != HTTP_SERVER_CONN_WAIT_STATUS)
+                http_server_conn_process_events(server, conn);
         }
     }
 
