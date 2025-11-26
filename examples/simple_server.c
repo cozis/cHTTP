@@ -20,13 +20,13 @@ int main(void)
 
     for (;;) {
 
-        void *ptrs[HTTP_SERVER_CAPACITY+3];
-        struct pollfd polled[HTTP_SERVER_CAPACITY+3];
+        void *ptrs[HTTP_SERVER_POLL_CAPACITY];
+        struct pollfd polled[HTTP_SERVER_POLL_CAPACITY];
 
         EventRegister reg = {
             .ptrs=ptrs,
             .polled=polled,
-            .max_polled=HTTP_SERVER_CAPACITY+3,
+            .max_polled=HTTP_SERVER_POLL_CAPACITY,
             .num_polled=0,
         };
 
