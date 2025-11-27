@@ -17,7 +17,7 @@ endif
 
 .PHONY: all clean example
 
-all: chttp.c chttp.h simple_client$(EXT) simple_server$(EXT) proxy$(EXT)
+all: chttp.c chttp.h simple_client$(EXT) simple_server$(EXT) proxy$(EXT) virtual_hosts$(EXT)
 
 chttp.c chttp.h: $(wildcard src/*.c src/*.h) misc/amalg.py Makefile
 	python misc/amalg.py

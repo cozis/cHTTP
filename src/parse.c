@@ -1318,7 +1318,7 @@ bool http_match_host(HTTP_Request *req, HTTP_String domain, int port)
     }
 
     HTTP_String host = req->headers[idx].value;
-    return http_streq(host, domain);
+    return http_streqcase(host, domain);
 }
 
 
