@@ -6,3 +6,7 @@
 002_proxy.exe
 003_virtual_hosts
 003_virtual_hosts.exe
+004_https_server
+004_https_server.exe
+005_virtual_hosts_over_https
+005_virtual_hosts_over_https.exe
