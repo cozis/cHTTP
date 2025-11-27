@@ -4901,7 +4901,7 @@ void http_response_builder_body_cap(HTTP_ResponseBuilder builder, int cap)
     if (conn == NULL)
         return;
 
-    if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER) {
+    if (conn->state == HTTP_SERVER_CONN_WAIT_HEADER) {
         append_special_headers(conn);
         conn->state = HTTP_SERVER_CONN_WAIT_BODY;
     }
@@ -4918,7 +4918,7 @@ char *http_response_builder_body_buf(HTTP_ResponseBuilder builder, int *cap)
     if (conn == NULL)
         return NULL;
 
-    if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER) {
+    if (conn->state == HTTP_SERVER_CONN_WAIT_HEADER) {
         append_special_headers(conn);
         conn->state = HTTP_SERVER_CONN_WAIT_BODY;
     }
