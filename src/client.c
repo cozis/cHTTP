@@ -100,10 +100,65 @@ HTTP_RequestBuilder http_client_get_builder(HTTP_Client *client)
     return (HTTP_RequestBuilder) { client, i, client->conns[i].gen };
 }
 
+// Convert HTTP_Date to Unix timestamp (seconds since 1970-01-01 00:00:00 UTC)
+// This is a simplified implementation that doesn't account for all edge cases
+static time_t http_date_to_time(HTTP_Date date)
+{
+    // Days in each month (non-leap year)
+    static const int days_in_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+
+    // Calculate days since epoch (1970-01-01)
+    int days = 0;
+
+    // Add days for complete years
+    for (int y = 1970; y < date.year; y++) {
+        bool is_leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        days += is_leap ? 366 : 365;
+    }
+
+    // Add days for complete months in current year
+    for (int m = 0; m < date.month; m++) {
+        days += days_in_month[m];
+        // Add leap day if February and current year is leap year
+        if (m == 1) { // February
+            bool is_leap = (date.year % 4 == 0 && date.year % 100 != 0) || (date.year % 400 == 0);
+            if (is_leap)
+                days++;
+        }
+    }
+
+    // Add remaining days
+    days += date.day - 1;
+
+    // Convert to seconds and add time components
+    time_t timestamp = (time_t)days * 86400 + date.hour * 3600 + date.minute * 60 + date.second;
+
+    return timestamp;
+}
+
+// Check if a cookie has expired
+static bool is_cookie_expired(HTTP_CookieJarEntry entry, time_t current_time)
+{
+    if (entry.have_max_age) {
+        // Max-Age takes precedence over Expires
+        time_t expires_at = entry.creation_time + entry.max_age;
+        return current_time >= expires_at;
+    }
+
+    if (entry.have_expires) {
+        time_t expires_at = http_date_to_time(entry.expires);
+        return current_time >= expires_at;
+    }
+
+    // No expiration set, cookie is a session cookie (never expires in this implementation)
+    return false;
+}
+
 // TODO: test this function
+// Domain matching is case-insensitive per RFC 6265
 static bool is_subdomain(HTTP_String domain, HTTP_String subdomain)
 {
-    if (http_streq(domain, subdomain))
+    if (http_streqcase(domain, subdomain))
         return true; // Exact match
 
     if (domain.len > subdomain.len)
@@ -113,7 +168,7 @@ static bool is_subdomain(HTTP_String domain, HTTP_String subdomain)
         subdomain.ptr + subdomain.len - domain.len,
         domain.len
     };
-    if (subdomain_suffix.ptr[-1] != '.' || !http_streq(domain, subdomain_suffix))
+    if (subdomain_suffix.ptr[-1] != '.' || !http_streqcase(domain, subdomain_suffix))
         return false;
 
     return true;
@@ -132,13 +187,15 @@ static bool is_subpath(HTTP_String path, HTTP_String subpath)
     return http_streq(path, subpath);
 }
 
-static bool should_send_cookie(HTTP_CookieJarEntry entry, HTTP_URL url)
+static bool should_send_cookie(HTTP_CookieJarEntry entry, HTTP_URL url, time_t current_time)
 {
-    // TODO: If the cookie is expired, ignore it regardless
+    // Check if cookie has expired
+    if (is_cookie_expired(entry, current_time))
+        return false;
 
     if (entry.exact_domain) {
-        // Cookie domain and URL domain must match exactly
-        if (!http_streq(entry.domain, url.authority.host.text))
+        // Cookie domain and URL domain must match exactly (case-insensitive)
+        if (!http_streqcase(entry.domain, url.authority.host.text))
             return false;
     } else {
         // The URL's domain must match or be a subdomain of the cookie's domain
@@ -288,21 +345,28 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
     byte_queue_write(&conn->output, "\r\n", 2);
 
     // Find all entries from the cookie jar that should
-    // be sent to this server and append headers for them
+    // be sent to this server and consolidate them into a single Cookie header
     HTTP_Client *client = builder.client;
     HTTP_CookieJar *cookie_jar = &client->cookie_jar;
+    time_t current_time = time(NULL);
+
+    bool first_cookie = true;
     for (int i = 0; i < cookie_jar->count; i++) {
         HTTP_CookieJarEntry entry = cookie_jar->items[i];
-        if (should_send_cookie(entry, conn->url)) {
-            // TODO: Adding one header per cookie may cause the number of
-            //       headers to increase significantly. Should probably group
-            //       3-4 cookies in the same headers.
-            byte_queue_write(&conn->output, "Cookie: ", 8);
+        if (should_send_cookie(entry, conn->url, current_time)) {
+            if (first_cookie) {
+                byte_queue_write(&conn->output, "Cookie: ", 8);
+                first_cookie = false;
+            } else {
+                byte_queue_write(&conn->output, "; ", 2);
+            }
             byte_queue_write(&conn->output, entry.name.ptr, entry.name.len);
             byte_queue_write(&conn->output, "=", 1);
             byte_queue_write(&conn->output, entry.value.ptr, entry.value.len);
-            byte_queue_write(&conn->output, "\r\n", 2);
         }
+    }
+    if (!first_cookie) {
+        byte_queue_write(&conn->output, "\r\n", 2);
     }
 
     conn->state = HTTP_CLIENT_CONN_WAIT_HEADER;
@@ -429,12 +493,36 @@ error:
     return conn->result;
 }
 
+// Compute default path from request path per RFC 6265 Section 5.1.4
+static HTTP_String compute_default_cookie_path(HTTP_String request_path)
+{
+    // If the uri-path is empty or does not begin with "/", return "/"
+    if (request_path.len == 0 || request_path.ptr[0] != '/')
+        return HTTP_STR("/");
+
+    // If the uri-path contains only a single "/" character, return "/"
+    if (request_path.len == 1)
+        return HTTP_STR("/");
+
+    // Find the last "/" before the last character
+    int last_slash = -1;
+    for (int i = request_path.len - 1; i > 0; i--) {
+        if (request_path.ptr[i] == '/') {
+            last_slash = i;
+            break;
+        }
+    }
+
+    // Return path up to (but not including) the right-most "/"
+    if (last_slash > 0)
+        return (HTTP_String) { request_path.ptr, last_slash };
+
+    return HTTP_STR("/");
+}
+
 static void save_one_cookie(HTTP_CookieJar *cookie_jar,
     HTTP_Header set_cookie, HTTP_String domain, HTTP_String path)
 {
-    if (cookie_jar->count == HTTP_COOKIE_JAR_CAPACITY)
-        return; // Cookie jar capacity reached
-
     HTTP_SetCookie parsed;
     if (http_parse_set_cookie(set_cookie.value, &parsed) < 0)
         return; // Ignore invalid Set-Cookie headers
@@ -443,9 +531,15 @@ static void save_one_cookie(HTTP_CookieJar *cookie_jar,
 
     entry.name = parsed.name;
     entry.value = parsed.value;
+    entry.creation_time = time(NULL);
 
     if (parsed.have_domain) {
-        // TODO: Check that the server can set a cookie for this domain
+        // Validate that the server can set a cookie for this domain
+        // Per RFC 6265 Section 5.3: The Domain attribute must domain-match the request host
+        if (!is_subdomain(parsed.domain, domain)) {
+            // Server tried to set a cookie for a domain it doesn't control
+            return;
+        }
         entry.exact_domain = false;
         entry.domain = parsed.domain;
     } else {
@@ -457,14 +551,37 @@ static void save_one_cookie(HTTP_CookieJar *cookie_jar,
         entry.exact_path = false;
         entry.path = parsed.path;
     } else {
-        // TODO: Set the path to the current endpoint minus one level
-        entry.exact_path = true;
-        entry.path = path;
+        // Use default path computation per RFC 6265
+        HTTP_String default_path = compute_default_cookie_path(path);
+        entry.exact_path = false;
+        entry.path = default_path;
     }
 
     entry.secure = parsed.secure;
 
-    // Now copy all fields
+    // Store expiration information
+    entry.have_expires = parsed.have_date;
+    if (parsed.have_date)
+        entry.expires = parsed.date;
+
+    entry.have_max_age = parsed.have_max_age;
+    if (parsed.have_max_age)
+        entry.max_age = parsed.max_age;
+
+    // Check if this cookie replaces an existing one
+    // Per RFC 6265: A cookie is identified by name, domain, and path
+    int existing_index = -1;
+    for (int i = 0; i < cookie_jar->count; i++) {
+        HTTP_CookieJarEntry *existing = &cookie_jar->items[i];
+        if (http_streq(existing->name, entry.name) &&
+            http_streqcase(existing->domain, entry.domain) &&
+            http_streq(existing->path, entry.path)) {
+            existing_index = i;
+            break;
+        }
+    }
+
+    // Allocate memory for all string fields
     char *p = malloc(entry.name.len + entry.value.len + entry.domain.len + entry.path.len);
     if (p == NULL)
         return;
@@ -485,17 +602,45 @@ static void save_one_cookie(HTTP_CookieJar *cookie_jar,
     entry.path.ptr = p;
     p += entry.path.len;
 
-    cookie_jar->items[cookie_jar->count++] = entry;
+    if (existing_index >= 0) {
+        // Replace existing cookie
+        free(cookie_jar->items[existing_index].name.ptr); // This frees the entire allocated block
+        cookie_jar->items[existing_index] = entry;
+    } else {
+        // Add new cookie if there's space
+        if (cookie_jar->count < HTTP_COOKIE_JAR_CAPACITY) {
+            cookie_jar->items[cookie_jar->count++] = entry;
+        } else {
+            // No space, free the allocated memory
+            free(entry.name.ptr);
+        }
+    }
 }
 
 static void save_cookies(HTTP_CookieJar *cookie_jar,
     HTTP_Header *headers, int num_headers,
     HTTP_String domain, HTTP_String path)
 {
-    // TODO: remove expired cookies
+    // Remove expired cookies from the jar
+    time_t current_time = time(NULL);
+    int write_idx = 0;
+    for (int read_idx = 0; read_idx < cookie_jar->count; read_idx++) {
+        if (!is_cookie_expired(cookie_jar->items[read_idx], current_time)) {
+            // Keep this cookie
+            if (write_idx != read_idx) {
+                cookie_jar->items[write_idx] = cookie_jar->items[read_idx];
+            }
+            write_idx++;
+        } else {
+            // Free expired cookie
+            free(cookie_jar->items[read_idx].name.ptr);
+        }
+    }
+    cookie_jar->count = write_idx;
 
+    // Process Set-Cookie headers
     for (int i = 0; i < num_headers; i++)
-        if (http_streqcase(headers[i].name, HTTP_STR("Set-Cookie"))) // TODO: headers are case-insensitive, right?
+        if (http_streqcase(headers[i].name, HTTP_STR("Set-Cookie")))
             save_one_cookie(cookie_jar, headers[i], domain, path);
 }
 

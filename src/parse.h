@@ -130,6 +130,12 @@ typedef struct {
     int          second;
 } HTTP_Date;
 
+typedef enum {
+    HTTP_SAMESITE_NONE,
+    HTTP_SAMESITE_LAX,
+    HTTP_SAMESITE_STRICT,
+} HTTP_SameSite;
+
 typedef struct {
     HTTP_String name;
     HTTP_String value;
@@ -148,6 +154,9 @@ typedef struct {
 
     bool have_path;
     HTTP_String path;
+
+    bool have_samesite;
+    HTTP_SameSite samesite;
 } HTTP_SetCookie;
 
 // Parses a Set-Cookie header value

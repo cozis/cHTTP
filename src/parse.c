@@ -1475,13 +1475,14 @@ int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
     //
     // cookie-av = expires-av / max-age-av / domain-av /
     //             path-av / secure-av / httponly-av /
-    //             extension-av
+    //             samesite-av / extension-av
     out->secure = false;
     out->http_only = false;
     out->have_date = false;
     out->have_max_age = false;
     out->have_domain = false;
     out->have_path = false;
+    out->have_samesite = false;
     while (consume_str(&s, HTTP_STR("; "))) {
         if (consume_str(&s, HTTP_STR("Expires="))) {
 
@@ -1526,6 +1527,13 @@ int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
             // concatenated by dots. Each label may contain letters, digits,
             // hyphens, but the first character must be a letter and the last
             // one can't be a hyphen.
+            //
+            // RFC 6265 Section 5.2.3: If the first character of the attribute-value
+            // string is ".", then ignore the leading "."
+
+            // Skip leading dot if present
+            if (s.cur < s.len && s.src[s.cur] == '.')
+                s.cur++;
 
             int off = s.cur;
             if (s.cur == s.len || !is_alpha(s.src[s.cur]))
@@ -1581,8 +1589,30 @@ int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
             // httponly-av = "HttpOnly"
             out->http_only = true;
 
+        } else if (consume_str(&s, HTTP_STR("SameSite="))) {
+
+            // samesite-av = "SameSite=" samesite-value
+            // samesite-value = "Strict" / "Lax" / "None"
+            if (consume_str(&s, HTTP_STR("Strict"))) {
+                out->have_samesite = true;
+                out->samesite = HTTP_SAMESITE_STRICT;
+            } else if (consume_str(&s, HTTP_STR("Lax"))) {
+                out->have_samesite = true;
+                out->samesite = HTTP_SAMESITE_LAX;
+            } else if (consume_str(&s, HTTP_STR("None"))) {
+                out->have_samesite = true;
+                out->samesite = HTTP_SAMESITE_NONE;
+            } else {
+                // Invalid SameSite value, skip to next attribute
+                while (s.cur < s.len && s.src[s.cur] != ';')
+                    s.cur++;
+            }
+
         } else {
-            return -1; // Invalid attribute
+            // extension-av: Unknown attribute, skip to next semicolon
+            // This allows forward compatibility with new cookie attributes
+            while (s.cur < s.len && s.src[s.cur] != ';')
+                s.cur++;
         }
     }
 

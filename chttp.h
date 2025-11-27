@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -257,6 +258,12 @@ typedef struct {
     int          second;
 } HTTP_Date;
 
+typedef enum {
+    HTTP_SAMESITE_NONE,
+    HTTP_SAMESITE_LAX,
+    HTTP_SAMESITE_STRICT,
+} HTTP_SameSite;
+
 typedef struct {
     HTTP_String name;
     HTTP_String value;
@@ -275,6 +282,9 @@ typedef struct {
 
     bool have_path;
     HTTP_String path;
+
+    bool have_samesite;
+    HTTP_SameSite samesite;
 } HTTP_SetCookie;
 
 // Parses a Set-Cookie header value
@@ -874,6 +884,13 @@ typedef struct {
 
     // This cookie can only be sent over HTTPS
     bool secure;
+
+    // Expiration information
+    bool have_expires;
+    HTTP_Date expires;
+    bool have_max_age;
+    uint32_t max_age;
+    time_t creation_time; // Unix timestamp when cookie was created
 
 } HTTP_CookieJarEntry;
 

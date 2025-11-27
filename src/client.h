@@ -41,6 +41,13 @@ typedef struct {
     // This cookie can only be sent over HTTPS
     bool secure;
 
+    // Expiration information
+    bool have_expires;
+    HTTP_Date expires;
+    bool have_max_age;
+    uint32_t max_age;
+    time_t creation_time; // Unix timestamp when cookie was created
+
 } HTTP_CookieJarEntry;
 
 typedef struct {
