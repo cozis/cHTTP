@@ -707,3 +707,66 @@ void http_client_wait_response(HTTP_Client *client,
             break;
     }
 }
+
+static _Thread_local HTTP_Client *implicit_client;
+
+static int perform_request(HTTP_Method method,
+    HTTP_String url, HTTP_String *headers,
+    int num_headers, HTTP_String body,
+    HTTP_Response **response)
+{
+    if (implicit_client == NULL) {
+
+        implicit_client = malloc(sizeof(HTTP_Client));
+        if (implicit_client == NULL)
+            return HTTP_ERROR_OOM;
+
+        int ret = http_client_init(implicit_client);
+        if (ret < 0) {
+            free(implicit_client);
+            implicit_client = NULL;
+            return ret;
+        }
+    }
+    HTTP_Client *client = implicit_client;
+
+    HTTP_RequestBuilder builder = http_client_get_builder(client);
+    http_request_builder_method(builder, method);
+    http_request_builder_target(builder, url);
+    for (int i = 0; i < num_headers; i++)
+        http_request_builder_header(builder, headers[i]);
+    http_request_builder_body(builder, body);
+    int ret = http_request_builder_send(builder);
+    if (ret < 0) return ret;
+
+    int result;
+    void *user;
+    http_client_wait_response(client, &result, &user, response);
+    return result;
+}
+
+int http_get(HTTP_String url, HTTP_String *headers,
+    int num_headers, HTTP_Response **response)
+{
+    return perform_request(HTTP_METHOD_GET, url, headers, num_headers, HTTP_STR(""), response);
+}
+
+int http_post(HTTP_String url, HTTP_String *headers,
+    int num_headers, HTTP_String body,
+    HTTP_Response **response)
+{
+    return perform_request(HTTP_METHOD_POST, url, headers, num_headers, body, response);
+}
+
+int http_put(HTTP_String url, HTTP_String *headers,
+    int num_headers, HTTP_String body,
+    HTTP_Response **response)
+{
+    return perform_request(HTTP_METHOD_PUT, url, headers, num_headers, body, response);
+}
+
+int http_delete(HTTP_String url, HTTP_String *headers,
+    int num_headers, HTTP_Response **response)
+{
+    return perform_request(HTTP_METHOD_DELETE, url, headers, num_headers, HTTP_STR(""), response);
+}

@@ -223,3 +223,21 @@ void http_client_wait_response(HTTP_Client *client,
 // Free a response object. You can't access its fields
 // again after this.
 void http_free_response(HTTP_Response *response);
+
+// Perform a blocking GET request
+int http_get(HTTP_String url, HTTP_String *headers,
+    int num_headers, HTTP_Response **response);
+
+// Perform a blocking POST request
+int http_post(HTTP_String url, HTTP_String *headers,
+    int num_headers, HTTP_String body,
+    HTTP_Response **response);
+
+// Perform a blocking PUT request
+int http_put(HTTP_String url, HTTP_String *headers,
+    int num_headers, HTTP_String body,
+    HTTP_Response **response);
+
+// Perform a blocking DELETE request
+int http_delete(HTTP_String url, HTTP_String *headers,
+    int num_headers, HTTP_Response **response);
