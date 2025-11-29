@@ -81,6 +81,9 @@ typedef struct {
     // TODO: comment
     bool trace_bytes;
 
+    // TODO: comment
+    bool dont_verify_cert;
+
     // Allocated copy of the URL string
     HTTP_String url_buffer;
 
@@ -169,6 +172,10 @@ void http_request_builder_set_user(HTTP_RequestBuilder builder,
 // TODO: comment
 void http_request_builder_trace(HTTP_RequestBuilder builder,
     bool trace_bytes);
+
+// TODO: comment
+void http_request_builder_insecure(HTTP_RequestBuilder builder,
+    bool insecure);
 
 // Set the method of the current request. This is the first
 // function of the request builder that the user must call.

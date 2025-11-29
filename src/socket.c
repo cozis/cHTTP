@@ -524,6 +524,9 @@ static void socket_update(Socket *s)
                             break;
                         }
 
+                        SSL_set_verify(s->ssl, s->dont_verify_cert
+                            ? SSL_VERIFY_NONE : SSL_VERIFY_PEER, NULL);
+
                         AddressAndPort addr;
                         if (s->num_addr > 1)
                             addr = s->addrs[s->next_addr];
@@ -1007,7 +1010,8 @@ static int resolve_connect_targets(ConnectTarget *targets,
 #define MAX_CONNECT_TARGETS 16
 
 int socket_connect(SocketManager *sm, int num_targets,
-    ConnectTarget *targets, bool secure, void *user)
+    ConnectTarget *targets, bool secure, bool dont_verify_cert,
+    void *user)
 {
     if (sm->num_used == sm->max_used)
         return HTTP_ERROR_UNSPECIFIED;
@@ -1057,8 +1061,11 @@ int socket_connect(SocketManager *sm, int num_targets,
     s->server_secure_context = NULL;
     s->client_secure_context = NULL;
     s->ssl = NULL;
-    if (secure)
+    s->dont_verify_cert = false;
+    if (secure) {
         s->client_secure_context = &sm->client_secure_context;
+        s->dont_verify_cert = dont_verify_cert;
+    }
 #endif
     sm->num_used++;
 

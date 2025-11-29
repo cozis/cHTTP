@@ -173,6 +173,7 @@ typedef struct {
     ClientSecureContext *client_secure_context;
     ServerSecureContext *server_secure_context;
     SSL *ssl;
+    bool dont_verify_cert;
 #endif
 
 } Socket;
@@ -312,7 +313,8 @@ typedef struct {
 // one succedes. If secure=true, the socket uses TLS.
 // Returns 0 on success, -1 on error.
 int socket_connect(SocketManager *sm, int num_targets,
-    ConnectTarget *targets, bool secure, void *user);
+    ConnectTarget *targets, bool secure, bool dont_verify_cert,
+    void *user);
 
 int socket_recv(SocketManager *sm, SocketHandle handle,
     char *dst, int max);

@@ -53,6 +53,8 @@ license = """
 """
 
 header = Amalgamator()
+header.append_text("#ifndef HTTP_INCLUDED\n")
+header.append_text("#define HTTP_INCLUDED\n")
 header.append_text(desc)
 header.append_file("src/includes.h")
 header.append_file("src/basic.h")
@@ -64,6 +66,7 @@ header.append_file("src/cert.h")
 header.append_file("src/client.h")
 header.append_file("src/server.h")
 header.append_text(license)
+header.append_text("#endif // HTTP_INCLUDED\n")
 header.save("chttp.h")
 
 source = Amalgamator()

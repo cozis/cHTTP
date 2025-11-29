@@ -2454,6 +2454,9 @@ static void socket_update(Socket *s)
                             break;
                         }
 
+                        SSL_set_verify(s->ssl, s->dont_verify_cert
+                            ? SSL_VERIFY_NONE : SSL_VERIFY_PEER, NULL);
+
                         AddressAndPort addr;
                         if (s->num_addr > 1)
                             addr = s->addrs[s->next_addr];
@@ -2937,7 +2940,8 @@ static int resolve_connect_targets(ConnectTarget *targets,
 #define MAX_CONNECT_TARGETS 16
 
 int socket_connect(SocketManager *sm, int num_targets,
-    ConnectTarget *targets, bool secure, void *user)
+    ConnectTarget *targets, bool secure, bool dont_verify_cert,
+    void *user)
 {
     if (sm->num_used == sm->max_used)
         return HTTP_ERROR_UNSPECIFIED;
@@ -2987,8 +2991,11 @@ int socket_connect(SocketManager *sm, int num_targets,
     s->server_secure_context = NULL;
     s->client_secure_context = NULL;
     s->ssl = NULL;
-    if (secure)
+    s->dont_verify_cert = false;
+    if (secure) {
         s->client_secure_context = &sm->client_secure_context;
+        s->dont_verify_cert = dont_verify_cert;
+    }
 #endif
     sm->num_used++;
 
@@ -3819,6 +3826,17 @@ void http_request_builder_trace(HTTP_RequestBuilder builder, bool trace_bytes)
     conn->trace_bytes = trace_bytes;
 }
 
+// TODO: comment
+void http_request_builder_insecure(HTTP_RequestBuilder builder,
+    bool insecure)
+{
+    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    if (conn == NULL)
+        return; // Invalid builder
+
+    conn->dont_verify_cert = insecure;
+}
+
 void http_request_builder_method(HTTP_RequestBuilder builder,
     HTTP_Method method)
 {
@@ -4035,7 +4053,7 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
 
     ConnectTarget target = url_to_connect_target(conn->url);
     bool secure = http_streq(conn->url.scheme, HTTP_STR("https"));
-    if (socket_connect(&client->sockets, 1, &target, secure, conn) < 0)
+    if (socket_connect(&client->sockets, 1, &target, secure, conn->dont_verify_cert, conn) < 0)
         goto error;
 
     conn->state = HTTP_CLIENT_CONN_FLUSHING;
@@ -4627,7 +4645,7 @@ void http_server_process_events(HTTP_Server *server,
 
         if (events[i].type == SOCKET_EVENT_DISCONNECT) {
 
-            http_server_conn_free(conn);
+            http_server_conn_free(conn); // TODO: what if this was in the ready queue?
             server->num_conns--;
 
         } else if (events[i].type == SOCKET_EVENT_READY) {

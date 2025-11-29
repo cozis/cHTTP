@@ -229,7 +229,7 @@ void http_server_process_events(HTTP_Server *server,
 
         if (events[i].type == SOCKET_EVENT_DISCONNECT) {
 
-            http_server_conn_free(conn);
+            http_server_conn_free(conn); // TODO: what if this was in the ready queue?
             server->num_conns--;
 
         } else if (events[i].type == SOCKET_EVENT_READY) {

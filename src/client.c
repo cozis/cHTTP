@@ -197,6 +197,17 @@ void http_request_builder_trace(HTTP_RequestBuilder builder, bool trace_bytes)
     conn->trace_bytes = trace_bytes;
 }
 
+// TODO: comment
+void http_request_builder_insecure(HTTP_RequestBuilder builder,
+    bool insecure)
+{
+    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    if (conn == NULL)
+        return; // Invalid builder
+
+    conn->dont_verify_cert = insecure;
+}
+
 void http_request_builder_method(HTTP_RequestBuilder builder,
     HTTP_Method method)
 {
@@ -413,7 +424,7 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
 
     ConnectTarget target = url_to_connect_target(conn->url);
     bool secure = http_streq(conn->url.scheme, HTTP_STR("https"));
-    if (socket_connect(&client->sockets, 1, &target, secure, conn) < 0)
+    if (socket_connect(&client->sockets, 1, &target, secure, conn->dont_verify_cert, conn) < 0)
         goto error;
 
     conn->state = HTTP_CLIENT_CONN_FLUSHING;

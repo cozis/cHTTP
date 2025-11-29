@@ -1,3 +1,5 @@
+#ifndef HTTP_INCLUDED
+#define HTTP_INCLUDED
 // cHTTP, an HTTP client and server library!
 //
 // This file was generated automatically. Do not modify directly.
@@ -503,6 +505,7 @@ typedef struct {
     ClientSecureContext *client_secure_context;
     ServerSecureContext *server_secure_context;
     SSL *ssl;
+    bool dont_verify_cert;
 #endif
 
 } Socket;
@@ -642,7 +645,8 @@ typedef struct {
 // one succedes. If secure=true, the socket uses TLS.
 // Returns 0 on success, -1 on error.
 int socket_connect(SocketManager *sm, int num_targets,
-    ConnectTarget *targets, bool secure, void *user);
+    ConnectTarget *targets, bool secure, bool dont_verify_cert,
+    void *user);
 
 int socket_recv(SocketManager *sm, SocketHandle handle,
     char *dst, int max);
@@ -915,6 +919,9 @@ typedef struct {
     // TODO: comment
     bool trace_bytes;
 
+    // TODO: comment
+    bool dont_verify_cert;
+
     // Allocated copy of the URL string
     HTTP_String url_buffer;
 
@@ -1003,6 +1010,10 @@ void http_request_builder_set_user(HTTP_RequestBuilder builder,
 // TODO: comment
 void http_request_builder_trace(HTTP_RequestBuilder builder,
     bool trace_bytes);
+
+// TODO: comment
+void http_request_builder_insecure(HTTP_RequestBuilder builder,
+    bool insecure);
 
 // Set the method of the current request. This is the first
 // function of the request builder that the user must call.
@@ -1337,3 +1348,4 @@ void http_response_builder_send(HTTP_ResponseBuilder builder);
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////////////
+#endif // HTTP_INCLUDED
