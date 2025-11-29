@@ -634,6 +634,7 @@ void http_client_process_events(HTTP_Client *client,
 
             // Decouple from the socket
             socket_set_user(&client->sockets, events[i].handle, NULL);
+            socket_close(&client->sockets, events[i].handle);
 
             // Push to the ready queue
             assert(client->num_ready < HTTP_CLIENT_CAPACITY);
