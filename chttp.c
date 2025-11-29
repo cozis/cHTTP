@@ -3945,6 +3945,22 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
         }
     }
 
+    HTTP_String s;
+
+    s = HTTP_STR("Connection: Close\r\n");
+    byte_queue_write(&conn->output, s.ptr, s.len);
+
+    s = HTTP_STR("Content-Length: ");
+    byte_queue_write(&conn->output, s.ptr, s.len);
+
+    conn->content_length_value_offset = byte_queue_offset(&conn->output);
+
+    #define TEN_SPACES "          "
+    _Static_assert(sizeof(TEN_SPACES) == 10+1);
+
+    s = HTTP_STR(TEN_SPACES "\r\n");
+    byte_queue_write(&conn->output, s.ptr, s.len);
+
     conn->state = HTTP_CLIENT_CONN_WAIT_HEADER;
 }
 
@@ -3984,9 +4000,8 @@ void http_request_builder_body(HTTP_RequestBuilder builder,
 
     // Transition from WAIT_HEADER to WAIT_BODY if needed
     if (conn->state == HTTP_CLIENT_CONN_WAIT_HEADER) {
-        // End headers section
-        // TODO: add Content-Length header
         byte_queue_write(&conn->output, "\r\n", 2);
+        conn->content_length_offset = byte_queue_offset(&conn->output);
         conn->state = HTTP_CLIENT_CONN_WAIT_BODY;
     }
 
@@ -4040,8 +4055,8 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
         goto error; // Early completion due to an error
 
     if (conn->state == HTTP_CLIENT_CONN_WAIT_HEADER) {
-        // No body, just end headers
         byte_queue_write(&conn->output, "\r\n", 2);
+        conn->content_length_offset = byte_queue_offset(&conn->output);
         conn->state = HTTP_CLIENT_CONN_WAIT_BODY;
     }
 
@@ -4050,6 +4065,14 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
 
     if (byte_queue_error(&conn->output))
         goto error;
+
+    int content_length = byte_queue_size_from_offset(&conn->output, conn->content_length_offset);
+
+    char tmp[11];
+    int len = snprintf(tmp, sizeof(tmp), "%d", content_length);
+    assert(len > 0 && len < 11);
+
+    byte_queue_patch(&conn->output, conn->content_length_value_offset, tmp, len);
 
     ConnectTarget target = url_to_connect_target(conn->url);
     bool secure = http_streq(conn->url.scheme, HTTP_STR("https"));
@@ -4263,6 +4286,7 @@ void http_client_process_events(HTTP_Client *client,
 
             // Decouple from the socket
             socket_set_user(&client->sockets, events[i].handle, NULL);
+            socket_close(&client->sockets, events[i].handle);
 
             // Push to the ready queue
             assert(client->num_ready < HTTP_CLIENT_CAPACITY);

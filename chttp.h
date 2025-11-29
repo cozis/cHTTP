@@ -943,6 +943,16 @@ typedef struct {
 
     // Parsed response once complete
     HTTP_Response response;
+
+    // This offset points to the first byte that comes
+    // after the string "Content-Length: ".
+    ByteQueueOffset content_length_value_offset;
+
+    // This one points to the first byte of the body.
+    // This allows calculating the length of the request
+    // content byte subtracting it from the offset reached
+    // when the request is marked as done.
+    ByteQueueOffset content_length_offset;
 } HTTP_ClientConn;
 
 // Fields of this struct are private
