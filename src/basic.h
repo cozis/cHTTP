@@ -71,7 +71,7 @@ char *http_strerror(int code);
 #define HTTP_STR(X) ((HTTP_String) {(X), sizeof(X)-1})
 
 // Returns the number of items of a static array.
-#define HTTP_COUNT(X) (sizeof(X) / sizeof((X)[0]))
+#define HTTP_COUNT(X) (int) (sizeof(X) / sizeof((X)[0]))
 
 // Macro to unpack an HTTP_String into its length and pointer components.
 // Useful for passing HTTP_String to printf-style functions with "%.*s" format.

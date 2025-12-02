@@ -1765,6 +1765,8 @@ void client_secure_context_free(ClientSecureContext *ctx)
 {
 #ifdef HTTPS_ENABLED
     SSL_CTX_free(ctx->p);
+#else
+    (void) ctx;
 #endif
 }
 
@@ -2227,6 +2229,7 @@ static bool is_secure(Socket *s)
     return s->server_secure_context != NULL
         || s->client_secure_context != NULL;
 #else
+    (void) s;
     return false;
 #endif
 }
@@ -2620,7 +2623,6 @@ int socket_manager_wakeup(SocketManager *sm)
     // NOTE: It's assumed send/write operate atomically
     //       on The descriptor.
     char byte = 1;
-    int ret = 0;
 #ifdef _WIN32
     if (send(sm->signal_sock, &byte, 1, 0) < 0)
         return HTTP_ERROR_UNSPECIFIED;
@@ -2733,10 +2735,6 @@ int socket_manager_translate_events(
             if (sm->num_used == sm->max_used)
                 continue;
 
-            // Determine whether the event came from
-            // the encrypted listener or not.
-            bool secure = (reg.polled[i].fd == sm->secure_sock);
-
             Socket *s = sm->sockets;
             while (s->state != SOCKET_STATE_FREE) {
                 s++;
@@ -2757,6 +2755,10 @@ int socket_manager_translate_events(
             s->events = 0;
             s->user   = NULL;
 #ifdef HTTPS_ENABLED
+            // Determine whether the event came from
+            // the encrypted listener or not.
+            bool secure = (reg.polled[i].fd == sm->secure_sock);
+
             s->ssl = NULL;
             s->server_secure_context = NULL;
             s->client_secure_context = NULL;
@@ -2996,6 +2998,8 @@ int socket_connect(SocketManager *sm, int num_targets,
         s->client_secure_context = &sm->client_secure_context;
         s->dont_verify_cert = dont_verify_cert;
     }
+#else
+    (void) dont_verify_cert;
 #endif
     sm->num_used++;
 
@@ -3069,6 +3073,9 @@ int socket_recv(SocketManager *sm, SocketHandle handle,
             ret = 0;
         }
         return ret;
+#else
+        // Unreachable
+        return 0;
 #endif
     }
 }
@@ -3117,13 +3124,15 @@ int socket_send(SocketManager *sm, SocketHandle handle,
             ret = 0;
         }
         return ret;
+#else
+        // Unreachable
+        return 0;
 #endif
     }
 }
 
 void socket_close(SocketManager *sm, SocketHandle handle)
 {
-    int ret;
     Socket *s = handle_to_socket(sm, handle);
     if (s == NULL)
         return;
@@ -3154,7 +3163,6 @@ void socket_set_user(SocketManager *sm, SocketHandle handle, void *user)
 
 bool socket_ready(SocketManager *sm, SocketHandle handle)
 {
-    bool ready = false;
     Socket *s = handle_to_socket(sm, handle);
     if (s == NULL)
        return false;
@@ -3349,7 +3357,7 @@ int byte_queue_write_setmincap(ByteQueue *queue, uint32_t mincap)
             if (size > queue->limit)
                 size = queue->limit;
 
-            uint8_t *data = malloc(size);
+            char *data = malloc(size);
             if (!data) {
                 queue->flags |= BYTE_QUEUE_ERROR;
                 return 0;
@@ -3406,7 +3414,7 @@ void byte_queue_write_fmt2(ByteQueue *queue,
 		return;
 	}
 
-	if (len > dst.len) {
+	if ((size_t) len > dst.len) {
 		byte_queue_write_ack(queue, 0);
 		byte_queue_write_setmincap(queue, len+1);
 		dst = byte_queue_write_buf(queue);
@@ -3447,7 +3455,7 @@ void byte_queue_patch(ByteQueue *queue, ByteQueueOffset off,
     assert(len <= queue->used - (off - queue->curs));
 
     // Perform the patch
-    uint8_t *dst = queue->data + queue->head + (off - queue->curs);
+    char *dst = queue->data + queue->head + (off - queue->curs);
     memcpy(dst, src, len);
 }
 
@@ -4855,6 +4863,20 @@ void http_response_builder_status(HTTP_ResponseBuilder builder, int status)
     conn->state = HTTP_SERVER_CONN_WAIT_HEADER;
 }
 
+static bool is_header_valid(HTTP_String str)
+{
+    bool has_colon = false;
+    for (int i = 0; i < str.len; i++) {
+        char c = str.ptr[i];
+        if (c == ':')
+            has_colon = true;
+        // Reject control characters (especially \r and \n)
+        if (c < 0x20 && c != '\t')
+            return false;
+    }
+    return has_colon;
+}
+
 void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str)
 {
     HTTP_ServerConn *conn = builder_to_conn(builder);
@@ -4864,19 +4886,9 @@ void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str)
     if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER)
         return;
 
-    // Validate header: must contain a colon and no control characters
-    // (to prevent HTTP response splitting attacks)
-    bool has_colon = false;
-    for (int i = 0; i < str.len; i++) {
-        char c = str.ptr[i];
-        if (c == ':')
-            has_colon = true;
-        // Reject control characters (especially \r and \n)
-        if (c < 0x20 && c != '\t')
-            return;
-    }
-    if (!has_colon)
-        return;
+    // Header must contain a colon and no control characters
+    // to prevent HTTP response splitting attacks
+    if (!is_header_valid(str)) return; // Silently drop it
 
 	byte_queue_write(&conn->output, str.ptr, str.len);
 	byte_queue_write(&conn->output, "\r\n", 2);

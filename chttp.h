@@ -114,7 +114,7 @@ char *http_strerror(int code);
 #define HTTP_STR(X) ((HTTP_String) {(X), sizeof(X)-1})
 
 // Returns the number of items of a static array.
-#define HTTP_COUNT(X) (sizeof(X) / sizeof((X)[0]))
+#define HTTP_COUNT(X) (int) (sizeof(X) / sizeof((X)[0]))
 
 // Macro to unpack an HTTP_String into its length and pointer components.
 // Useful for passing HTTP_String to printf-style functions with "%.*s" format.
@@ -382,7 +382,7 @@ int  server_secure_context_add_certificate(ServerSecureContext *ctx,
 
 #ifdef _WIN32
 #define NATIVE_SOCKET         SOCKET
-#define NATIVE_SOCKET_INVALID SOCKET_ERROR
+#define NATIVE_SOCKET_INVALID INVALID_SOCKET
 #define CLOSE_NATIVE_SOCKET   closesocket
 #else
 #define NATIVE_SOCKET         int
@@ -688,19 +688,19 @@ enum {
 };
 
 typedef struct {
-    uint8_t *ptr;
-    size_t   len;
+    char  *ptr;
+    size_t len;
 } ByteView;
 
 // Fields are for internal use only
 typedef struct {
     uint64_t curs;
-    uint8_t* data;
+    char*    data;
     uint32_t head;
     uint32_t size;
     uint32_t used;
     uint32_t limit;
-    uint8_t* read_target;
+    char*    read_target;
     uint32_t read_target_size;
     int flags;
 } ByteQueue;

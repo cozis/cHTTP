@@ -297,6 +297,7 @@ static bool is_secure(Socket *s)
     return s->server_secure_context != NULL
         || s->client_secure_context != NULL;
 #else
+    (void) s;
     return false;
 #endif
 }
@@ -690,7 +691,6 @@ int socket_manager_wakeup(SocketManager *sm)
     // NOTE: It's assumed send/write operate atomically
     //       on The descriptor.
     char byte = 1;
-    int ret = 0;
 #ifdef _WIN32
     if (send(sm->signal_sock, &byte, 1, 0) < 0)
         return HTTP_ERROR_UNSPECIFIED;
@@ -803,10 +803,6 @@ int socket_manager_translate_events(
             if (sm->num_used == sm->max_used)
                 continue;
 
-            // Determine whether the event came from
-            // the encrypted listener or not.
-            bool secure = (reg.polled[i].fd == sm->secure_sock);
-
             Socket *s = sm->sockets;
             while (s->state != SOCKET_STATE_FREE) {
                 s++;
@@ -827,6 +823,10 @@ int socket_manager_translate_events(
             s->events = 0;
             s->user   = NULL;
 #ifdef HTTPS_ENABLED
+            // Determine whether the event came from
+            // the encrypted listener or not.
+            bool secure = (reg.polled[i].fd == sm->secure_sock);
+
             s->ssl = NULL;
             s->server_secure_context = NULL;
             s->client_secure_context = NULL;
@@ -1066,6 +1066,8 @@ int socket_connect(SocketManager *sm, int num_targets,
         s->client_secure_context = &sm->client_secure_context;
         s->dont_verify_cert = dont_verify_cert;
     }
+#else
+    (void) dont_verify_cert;
 #endif
     sm->num_used++;
 
@@ -1139,6 +1141,9 @@ int socket_recv(SocketManager *sm, SocketHandle handle,
             ret = 0;
         }
         return ret;
+#else
+        // Unreachable
+        return 0;
 #endif
     }
 }
@@ -1187,13 +1192,15 @@ int socket_send(SocketManager *sm, SocketHandle handle,
             ret = 0;
         }
         return ret;
+#else
+        // Unreachable
+        return 0;
 #endif
     }
 }
 
 void socket_close(SocketManager *sm, SocketHandle handle)
 {
-    int ret;
     Socket *s = handle_to_socket(sm, handle);
     if (s == NULL)
         return;
@@ -1224,7 +1231,6 @@ void socket_set_user(SocketManager *sm, SocketHandle handle, void *user)
 
 bool socket_ready(SocketManager *sm, SocketHandle handle)
 {
-    bool ready = false;
     Socket *s = handle_to_socket(sm, handle);
     if (s == NULL)
        return false;

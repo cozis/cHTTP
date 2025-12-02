@@ -15,19 +15,19 @@ enum {
 };
 
 typedef struct {
-    uint8_t *ptr;
-    size_t   len;
+    char  *ptr;
+    size_t len;
 } ByteView;
 
 // Fields are for internal use only
 typedef struct {
     uint64_t curs;
-    uint8_t* data;
+    char*    data;
     uint32_t head;
     uint32_t size;
     uint32_t used;
     uint32_t limit;
-    uint8_t* read_target;
+    char*    read_target;
     uint32_t read_target_size;
     int flags;
 } ByteQueue;

@@ -179,7 +179,7 @@ int byte_queue_write_setmincap(ByteQueue *queue, uint32_t mincap)
             if (size > queue->limit)
                 size = queue->limit;
 
-            uint8_t *data = malloc(size);
+            char *data = malloc(size);
             if (!data) {
                 queue->flags |= BYTE_QUEUE_ERROR;
                 return 0;
@@ -236,7 +236,7 @@ void byte_queue_write_fmt2(ByteQueue *queue,
 		return;
 	}
 
-	if (len > dst.len) {
+	if ((size_t) len > dst.len) {
 		byte_queue_write_ack(queue, 0);
 		byte_queue_write_setmincap(queue, len+1);
 		dst = byte_queue_write_buf(queue);
@@ -277,7 +277,7 @@ void byte_queue_patch(ByteQueue *queue, ByteQueueOffset off,
     assert(len <= queue->used - (off - queue->curs));
 
     // Perform the patch
-    uint8_t *dst = queue->data + queue->head + (off - queue->curs);
+    char *dst = queue->data + queue->head + (off - queue->curs);
     memcpy(dst, src, len);
 }
 

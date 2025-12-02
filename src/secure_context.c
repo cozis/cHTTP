@@ -45,6 +45,8 @@ void client_secure_context_free(ClientSecureContext *ctx)
 {
 #ifdef HTTPS_ENABLED
     SSL_CTX_free(ctx->p);
+#else
+    (void) ctx;
 #endif
 }
 

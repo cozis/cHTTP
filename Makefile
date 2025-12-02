@@ -1,5 +1,5 @@
 
-CFLAGS = -ggdb
+CFLAGS = -ggdb -Wall -Wextra
 LFLAGS =
 
 ifeq ($(shell uname -s),Linux)

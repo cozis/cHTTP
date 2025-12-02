@@ -415,6 +415,20 @@ void http_response_builder_status(HTTP_ResponseBuilder builder, int status)
     conn->state = HTTP_SERVER_CONN_WAIT_HEADER;
 }
 
+static bool is_header_valid(HTTP_String str)
+{
+    bool has_colon = false;
+    for (int i = 0; i < str.len; i++) {
+        char c = str.ptr[i];
+        if (c == ':')
+            has_colon = true;
+        // Reject control characters (especially \r and \n)
+        if (c < 0x20 && c != '\t')
+            return false;
+    }
+    return has_colon;
+}
+
 void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str)
 {
     HTTP_ServerConn *conn = builder_to_conn(builder);
@@ -424,19 +438,9 @@ void http_response_builder_header(HTTP_ResponseBuilder builder, HTTP_String str)
     if (conn->state != HTTP_SERVER_CONN_WAIT_HEADER)
         return;
 
-    // Validate header: must contain a colon and no control characters
-    // (to prevent HTTP response splitting attacks)
-    bool has_colon = false;
-    for (int i = 0; i < str.len; i++) {
-        char c = str.ptr[i];
-        if (c == ':')
-            has_colon = true;
-        // Reject control characters (especially \r and \n)
-        if (c < 0x20 && c != '\t')
-            return;
-    }
-    if (!has_colon)
-        return;
+    // Header must contain a colon and no control characters
+    // to prevent HTTP response splitting attacks
+    if (!is_header_valid(str)) return; // Silently drop it
 
 	byte_queue_write(&conn->output, str.ptr, str.len);
 	byte_queue_write(&conn->output, "\r\n", 2);

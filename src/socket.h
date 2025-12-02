@@ -50,7 +50,7 @@
 
 #ifdef _WIN32
 #define NATIVE_SOCKET         SOCKET
-#define NATIVE_SOCKET_INVALID SOCKET_ERROR
+#define NATIVE_SOCKET_INVALID INVALID_SOCKET
 #define CLOSE_NATIVE_SOCKET   closesocket
 #else
 #define NATIVE_SOCKET         int
