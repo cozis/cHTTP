@@ -2676,6 +2676,9 @@ void socket_manager_register_events(
             continue;
         j++;
 
+        if (s->silent)
+            continue;
+
         // If at least one socket can be processed, return an
         // empty list.
         if (s->state == SOCKET_STATE_DIED || s->state == SOCKET_STATE_ESTABLISHED_READY) {
@@ -2754,6 +2757,7 @@ int socket_manager_translate_events(
             s->sock   = sock;
             s->events = 0;
             s->user   = NULL;
+            s->silent = false;
 #ifdef HTTPS_ENABLED
             // Determine whether the event came from
             // the encrypted listener or not.
@@ -2789,7 +2793,10 @@ int socket_manager_translate_events(
 #endif
 
         } else {
+
             Socket *s = reg.ptrs[i];
+            assert(!s->silent);
+
             socket_update(s);
         }
     }
@@ -2799,6 +2806,9 @@ int socket_manager_translate_events(
         if (s->state == SOCKET_STATE_FREE)
             continue;
         j++;
+
+        if (s->silent)
+            continue;
 
         if (s->state == SOCKET_STATE_DIED) {
 
@@ -2989,6 +2999,7 @@ int socket_connect(SocketManager *sm, int num_targets,
     UPDATE_STATE(s->state, SOCKET_STATE_PENDING);
     s->sock = NATIVE_SOCKET_INVALID;
     s->user = user;
+    s->silent = false;
 #ifdef HTTPS_ENABLED
     s->server_secure_context = NULL;
     s->client_secure_context = NULL;
@@ -3171,6 +3182,15 @@ bool socket_ready(SocketManager *sm, SocketHandle handle)
         return true;
 
     return false;
+}
+
+void socket_silent(SocketManager *sm, SocketHandle handle, bool value)
+{
+    Socket *s = handle_to_socket(sm, handle);
+    if (s == NULL)
+       return;
+
+    s->silent = value;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -4592,6 +4612,9 @@ check_request_buffer(HTTP_Server *server, HTTP_ServerConn *conn)
         // Ready
         assert(ret > 0);
 
+        // Stop receiving I/O events while we are building the response
+        socket_silent(&server->sockets, conn->handle, true);
+
         conn->state = HTTP_SERVER_CONN_WAIT_STATUS;
         conn->request_len = ret;
         conn->response_offset = byte_queue_offset(&conn->output);
@@ -5021,6 +5044,9 @@ void http_response_builder_send(HTTP_ResponseBuilder builder)
 
     conn->state = HTTP_SERVER_CONN_FLUSHING;
     conn->gen++;
+
+    // Enable back I/O events
+    socket_silent(&builder.server->sockets, conn->handle, false);
 
     http_server_conn_process_events(builder.server, conn);
 }

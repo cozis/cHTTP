@@ -149,6 +149,9 @@ typedef struct {
     // Native socket events that need to be monitored
     int events;
 
+    // If this is set, the raw socket handle shouldn't be monitored
+    bool silent;
+
     // Generation counter to invalidate any SocketHandle
     // referring to this socket when it is freed.
     // Note that this counter may wrap but always skips
@@ -335,3 +338,6 @@ void socket_set_user(SocketManager *sm, SocketHandle handle, void *user);
 // Returns true iff the socket is ready for reading or
 // writing.
 bool socket_ready(SocketManager *sm, SocketHandle handle);
+
+// When a socket is marked as silent it will not generate events
+void socket_silent(SocketManager *sm, SocketHandle handle, bool value);

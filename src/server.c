@@ -144,6 +144,9 @@ check_request_buffer(HTTP_Server *server, HTTP_ServerConn *conn)
         // Ready
         assert(ret > 0);
 
+        // Stop receiving I/O events while we are building the response
+        socket_silent(&server->sockets, conn->handle, true);
+
         conn->state = HTTP_SERVER_CONN_WAIT_STATUS;
         conn->request_len = ret;
         conn->response_offset = byte_queue_offset(&conn->output);
@@ -573,6 +576,9 @@ void http_response_builder_send(HTTP_ResponseBuilder builder)
 
     conn->state = HTTP_SERVER_CONN_FLUSHING;
     conn->gen++;
+
+    // Enable back I/O events
+    socket_silent(&builder.server->sockets, conn->handle, false);
 
     http_server_conn_process_events(builder.server, conn);
 }
