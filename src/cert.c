@@ -27,7 +27,7 @@ static EVP_PKEY *generate_rsa_key_pair(int key_bits)
     return pkey;
 }
 
-static X509 *create_certificate(EVP_PKEY *pkey, HTTP_String C, HTTP_String O, HTTP_String CN, int days)
+static X509 *create_certificate(EVP_PKEY *pkey, CHTTP_String C, CHTTP_String O, CHTTP_String CN, int days)
 {
     X509 *x509 = X509_new();
     if (!x509)
@@ -63,7 +63,7 @@ static X509 *create_certificate(EVP_PKEY *pkey, HTTP_String C, HTTP_String O, HT
     return x509;
 }
 
-static int save_private_key(EVP_PKEY *pkey, HTTP_String file)
+static int save_private_key(EVP_PKEY *pkey, CHTTP_String file)
 {
     char copy[1<<10];
     if (file.len >= (int) sizeof(copy))
@@ -85,7 +85,7 @@ static int save_private_key(EVP_PKEY *pkey, HTTP_String file)
     return 0;
 }
 
-static int save_certificate(X509 *x509, HTTP_String file)
+static int save_certificate(X509 *x509, CHTTP_String file)
 {
     char copy[1<<10];
     if (file.len >= (int) sizeof(copy))
@@ -107,8 +107,8 @@ static int save_certificate(X509 *x509, HTTP_String file)
     return 0;
 }
 
-int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
-    HTTP_String cert_file, HTTP_String key_file)
+int chttp_create_test_certificate(CHTTP_String C, CHTTP_String O, CHTTP_String CN,
+    CHTTP_String cert_file, CHTTP_String key_file)
 {
     EVP_PKEY *pkey = generate_rsa_key_pair(2048);
     if (pkey == NULL)
@@ -139,8 +139,8 @@ int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
 
 #else
 
-int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
-    HTTP_String cert_file, HTTP_String key_file)
+int chttp_create_test_certificate(CHTTP_String C, CHTTP_String O, CHTTP_String CN,
+    CHTTP_String cert_file, CHTTP_String key_file)
 {
     (void) C;
     (void) O;

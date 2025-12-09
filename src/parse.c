@@ -128,7 +128,7 @@ consume_absolute_path(Scanner *s)
 //   path-absolute = "/" [ segment-nz *( "/" segment ) ]
 //   path-rootless = segment-nz *( "/" segment )
 //   path-empty    = 0<pchar>
-static int parse_path(Scanner *s, HTTP_String *path, int abempty)
+static int parse_path(Scanner *s, CHTTP_String *path, int abempty)
 {
 	int start = s->cur;
 
@@ -175,7 +175,7 @@ static int parse_path(Scanner *s, HTTP_String *path, int abempty)
 		// (do nothing)
 	}
 
-	*path = (HTTP_String) {
+	*path = (CHTTP_String) {
 		s->src + start,
 		s->cur - start,
 	};
@@ -215,7 +215,7 @@ static void invert_bytes(void *p, int len)
 	}
 }
 
-static int parse_ipv4(Scanner *s, HTTP_IPv4 *ipv4)
+static int parse_ipv4(Scanner *s, CHTTP_IPv4 *ipv4)
 {
 	unsigned int out = 0;
 	int i = 0;
@@ -289,7 +289,7 @@ static int parse_ipv6_comp(Scanner *s)
 	return (int) buf;
 }
 
-static int parse_ipv6(Scanner *s, HTTP_IPv6 *ipv6)
+static int parse_ipv6(Scanner *s, CHTTP_IPv6 *ipv6)
 {
 	unsigned short head[8];
 	unsigned short tail[8];
@@ -359,7 +359,7 @@ static int is_regname(char c)
 	return is_unreserved(c) || is_sub_delim(c);
 }
 
-static int parse_regname(Scanner *s, HTTP_String *regname)
+static int parse_regname(Scanner *s, CHTTP_String *regname)
 {
 	if (s->cur == s->len || !is_regname(s->src[s->cur]))
 		return -1;
@@ -372,7 +372,7 @@ static int parse_regname(Scanner *s, HTTP_String *regname)
 	return 0;
 }
 
-static int parse_host(Scanner *s, HTTP_Host *host)
+static int parse_host(Scanner *s, CHTTP_Host *host)
 {
 	int ret;
 	if (s->cur < s->len && s->src[s->cur] == '[') {
@@ -380,13 +380,13 @@ static int parse_host(Scanner *s, HTTP_Host *host)
 		s->cur++;
 
 		int start = s->cur;
-		HTTP_IPv6 ipv6;
+		CHTTP_IPv6 ipv6;
 		ret = parse_ipv6(s, &ipv6);
 		if (ret < 0) return ret;
 
-		host->mode = HTTP_HOST_MODE_IPV6;
+		host->mode = CHTTP_HOST_MODE_IPV6;
 		host->ipv6 = ipv6;
-		host->text = (HTTP_String) { s->src + start, s->cur - start };
+		host->text = (CHTTP_String) { s->src + start, s->cur - start };
 
 		if (s->cur == s->len || s->src[s->cur] != ']')
 			return -1;
@@ -395,22 +395,22 @@ static int parse_host(Scanner *s, HTTP_Host *host)
 	} else {
 
 		int start = s->cur;
-		HTTP_IPv4 ipv4;
+		CHTTP_IPv4 ipv4;
 		ret = parse_ipv4(s, &ipv4);
 		if (ret >= 0) {
-			host->mode = HTTP_HOST_MODE_IPV4;
+			host->mode = CHTTP_HOST_MODE_IPV4;
 			host->ipv4 = ipv4;
 		} else {
 			s->cur = start;
 
-			HTTP_String regname;
+			CHTTP_String regname;
 			ret = parse_regname(s, &regname);
 			if (ret < 0) return ret;
 
-			host->mode = HTTP_HOST_MODE_NAME;
+			host->mode = CHTTP_HOST_MODE_NAME;
 			host->name = regname;
 		}
-		host->text = (HTTP_String) { s->src + start, s->cur - start };
+		host->text = (CHTTP_String) { s->src + start, s->cur - start };
 	}
 
 	return 0;
@@ -439,16 +439,16 @@ static int is_userinfo(char c)
 }
 
 // authority = [ userinfo "@" ] host [ ":" port ]
-static int parse_authority(Scanner *s, HTTP_Authority *authority)
+static int parse_authority(Scanner *s, CHTTP_Authority *authority)
 {
-	HTTP_String userinfo;
+	CHTTP_String userinfo;
 	{
 		int start = s->cur;
 
         CONSUME_OPTIONAL_SEQUENCE(s, is_userinfo);
 
 		if (s->cur < s->len && s->src[s->cur] == '@') {
-			userinfo = (HTTP_String) {
+			userinfo = (CHTTP_String) {
 				s->src + start,
 				s->cur - start
 			};
@@ -456,11 +456,11 @@ static int parse_authority(Scanner *s, HTTP_Authority *authority)
 		} else {
 			// Rollback
 			s->cur = start;
-			userinfo = (HTTP_String) {NULL, 0};
+			userinfo = (CHTTP_String) {NULL, 0};
 		}
 	}
 
-	HTTP_Host host;
+	CHTTP_Host host;
 	{
 		int ret = parse_host(s, &host);
 		if (ret < 0)
@@ -487,9 +487,9 @@ static int parse_authority(Scanner *s, HTTP_Authority *authority)
 	return 0;
 }
 
-static int parse_uri(Scanner *s, HTTP_URL *url, int allow_fragment)
+static int parse_uri(Scanner *s, CHTTP_URL *url, int allow_fragment)
 {
-	HTTP_String scheme = {0};
+	CHTTP_String scheme = {0};
 	{
 		int start = s->cur;
 		if (s->cur == s->len || !is_scheme_head(s->src[s->cur]))
@@ -497,7 +497,7 @@ static int parse_uri(Scanner *s, HTTP_URL *url, int allow_fragment)
 		do
 			s->cur++;
 		while (s->cur < s->len && is_scheme_body(s->src[s->cur]));
-		scheme = (HTTP_String) {
+		scheme = (CHTTP_String) {
 			s->src + start,
 			s->cur - start,
 		};
@@ -508,7 +508,7 @@ static int parse_uri(Scanner *s, HTTP_URL *url, int allow_fragment)
 	}
 
 	int abempty = 0;
-	HTTP_Authority authority = {0};
+	CHTTP_Authority authority = {0};
 	if (s->len - s->cur > 1
 		&& s->src[s->cur+0] == '/'
 		&& s->src[s->cur+1] == '/') {
@@ -521,29 +521,29 @@ static int parse_uri(Scanner *s, HTTP_URL *url, int allow_fragment)
 		abempty = 1;
 	}
 
-	HTTP_String path;
+	CHTTP_String path;
 	int ret = parse_path(s, &path, abempty);
 	if (ret < 0) return ret;
 
-	HTTP_String query = {0};
+	CHTTP_String query = {0};
 	if (s->cur < s->len && s->src[s->cur] == '?') {
 		int start = s->cur;
 		do
 			s->cur++;
 		while (s->cur < s->len && is_query(s->src[s->cur]));
-		query = (HTTP_String) {
+		query = (CHTTP_String) {
 			s->src + start,
 			s->cur - start,
 		};
 	}
 
-	HTTP_String fragment = {0};
+	CHTTP_String fragment = {0};
 	if (allow_fragment && s->cur < s->len && s->src[s->cur] == '#') {
 		int start = s->cur;
 		do
 			s->cur++;
 		while (s->cur < s->len && is_fragment(s->src[s->cur]));
-		fragment = (HTTP_String) {
+		fragment = (CHTTP_String) {
 			s->src + start,
 			s->cur - start,
 		};
@@ -562,7 +562,7 @@ static int parse_uri(Scanner *s, HTTP_URL *url, int allow_fragment)
 // host           = IP-literal / IPv4address / reg-name
 // IP-literal    = "[" ( IPv6address / IPvFuture  ) "]"
 // reg-name      = *( unreserved / pct-encoded / sub-delims )
-static int parse_authority_form(Scanner *s, HTTP_Host *host, int *port)
+static int parse_authority_form(Scanner *s, CHTTP_Host *host, int *port)
 {
 	int ret;
 
@@ -591,23 +591,23 @@ static int parse_authority_form(Scanner *s, HTTP_Host *host, int *port)
 	return 0;
 }
 
-static int parse_origin_form(Scanner *s, HTTP_String *path, HTTP_String *query)
+static int parse_origin_form(Scanner *s, CHTTP_String *path, CHTTP_String *query)
 {
 	int ret, start;
 
 	start = s->cur;
 	ret = consume_absolute_path(s);
 	if (ret < 0) return ret;
-	*path = (HTTP_String) { s->src + start, s->cur - start };
+	*path = (CHTTP_String) { s->src + start, s->cur - start };
 
 	if (s->cur < s->len && s->src[s->cur] == '?') {
 		start = s->cur;
 		do
 			s->cur++;
 		while (s->cur < s->len && is_query(s->src[s->cur]));
-		*query = (HTTP_String) { s->src + start, s->cur - start };
+		*query = (CHTTP_String) { s->src + start, s->cur - start };
 	} else
-		*query = (HTTP_String) { NULL, 0 };
+		*query = (CHTTP_String) { NULL, 0 };
 
 	return 0;
 }
@@ -622,11 +622,11 @@ static int parse_asterisk_form(Scanner *s)
 	return 0;
 }
 
-static int parse_request_target(Scanner *s, HTTP_URL *url)
+static int parse_request_target(Scanner *s, CHTTP_URL *url)
 {
 	int ret;
 
-	memset(url, 0, sizeof(HTTP_URL));
+	memset(url, 0, sizeof(CHTTP_URL));
 
 	// asterisk-form
 	ret = parse_asterisk_form(s);
@@ -644,7 +644,7 @@ static int parse_request_target(Scanner *s, HTTP_URL *url)
 	return -1;
 }
 
-bool consume_str(Scanner *scan, HTTP_String token)
+bool consume_str(Scanner *scan, CHTTP_String token)
 {
     assert(token.len > 0);
 
@@ -664,10 +664,10 @@ static int is_header_body(char c)
 	return is_vchar(c) || c == ' ' || c == '\t';
 }
 
-static int parse_headers(Scanner *s, HTTP_Header *headers, int max_headers)
+static int parse_headers(Scanner *s, CHTTP_Header *headers, int max_headers)
 {
 	int num_headers = 0;
-    while (!consume_str(s, HTTP_STR("\r\n"))) {
+    while (!consume_str(s, CHTTP_STR("\r\n"))) {
 
         // RFC 9112:
 		//   field-line = field-name ":" OWS field-value OWS
@@ -687,7 +687,7 @@ static int parse_headers(Scanner *s, HTTP_Header *headers, int max_headers)
 		do
 			s->cur++;
 		while (s->cur < s->len && is_tchar(s->src[s->cur]));
-		HTTP_String name = { s->src + start, s->cur - start };
+		CHTTP_String name = { s->src + start, s->cur - start };
 
 		if (s->cur == s->len || s->src[s->cur] != ':')
 			return -1; // ERROR
@@ -695,13 +695,13 @@ static int parse_headers(Scanner *s, HTTP_Header *headers, int max_headers)
 
         start = s->cur;
         CONSUME_OPTIONAL_SEQUENCE(s, is_header_body);
-		HTTP_String body = { s->src + start, s->cur - start };
-		body = http_trim(body);
+		CHTTP_String body = { s->src + start, s->cur - start };
+		body = chttp_trim(body);
 
         if (num_headers < max_headers)
-            headers[num_headers++] = (HTTP_Header) { name, body };
+            headers[num_headers++] = (CHTTP_Header) { name, body };
 
-        if (!consume_str(s, HTTP_STR("\r\n"))) {
+        if (!consume_str(s, CHTTP_STR("\r\n"))) {
             return -1;
         }
     }
@@ -722,7 +722,7 @@ static bool is_space(char c)
 }
 
 static int
-parse_transfer_encoding(HTTP_String src, TransferEncodingOption *dst, int max)
+parse_transfer_encoding(CHTTP_String src, TransferEncodingOption *dst, int max)
 {
     Scanner s = { src.ptr, src.len, 0 };
 
@@ -733,10 +733,10 @@ parse_transfer_encoding(HTTP_String src, TransferEncodingOption *dst, int max)
 
         TransferEncodingOption opt;
         if (0) {}
-        else if (consume_str(&s, HTTP_STR("chunked")))  opt = TRANSFER_ENCODING_OPTION_CHUNKED;
-        else if (consume_str(&s, HTTP_STR("compress"))) opt = TRANSFER_ENCODING_OPTION_COMPRESS;
-        else if (consume_str(&s, HTTP_STR("deflate")))  opt = TRANSFER_ENCODING_OPTION_DEFLATE;
-        else if (consume_str(&s, HTTP_STR("gzip")))     opt = TRANSFER_ENCODING_OPTION_GZIP;
+        else if (consume_str(&s, CHTTP_STR("chunked")))  opt = TRANSFER_ENCODING_OPTION_CHUNKED;
+        else if (consume_str(&s, CHTTP_STR("compress"))) opt = TRANSFER_ENCODING_OPTION_COMPRESS;
+        else if (consume_str(&s, CHTTP_STR("deflate")))  opt = TRANSFER_ENCODING_OPTION_DEFLATE;
+        else if (consume_str(&s, CHTTP_STR("gzip")))     opt = TRANSFER_ENCODING_OPTION_GZIP;
         else return -1; // Invalid option
 
         if (num == max)
@@ -778,8 +778,8 @@ parse_content_length(const char *src, int len, uint64_t *out)
 }
 
 static int parse_body(Scanner *s,
-    HTTP_Header *headers, int num_headers,
-    HTTP_String *body, bool body_expected)
+    CHTTP_Header *headers, int num_headers,
+    CHTTP_String *body, bool body_expected)
 {
 
     // RFC 9112 section 6:
@@ -787,7 +787,7 @@ static int parse_body(Scanner *s,
     //   Transfer-Encoding header field. Request message framing is independent of method
     //   semantics.
 
-    int header_index = http_find_header(headers, num_headers, HTTP_STR("Transfer-Encoding"));
+    int header_index = chttp_find_header(headers, num_headers, CHTTP_STR("Transfer-Encoding"));
     if (header_index != -1) {
 
         // RFC 9112 section 6.1:
@@ -795,10 +795,10 @@ static int parse_body(Scanner *s,
         //   or process such a request in accordance with the Transfer-Encoding alone. Regardless,
         //   the server MUST close the connection after responding to such a request to avoid the
         //   potential attacks.
-        if (http_find_header(headers, num_headers, HTTP_STR("Content-Length")) != -1)
+        if (chttp_find_header(headers, num_headers, CHTTP_STR("Content-Length")) != -1)
             return -1;
 
-        HTTP_String value = headers[header_index].value;
+        CHTTP_String value = headers[header_index].value;
 
         // RFC 9112 section 6.1:
         //   If any transfer coding other than chunked is applied to a request's content, the
@@ -808,14 +808,14 @@ static int parse_body(Scanner *s,
         //   coding or terminate the message by closing the connection.
 
         TransferEncodingOption opts[8];
-        int num = parse_transfer_encoding(value, opts, HTTP_COUNT(opts));
+        int num = parse_transfer_encoding(value, opts, CHTTP_COUNT(opts));
         if (num != 1 || opts[0] != TRANSFER_ENCODING_OPTION_CHUNKED)
             return -1;
 
-        HTTP_String chunks_maybe[128];
-        HTTP_String *chunks = chunks_maybe;
+        CHTTP_String chunks_maybe[128];
+        CHTTP_String *chunks = chunks_maybe;
         int num_chunks = 0;
-        int max_chunks = HTTP_COUNT(chunks_maybe);
+        int max_chunks = CHTTP_COUNT(chunks_maybe);
 
         #define FREE_CHUNK_LIST         \
             if (chunks != chunks_maybe) \
@@ -905,7 +905,7 @@ static int parse_body(Scanner *s,
 
                 max_chunks *= 2;
 
-                HTTP_String *new_chunks = malloc(max_chunks * sizeof(HTTP_String));
+                CHTTP_String *new_chunks = malloc(max_chunks * sizeof(CHTTP_String));
                 if (new_chunks == NULL) {
                     if (chunks != chunks_maybe)
                         free(chunks);
@@ -920,7 +920,7 @@ static int parse_body(Scanner *s,
 
                 chunks = new_chunks;
             }
-            chunks[num_chunks++] = (HTTP_String) { chunk_ptr, chunk_len };
+            chunks[num_chunks++] = (CHTTP_String) { chunk_ptr, chunk_len };
         }
 
         char *content_ptr = content_start;
@@ -929,7 +929,7 @@ static int parse_body(Scanner *s,
             content_ptr += chunks[i].len;
         }
 
-        *body = (HTTP_String) {
+        *body = (CHTTP_String) {
             content_start,
             content_ptr - content_start
         };
@@ -944,11 +944,11 @@ static int parse_body(Scanner *s,
     //   If a valid Content-Length header field is present without Transfer-Encoding,
     //   its decimal value defines the expected message body length in octets.
 
-    header_index = http_find_header(headers, num_headers, HTTP_STR("Content-Length"));
+    header_index = chttp_find_header(headers, num_headers, CHTTP_STR("Content-Length"));
     if (header_index != -1) {
 
         // Have Content-Length
-        HTTP_String value = headers[header_index].value;
+        CHTTP_String value = headers[header_index].value;
 
         uint64_t tmp;
         if (parse_content_length(value.ptr, value.len, &tmp) < 0)
@@ -960,7 +960,7 @@ static int parse_body(Scanner *s,
         if (len > s->len - s->cur)
             return 0; // Incomplete request
 
-        *body = (HTTP_String) { s->src + s->cur, len };
+        *body = (CHTTP_String) { s->src + s->cur, len };
 
         s->cur += len;
         return 1;
@@ -969,7 +969,7 @@ static int parse_body(Scanner *s,
     // No Content-Length or Transfer-Encoding
     if (body_expected) return -1;
 
-    *body = (HTTP_String) { NULL, 0 };
+    *body = (CHTTP_String) { NULL, 0 };
     return 1;
 }
 
@@ -987,7 +987,7 @@ static int contains_head(char *src, int len)
     return 0;
 }
 
-static int parse_request(Scanner *s, HTTP_Request *req)
+static int parse_request(Scanner *s, CHTTP_Request *req)
 {
     if (!contains_head(s->src + s->cur, s->len - s->cur))
         return 0;
@@ -995,15 +995,15 @@ static int parse_request(Scanner *s, HTTP_Request *req)
     req->secure = false;
 
     if (0) {}
-    else if (consume_str(s, HTTP_STR("GET ")))     req->method = HTTP_METHOD_GET;
-    else if (consume_str(s, HTTP_STR("POST ")))    req->method = HTTP_METHOD_POST;
-    else if (consume_str(s, HTTP_STR("PUT ")))     req->method = HTTP_METHOD_PUT;
-    else if (consume_str(s, HTTP_STR("HEAD ")))    req->method = HTTP_METHOD_HEAD;
-    else if (consume_str(s, HTTP_STR("DELETE ")))  req->method = HTTP_METHOD_DELETE;
-    else if (consume_str(s, HTTP_STR("CONNECT "))) req->method = HTTP_METHOD_CONNECT;
-    else if (consume_str(s, HTTP_STR("OPTIONS "))) req->method = HTTP_METHOD_OPTIONS;
-    else if (consume_str(s, HTTP_STR("TRACE ")))   req->method = HTTP_METHOD_TRACE;
-    else if (consume_str(s, HTTP_STR("PATCH ")))   req->method = HTTP_METHOD_PATCH;
+    else if (consume_str(s, CHTTP_STR("GET ")))     req->method = CHTTP_METHOD_GET;
+    else if (consume_str(s, CHTTP_STR("POST ")))    req->method = CHTTP_METHOD_POST;
+    else if (consume_str(s, CHTTP_STR("PUT ")))     req->method = CHTTP_METHOD_PUT;
+    else if (consume_str(s, CHTTP_STR("HEAD ")))    req->method = CHTTP_METHOD_HEAD;
+    else if (consume_str(s, CHTTP_STR("DELETE ")))  req->method = CHTTP_METHOD_DELETE;
+    else if (consume_str(s, CHTTP_STR("CONNECT "))) req->method = CHTTP_METHOD_CONNECT;
+    else if (consume_str(s, CHTTP_STR("OPTIONS "))) req->method = CHTTP_METHOD_OPTIONS;
+    else if (consume_str(s, CHTTP_STR("TRACE ")))   req->method = CHTTP_METHOD_TRACE;
+    else if (consume_str(s, CHTTP_STR("PATCH ")))   req->method = CHTTP_METHOD_PATCH;
     else return -1;
 
     {
@@ -1021,47 +1021,47 @@ static int parse_request(Scanner *s, HTTP_Request *req)
         s->cur = s2.cur;
     }
 
-    if (consume_str(s, HTTP_STR(" HTTP/1.1\r\n"))) {
+    if (consume_str(s, CHTTP_STR(" HTTP/1.1\r\n"))) {
         req->minor = 1;
-    } else if (consume_str(s, HTTP_STR(" HTTP/1.0\r\n")) || consume_str(s, HTTP_STR(" HTTP/1\r\n"))) {
+    } else if (consume_str(s, CHTTP_STR(" HTTP/1.0\r\n")) || consume_str(s, CHTTP_STR(" HTTP/1\r\n"))) {
         req->minor = 0;
     } else {
         return -1;
     }
 
-    int num_headers = parse_headers(s, req->headers, HTTP_MAX_HEADERS);
+    int num_headers = parse_headers(s, req->headers, CHTTP_MAX_HEADERS);
     if (num_headers < 0)
         return num_headers;
     req->num_headers = num_headers;
 
     // Request methods that typically don't have a body
     bool body_expected = true;
-    if (req->method == HTTP_METHOD_GET ||
-        req->method == HTTP_METHOD_HEAD ||
-        req->method == HTTP_METHOD_DELETE ||
-        req->method == HTTP_METHOD_OPTIONS ||
-        req->method == HTTP_METHOD_TRACE)
+    if (req->method == CHTTP_METHOD_GET ||
+        req->method == CHTTP_METHOD_HEAD ||
+        req->method == CHTTP_METHOD_DELETE ||
+        req->method == CHTTP_METHOD_OPTIONS ||
+        req->method == CHTTP_METHOD_TRACE)
         body_expected = false;
 
     return parse_body(s, req->headers, req->num_headers, &req->body, body_expected);
 }
 
-int http_find_header(HTTP_Header *headers, int num_headers, HTTP_String name)
+int chttp_find_header(CHTTP_Header *headers, int num_headers, CHTTP_String name)
 {
 	for (int i = 0; i < num_headers; i++)
-		if (http_streqcase(name, headers[i].name))
+		if (chttp_streqcase(name, headers[i].name))
 			return i;
 	return -1;
 }
 
-static int parse_response(Scanner *s, HTTP_Response *res)
+static int parse_response(Scanner *s, CHTTP_Response *res)
 {
 	if (!contains_head(s->src + s->cur, s->len - s->cur))
 		return 0;
 
-    if (consume_str(s, HTTP_STR("HTTP/1.1 "))) {
+    if (consume_str(s, CHTTP_STR("HTTP/1.1 "))) {
         res->minor = 1;
-    } else if (consume_str(s, HTTP_STR("HTTP/1.0 ")) || consume_str(s, HTTP_STR("HTTP/1 "))) {
+    } else if (consume_str(s, CHTTP_STR("HTTP/1.0 ")) || consume_str(s, CHTTP_STR("HTTP/1 "))) {
         res->minor = 0;
     } else {
         return -1;
@@ -1093,7 +1093,7 @@ static int parse_response(Scanner *s, HTTP_Response *res)
         return -1;
     s->cur += 2;
 
-    int num_headers = parse_headers(s, res->headers, HTTP_MAX_HEADERS);
+    int num_headers = parse_headers(s, res->headers, CHTTP_MAX_HEADERS);
     if (num_headers < 0)
         return num_headers;
     res->num_headers = num_headers;
@@ -1113,7 +1113,7 @@ static int parse_response(Scanner *s, HTTP_Response *res)
     return parse_body(s, res->headers, res->num_headers, &res->body, body_expected);
 }
 
-int http_parse_ipv4(char *src, int len, HTTP_IPv4 *ipv4)
+int chttp_parse_ipv4(char *src, int len, CHTTP_IPv4 *ipv4)
 {
     Scanner s = {src, len, 0};
     int ret = parse_ipv4(&s, ipv4);
@@ -1121,7 +1121,7 @@ int http_parse_ipv4(char *src, int len, HTTP_IPv4 *ipv4)
     return s.cur;
 }
 
-int http_parse_ipv6(char *src, int len, HTTP_IPv6 *ipv6)
+int chttp_parse_ipv6(char *src, int len, CHTTP_IPv6 *ipv6)
 {
     Scanner s = {src, len, 0};
     int ret = parse_ipv6(&s, ipv6);
@@ -1129,7 +1129,7 @@ int http_parse_ipv6(char *src, int len, HTTP_IPv6 *ipv6)
     return s.cur;
 }
 
-int http_parse_url(char *src, int len, HTTP_URL *url)
+int chttp_parse_url(char *src, int len, CHTTP_URL *url)
 {
     Scanner s = {src, len, 0};
     int ret = parse_uri(&s, url, 1);
@@ -1138,7 +1138,7 @@ int http_parse_url(char *src, int len, HTTP_URL *url)
     return ret;
 }
 
-int http_parse_request(char *src, int len, HTTP_Request *req)
+int chttp_parse_request(char *src, int len, CHTTP_Request *req)
 {
     Scanner s = {src, len, 0};
     int ret = parse_request(&s, req);
@@ -1147,7 +1147,7 @@ int http_parse_request(char *src, int len, HTTP_Request *req)
     return ret;
 }
 
-int http_parse_response(char *src, int len, HTTP_Response *res)
+int chttp_parse_response(char *src, int len, CHTTP_Response *res)
 {
     Scanner s = {src, len, 0};
     int ret = parse_response(&s, res);
@@ -1156,14 +1156,14 @@ int http_parse_response(char *src, int len, HTTP_Response *res)
     return ret;
 }
 
-HTTP_String http_get_cookie(HTTP_Request *req, HTTP_String name)
+CHTTP_String chttp_get_cookie(CHTTP_Request *req, CHTTP_String name)
 {
     // Simple cookie parsing - does not handle quoted values or special characters
     // See RFC 6265 for full cookie specification
 
     for (int i = 0; i < req->num_headers; i++) {
 
-        if (!http_streqcase(req->headers[i].name, HTTP_STR("Cookie")))
+        if (!chttp_streqcase(req->headers[i].name, CHTTP_STR("Cookie")))
             continue;
 
         char *src = req->headers[i].value.ptr;
@@ -1181,7 +1181,7 @@ HTTP_String http_get_cookie(HTTP_Request *req, HTTP_String name)
             while (cur < len && src[cur] != '=')
                 cur++;
 
-            HTTP_String cookie_name = { src + off, cur - off };
+            CHTTP_String cookie_name = { src + off, cur - off };
 
             if (cur == len)
                 break;
@@ -1191,9 +1191,9 @@ HTTP_String http_get_cookie(HTTP_Request *req, HTTP_String name)
             while (cur < len && src[cur] != ';')
                 cur++;
 
-            HTTP_String cookie_value = { src + off, cur - off };
+            CHTTP_String cookie_value = { src + off, cur - off };
 
-            if (http_streq(name, cookie_name))
+            if (chttp_streq(name, cookie_name))
                 return cookie_value;
 
             if (cur == len)
@@ -1202,10 +1202,10 @@ HTTP_String http_get_cookie(HTTP_Request *req, HTTP_String name)
         }
     }
 
-    return HTTP_STR("");
+    return CHTTP_STR("");
 }
 
-HTTP_String http_get_param(HTTP_String body, HTTP_String str, char *mem, int cap)
+CHTTP_String chttp_get_param(CHTTP_String body, CHTTP_String str, char *mem, int cap)
 {
     // This is just a best-effort implementation
 
@@ -1218,29 +1218,29 @@ HTTP_String http_get_param(HTTP_String body, HTTP_String str, char *mem, int cap
 
     while (cur < len) {
 
-        HTTP_String name;
+        CHTTP_String name;
         {
             int off = cur;
             while (cur < len && src[cur] != '=' && src[cur] != '&')
                 cur++;
-            name = (HTTP_String) { src + off, cur - off };
+            name = (CHTTP_String) { src + off, cur - off };
         }
 
-        HTTP_String body = HTTP_STR("");
+        CHTTP_String body = CHTTP_STR("");
         if (cur < len) {
             cur++;
             if (src[cur-1] == '=') {
                 int off = cur;
                 while (cur < len && src[cur] != '&')
                     cur++;
-                body = (HTTP_String) { src + off, cur - off };
+                body = (CHTTP_String) { src + off, cur - off };
 
                 if (cur < len)
                     cur++;
             }
         }
 
-        if (http_streq(str, name)) {
+        if (chttp_streq(str, name)) {
 
             bool percent_encoded = false;
             for (int i = 0; i < body.len; i++)
@@ -1253,9 +1253,9 @@ HTTP_String http_get_param(HTTP_String body, HTTP_String str, char *mem, int cap
                 return body;
 
             if (body.len > cap)
-                return (HTTP_String) { NULL, 0 };
+                return (CHTTP_String) { NULL, 0 };
 
-            HTTP_String decoded = { mem, 0 };
+            CHTTP_String decoded = { mem, 0 };
             for (int i = 0; i < body.len; i++) {
 
                 char c = body.ptr[i];
@@ -1266,7 +1266,7 @@ HTTP_String http_get_param(HTTP_String body, HTTP_String str, char *mem, int cap
                         if (body.len - i < 3
                             || !is_hex_digit(body.ptr[i+1])
                             || !is_hex_digit(body.ptr[i+2]))
-                            return (HTTP_String) { NULL, 0 };
+                            return (CHTTP_String) { NULL, 0 };
 
                         int h = hex_digit_to_int(body.ptr[i+1]);
                         int l = hex_digit_to_int(body.ptr[i+2]);
@@ -1283,13 +1283,13 @@ HTTP_String http_get_param(HTTP_String body, HTTP_String str, char *mem, int cap
         }
     }
 
-    return HTTP_STR("");
+    return CHTTP_STR("");
 }
 
-int http_get_param_i(HTTP_String body, HTTP_String str)
+int chttp_get_param_i(CHTTP_String body, CHTTP_String str)
 {
     char buf[128];
-    HTTP_String out = http_get_param(body, str, buf, (int) sizeof(buf));
+    CHTTP_String out = chttp_get_param(body, str, buf, (int) sizeof(buf));
     if (out.len == 0 || !is_digit(out.ptr[0]))
         return -1;
 
@@ -1305,38 +1305,38 @@ int http_get_param_i(HTTP_String body, HTTP_String str)
     return res;
 }
 
-bool http_match_host(HTTP_Request *req, HTTP_String domain, int port)
+bool chttp_match_host(CHTTP_Request *req, CHTTP_String domain, int port)
 {
-    int idx = http_find_header(req->headers, req->num_headers, HTTP_STR("Host"));
+    int idx = chttp_find_header(req->headers, req->num_headers, CHTTP_STR("Host"));
     assert(idx != -1); // Requests without the host header are always rejected
 
     char tmp[1<<8];
     if (port > -1 && port != 80) {
         int ret = snprintf(tmp, sizeof(tmp), "%.*s:%d", domain.len, domain.ptr, port);
         assert(ret > 0);
-        domain = (HTTP_String) { tmp, ret };
+        domain = (CHTTP_String) { tmp, ret };
     }
 
-    HTTP_String host = req->headers[idx].value;
-    return http_streqcase(host, domain);
+    CHTTP_String host = req->headers[idx].value;
+    return chttp_streqcase(host, domain);
 }
 
 
 // <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
-static int parse_date(Scanner *s, HTTP_Date *out)
+static int parse_date(Scanner *s, CHTTP_Date *out)
 {
-    struct { HTTP_String str; HTTP_WeekDay val; } week_day_table[] = {
-        { HTTP_STR("Mon, "), HTTP_WEEKDAY_MON },
-        { HTTP_STR("Tue, "), HTTP_WEEKDAY_TUE },
-        { HTTP_STR("Wed, "), HTTP_WEEKDAY_WED },
-        { HTTP_STR("Thu, "), HTTP_WEEKDAY_THU },
-        { HTTP_STR("Fri, "), HTTP_WEEKDAY_FRI },
-        { HTTP_STR("Sat, "), HTTP_WEEKDAY_SAT },
-        { HTTP_STR("Sun, "), HTTP_WEEKDAY_SUN },
+    struct { CHTTP_String str; CHTTP_WeekDay val; } week_day_table[] = {
+        { CHTTP_STR("Mon, "), CHTTP_WEEKDAY_MON },
+        { CHTTP_STR("Tue, "), CHTTP_WEEKDAY_TUE },
+        { CHTTP_STR("Wed, "), CHTTP_WEEKDAY_WED },
+        { CHTTP_STR("Thu, "), CHTTP_WEEKDAY_THU },
+        { CHTTP_STR("Fri, "), CHTTP_WEEKDAY_FRI },
+        { CHTTP_STR("Sat, "), CHTTP_WEEKDAY_SAT },
+        { CHTTP_STR("Sun, "), CHTTP_WEEKDAY_SUN },
     };
 
     bool found = false;
-    for (int i = 0; i < HTTP_COUNT(week_day_table); i++)
+    for (int i = 0; i < CHTTP_COUNT(week_day_table); i++)
         if (consume_str(s, week_day_table[i].str)) {
             out->week_day = week_day_table[i].val;
             found = true;
@@ -1354,23 +1354,23 @@ static int parse_date(Scanner *s, HTTP_Date *out)
         + (s->src[s->cur+1] - '0') * 1;
     s->cur += 2;
 
-    struct { HTTP_String str; HTTP_Month val; } month_table[] = {
-        { HTTP_STR(" Jan "), HTTP_MONTH_JAN },
-        { HTTP_STR(" Feb "), HTTP_MONTH_FEB },
-        { HTTP_STR(" Mar "), HTTP_MONTH_MAR },
-        { HTTP_STR(" Apr "), HTTP_MONTH_APR },
-        { HTTP_STR(" May "), HTTP_MONTH_MAY },
-        { HTTP_STR(" Jun "), HTTP_MONTH_JUN },
-        { HTTP_STR(" Jul "), HTTP_MONTH_JUL },
-        { HTTP_STR(" Aug "), HTTP_MONTH_AUG },
-        { HTTP_STR(" Sep "), HTTP_MONTH_SEP },
-        { HTTP_STR(" Oct "), HTTP_MONTH_OCT },
-        { HTTP_STR(" Nov "), HTTP_MONTH_NOV },
-        { HTTP_STR(" Dec "), HTTP_MONTH_DEC },
+    struct { CHTTP_String str; CHTTP_Month val; } month_table[] = {
+        { CHTTP_STR(" Jan "), CHTTP_MONTH_JAN },
+        { CHTTP_STR(" Feb "), CHTTP_MONTH_FEB },
+        { CHTTP_STR(" Mar "), CHTTP_MONTH_MAR },
+        { CHTTP_STR(" Apr "), CHTTP_MONTH_APR },
+        { CHTTP_STR(" May "), CHTTP_MONTH_MAY },
+        { CHTTP_STR(" Jun "), CHTTP_MONTH_JUN },
+        { CHTTP_STR(" Jul "), CHTTP_MONTH_JUL },
+        { CHTTP_STR(" Aug "), CHTTP_MONTH_AUG },
+        { CHTTP_STR(" Sep "), CHTTP_MONTH_SEP },
+        { CHTTP_STR(" Oct "), CHTTP_MONTH_OCT },
+        { CHTTP_STR(" Nov "), CHTTP_MONTH_NOV },
+        { CHTTP_STR(" Dec "), CHTTP_MONTH_DEC },
     };
 
     found = false;
-    for (int i = 0; i < HTTP_COUNT(month_table); i++)
+    for (int i = 0; i < CHTTP_COUNT(month_table); i++)
         if (consume_str(s, month_table[i].str)) {
             out->month = month_table[i].val;
             found = true;
@@ -1436,7 +1436,7 @@ static bool is_cookie_octet(char c)
            (c >= 0x5D && c <= 0x7E);
 }
 
-int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
+int chttp_parse_set_cookie(CHTTP_String str, CHTTP_SetCookie *out)
 {
     Scanner s = { str.ptr, str.len, 0 };
 
@@ -1447,7 +1447,7 @@ int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
     do
         s.cur++;
     while (s.cur < s.len && is_tchar(s.src[s.cur]));
-    out->name = (HTTP_String) { s.src + off, s.cur - off };
+    out->name = (CHTTP_String) { s.src + off, s.cur - off };
 
     // cookie-pair = cookie-name "=" cookie-value
     if (s.cur == s.len || s.src[s.cur] != '=')
@@ -1462,13 +1462,13 @@ int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
             s.cur++;
         if (s.cur == s.len || s.src[s.cur] != '"')
             return -1; // Missing closing double quote
-        out->value = (HTTP_String) { s.src + off, s.cur - off };
+        out->value = (CHTTP_String) { s.src + off, s.cur - off };
         s.cur++; // Consume closing double quote
     } else {
         int off = s.cur;
         while (s.cur < s.len && is_cookie_octet(s.src[s.cur]))
             s.cur++;
-        out->value = (HTTP_String) { s.src + off, s.cur - off };
+        out->value = (CHTTP_String) { s.src + off, s.cur - off };
     }
 
     // *( ";" SP cookie-av )
@@ -1477,20 +1477,20 @@ int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
     //             path-av / secure-av / httponly-av /
     //             extension-av
     out->secure = false;
-    out->http_only = false;
+    out->chttp_only = false;
     out->have_date = false;
     out->have_max_age = false;
     out->have_domain = false;
     out->have_path = false;
-    while (consume_str(&s, HTTP_STR("; "))) {
-        if (consume_str(&s, HTTP_STR("Expires="))) {
+    while (consume_str(&s, CHTTP_STR("; "))) {
+        if (consume_str(&s, CHTTP_STR("Expires="))) {
 
             // expires-av = "Expires=" sane-cookie-date
             if (parse_date(&s, &out->date) < 0)
                 return -1;
             out->have_date = true;
 
-        } else if (consume_str(&s, HTTP_STR("Max-Age="))) {
+        } else if (consume_str(&s, CHTTP_STR("Max-Age="))) {
 
             // max-age-av = "Max-Age=" non-zero-digit *DIGIT
 
@@ -1507,7 +1507,7 @@ int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
             out->have_max_age = true;
             out->max_age = value;
 
-        } else if (consume_str(&s, HTTP_STR("Domain="))) {
+        } else if (consume_str(&s, CHTTP_STR("Domain="))) {
 
             // domain-av = "Domain=" domain-value
             // domain-value = <subdomain>
@@ -1557,9 +1557,9 @@ int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
             }
 
             out->have_domain = true;
-            out->domain = (HTTP_String) { s.src + off, s.cur - off };
+            out->domain = (CHTTP_String) { s.src + off, s.cur - off };
 
-        } else if (consume_str(&s, HTTP_STR("Path="))) {
+        } else if (consume_str(&s, CHTTP_STR("Path="))) {
 
             // path-av = "Path=" path-value
             // path-value = <any CHAR except CTLs or ";">
@@ -1569,17 +1569,17 @@ int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out)
                 s.cur++;
 
             out->have_path = true;
-            out->path = (HTTP_String) { s.src + off, s.cur - off };
+            out->path = (CHTTP_String) { s.src + off, s.cur - off };
 
-        } else if (consume_str(&s, HTTP_STR("Secure"))) {
+        } else if (consume_str(&s, CHTTP_STR("Secure"))) {
 
             // secure-av = "Secure"
             out->secure = true;
 
-        } else if (consume_str(&s, HTTP_STR("HttpOnly"))) {
+        } else if (consume_str(&s, CHTTP_STR("HttpOnly"))) {
 
             // httponly-av = "HttpOnly"
-            out->http_only = true;
+            out->chttp_only = true;
 
         } else {
             return -1; // Invalid attribute

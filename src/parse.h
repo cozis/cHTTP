@@ -1,155 +1,155 @@
 
-#define HTTP_MAX_HEADERS 32
+#define CHTTP_MAX_HEADERS 32
 
 typedef struct {
 	unsigned int data;
-} HTTP_IPv4;
+} CHTTP_IPv4;
 
 typedef struct {
 	unsigned short data[8];
-} HTTP_IPv6;
+} CHTTP_IPv6;
 
 typedef enum {
-	HTTP_HOST_MODE_VOID = 0,
-	HTTP_HOST_MODE_NAME,
-	HTTP_HOST_MODE_IPV4,
-	HTTP_HOST_MODE_IPV6,
-} HTTP_HostMode;
+	CHTTP_HOST_MODE_VOID = 0,
+	CHTTP_HOST_MODE_NAME,
+	CHTTP_HOST_MODE_IPV4,
+	CHTTP_HOST_MODE_IPV6,
+} CHTTP_HostMode;
 
 typedef struct {
-	HTTP_HostMode mode;
-	HTTP_String   text;
+	CHTTP_HostMode mode;
+	CHTTP_String   text;
 	union {
-		HTTP_String name;
-		HTTP_IPv4   ipv4;
-		HTTP_IPv6   ipv6;
+		CHTTP_String name;
+		CHTTP_IPv4   ipv4;
+		CHTTP_IPv6   ipv6;
 	};
-} HTTP_Host;
+} CHTTP_Host;
 
 typedef struct {
-	HTTP_String userinfo;
-	HTTP_Host   host;
+	CHTTP_String userinfo;
+	CHTTP_Host   host;
 	int         port;
-} HTTP_Authority;
+} CHTTP_Authority;
 
 // ZII
 typedef struct {
-	HTTP_String    scheme;
-	HTTP_Authority authority;
-	HTTP_String    path;
-	HTTP_String    query;
-	HTTP_String    fragment;
-} HTTP_URL;
+	CHTTP_String    scheme;
+	CHTTP_Authority authority;
+	CHTTP_String    path;
+	CHTTP_String    query;
+	CHTTP_String    fragment;
+} CHTTP_URL;
 
 typedef enum {
-	HTTP_METHOD_GET,
-	HTTP_METHOD_HEAD,
-	HTTP_METHOD_POST,
-	HTTP_METHOD_PUT,
-	HTTP_METHOD_DELETE,
-	HTTP_METHOD_CONNECT,
-	HTTP_METHOD_OPTIONS,
-	HTTP_METHOD_TRACE,
-	HTTP_METHOD_PATCH,
-} HTTP_Method;
+	CHTTP_METHOD_GET,
+	CHTTP_METHOD_HEAD,
+	CHTTP_METHOD_POST,
+	CHTTP_METHOD_PUT,
+	CHTTP_METHOD_DELETE,
+	CHTTP_METHOD_CONNECT,
+	CHTTP_METHOD_OPTIONS,
+	CHTTP_METHOD_TRACE,
+	CHTTP_METHOD_PATCH,
+} CHTTP_Method;
 
 typedef struct {
-	HTTP_String name;
-	HTTP_String value;
-} HTTP_Header;
+	CHTTP_String name;
+	CHTTP_String value;
+} CHTTP_Header;
 
 typedef struct {
     bool        secure;
-	HTTP_Method method;
-	HTTP_URL    url;
+	CHTTP_Method method;
+	CHTTP_URL    url;
 	int         minor;
 	int         num_headers;
-	HTTP_Header headers[HTTP_MAX_HEADERS];
-	HTTP_String body;
-} HTTP_Request;
+	CHTTP_Header headers[CHTTP_MAX_HEADERS];
+	CHTTP_String body;
+} CHTTP_Request;
 
 typedef struct {
     void*       context;
 	int         minor;
 	int         status;
-	HTTP_String reason;
+	CHTTP_String reason;
 	int         num_headers;
-	HTTP_Header headers[HTTP_MAX_HEADERS];
-	HTTP_String body;
-} HTTP_Response;
+	CHTTP_Header headers[CHTTP_MAX_HEADERS];
+	CHTTP_String body;
+} CHTTP_Response;
 
-int         http_parse_ipv4     (char *src, int len, HTTP_IPv4     *ipv4);
-int         http_parse_ipv6     (char *src, int len, HTTP_IPv6     *ipv6);
-int         http_parse_url      (char *src, int len, HTTP_URL      *url);
-int         http_parse_request  (char *src, int len, HTTP_Request  *req);
-int         http_parse_response (char *src, int len, HTTP_Response *res);
+int         chttp_parse_ipv4     (char *src, int len, CHTTP_IPv4     *ipv4);
+int         chttp_parse_ipv6     (char *src, int len, CHTTP_IPv6     *ipv6);
+int         chttp_parse_url      (char *src, int len, CHTTP_URL      *url);
+int         chttp_parse_request  (char *src, int len, CHTTP_Request  *req);
+int         chttp_parse_response (char *src, int len, CHTTP_Response *res);
 
-int         http_find_header    (HTTP_Header *headers, int num_headers, HTTP_String name);
+int         chttp_find_header    (CHTTP_Header *headers, int num_headers, CHTTP_String name);
 
-HTTP_String http_get_cookie     (HTTP_Request *req, HTTP_String name);
-HTTP_String http_get_param      (HTTP_String body, HTTP_String str, char *mem, int cap);
-int         http_get_param_i    (HTTP_String body, HTTP_String str);
+CHTTP_String chttp_get_cookie     (CHTTP_Request *req, CHTTP_String name);
+CHTTP_String chttp_get_param      (CHTTP_String body, CHTTP_String str, char *mem, int cap);
+int         chttp_get_param_i    (CHTTP_String body, CHTTP_String str);
 
 // Checks whether the request was meant for the host with the given
 // domain an port. If port is -1, the default value of 80 is assumed.
-bool http_match_host(HTTP_Request *req, HTTP_String domain, int port);
+bool chttp_match_host(CHTTP_Request *req, CHTTP_String domain, int port);
 
 // Date and cookie types for Set-Cookie header parsing
 typedef enum {
-    HTTP_WEEKDAY_MON,
-    HTTP_WEEKDAY_TUE,
-    HTTP_WEEKDAY_WED,
-    HTTP_WEEKDAY_THU,
-    HTTP_WEEKDAY_FRI,
-    HTTP_WEEKDAY_SAT,
-    HTTP_WEEKDAY_SUN,
-} HTTP_WeekDay;
+    CHTTP_WEEKDAY_MON,
+    CHTTP_WEEKDAY_TUE,
+    CHTTP_WEEKDAY_WED,
+    CHTTP_WEEKDAY_THU,
+    CHTTP_WEEKDAY_FRI,
+    CHTTP_WEEKDAY_SAT,
+    CHTTP_WEEKDAY_SUN,
+} CHTTP_WeekDay;
 
 typedef enum {
-    HTTP_MONTH_JAN,
-    HTTP_MONTH_FEB,
-    HTTP_MONTH_MAR,
-    HTTP_MONTH_APR,
-    HTTP_MONTH_MAY,
-    HTTP_MONTH_JUN,
-    HTTP_MONTH_JUL,
-    HTTP_MONTH_AUG,
-    HTTP_MONTH_SEP,
-    HTTP_MONTH_OCT,
-    HTTP_MONTH_NOV,
-    HTTP_MONTH_DEC,
-} HTTP_Month;
+    CHTTP_MONTH_JAN,
+    CHTTP_MONTH_FEB,
+    CHTTP_MONTH_MAR,
+    CHTTP_MONTH_APR,
+    CHTTP_MONTH_MAY,
+    CHTTP_MONTH_JUN,
+    CHTTP_MONTH_JUL,
+    CHTTP_MONTH_AUG,
+    CHTTP_MONTH_SEP,
+    CHTTP_MONTH_OCT,
+    CHTTP_MONTH_NOV,
+    CHTTP_MONTH_DEC,
+} CHTTP_Month;
 
 typedef struct {
-    HTTP_WeekDay week_day;
+    CHTTP_WeekDay week_day;
     int          day;
-    HTTP_Month   month;
+    CHTTP_Month   month;
     int          year;
     int          hour;
     int          minute;
     int          second;
-} HTTP_Date;
+} CHTTP_Date;
 
 typedef struct {
-    HTTP_String name;
-    HTTP_String value;
+    CHTTP_String name;
+    CHTTP_String value;
 
     bool secure;
-    bool http_only;
+    bool chttp_only;
 
     bool have_date;
-    HTTP_Date date;
+    CHTTP_Date date;
 
     bool have_max_age;
     uint32_t max_age;
 
     bool have_domain;
-    HTTP_String domain;
+    CHTTP_String domain;
 
     bool have_path;
-    HTTP_String path;
-} HTTP_SetCookie;
+    CHTTP_String path;
+} CHTTP_SetCookie;
 
 // Parses a Set-Cookie header value
 // Returns 0 on success, -1 on error
-int http_parse_set_cookie(HTTP_String str, HTTP_SetCookie *out);
+int chttp_parse_set_cookie(CHTTP_String str, CHTTP_SetCookie *out);

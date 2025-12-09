@@ -4,33 +4,33 @@ int main(void)
 {
     int ret;
 
-    HTTP_Server server;
-    ret = http_server_init(&server);
+    CHTTP_Server server;
+    ret = chttp_server_init(&server);
     if (ret < 0) {
-        fprintf(stderr, "Couldn't initialize server (%s)\n", http_strerror(ret));
+        fprintf(stderr, "Couldn't initialize server (%s)\n", chttp_strerror(ret));
         return -1;
     }
 
-    http_server_set_reuse_addr(&server, true);
-    http_server_set_trace_bytes(&server, true);
+    chttp_server_set_reuse_addr(&server, true);
+    chttp_server_set_trace_bytes(&server, true);
 
-    ret = http_server_listen_tcp(&server, HTTP_STR("127.0.0.1"), 8080);
+    ret = chttp_server_listen_tcp(&server, CHTTP_STR("127.0.0.1"), 8080);
     if (ret < 0) {
-        fprintf(stderr, "Couldn't start listening (%s)\n", http_strerror(ret));
+        fprintf(stderr, "Couldn't start listening (%s)\n", chttp_strerror(ret));
         return -1;
     }
 
     for (;;) {
 
-        HTTP_Request *request;
-        HTTP_ResponseBuilder builder;
-        http_server_wait_request(&server, &request, &builder);
+        CHTTP_Request *request;
+        CHTTP_ResponseBuilder builder;
+        chttp_server_wait_request(&server, &request, &builder);
 
-        http_response_builder_status(builder, 200);
-        http_response_builder_body(builder, HTTP_STR("Hello, world!"));
-        http_response_builder_send(builder);
+        chttp_response_builder_status(builder, 200);
+        chttp_response_builder_body(builder, CHTTP_STR("Hello, world!"));
+        chttp_response_builder_send(builder);
     }
 
-    http_server_free(&server);
+    chttp_server_free(&server);
     return 0;
 }

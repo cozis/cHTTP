@@ -12,5 +12,5 @@
 //
 // The output is a certificate file in PEM format and a private
 // key file with the key used to sign the certificate.
-int http_create_test_certificate(HTTP_String C, HTTP_String O, HTTP_String CN,
-    HTTP_String cert_file, HTTP_String key_file);
+int chttp_create_test_certificate(CHTTP_String C, CHTTP_String O, CHTTP_String CN,
+    CHTTP_String cert_file, CHTTP_String key_file);

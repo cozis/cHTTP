@@ -41,7 +41,7 @@ typedef uint64_t ByteQueueOffset;
 // Initialize the queue with a given capacity limit.
 // This is just a soft limit. The queue will allocate
 // dynamically as needed up to this limit and won't
-// grow further. When the limit is reached, http_queue_full
+// grow further. When the limit is reached, chttp_queue_full
 // returns true.
 void byte_queue_init(ByteQueue *queue, uint32_t limit);
 

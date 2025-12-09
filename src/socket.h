@@ -123,8 +123,8 @@ typedef struct {
 // Internal use only
 typedef struct {
     union {
-        HTTP_IPv4 ipv4;
-        HTTP_IPv6 ipv6;
+        CHTTP_IPv4 ipv4;
+        CHTTP_IPv6 ipv6;
     };
     bool is_ipv4;
     Port port;
@@ -241,7 +241,7 @@ void socket_manager_free(SocketManager *sm);
 // can only be used once per manager.
 // Returns 0 on success, -1 on error.
 int socket_manager_listen_tcp(SocketManager *sm,
-    HTTP_String addr, Port port, int backlog,
+    CHTTP_String addr, Port port, int backlog,
     bool reuse_addr);
 
 // Same as the previous function, but incoming
@@ -252,9 +252,9 @@ int socket_manager_listen_tcp(SocketManager *sm,
 // and secure connections.
 // Returns 0 on success, -1 on error.
 int socket_manager_listen_tls(SocketManager *sm,
-    HTTP_String addr, Port port, int backlog,
-    bool reuse_addr, HTTP_String cert_file,
-    HTTP_String key_file);
+    CHTTP_String addr, Port port, int backlog,
+    bool reuse_addr, CHTTP_String cert_file,
+    CHTTP_String key_file);
 
 // If the socket manager was configures to accept
 // TLS connections, this adds additional certificates
@@ -262,7 +262,7 @@ int socket_manager_listen_tls(SocketManager *sm,
 // authenticity.
 // Returns 0 on success, -1 on error.
 int socket_manager_add_certificate(SocketManager *sm,
-    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
+    CHTTP_String domain, CHTTP_String cert_file, CHTTP_String key_file);
 
 // When a thread is blocked on a poll() call for
 // descriptors associated to this socket manager,
@@ -305,9 +305,9 @@ typedef struct {
     ConnectTargetType type;
     Port port;
     union {
-        HTTP_IPv4 ipv4;
-        HTTP_IPv6 ipv6;
-        HTTP_String name;
+        CHTTP_IPv4 ipv4;
+        CHTTP_IPv6 ipv6;
+        CHTTP_String name;
     };
 } ConnectTarget;
 

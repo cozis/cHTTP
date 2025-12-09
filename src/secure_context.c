@@ -76,7 +76,7 @@ static int servername_callback(SSL *ssl, int *ad, void *arg)
 #endif
 
 int server_secure_context_init(ServerSecureContext *ctx,
-    HTTP_String cert_file, HTTP_String key_file)
+    CHTTP_String cert_file, CHTTP_String key_file)
 {
 #ifdef HTTPS_ENABLED
     SSL_CTX *p = SSL_CTX_new(TLS_server_method());
@@ -145,7 +145,7 @@ void server_secure_context_free(ServerSecureContext *ctx)
 }
 
 int server_secure_context_add_certificate(ServerSecureContext *ctx,
-    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
+    CHTTP_String domain, CHTTP_String cert_file, CHTTP_String key_file)
 {
 #ifdef HTTPS_ENABLED
     if (ctx->num_certs == SERVER_CERTIFICATE_LIMIT)

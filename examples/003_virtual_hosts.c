@@ -16,21 +16,21 @@ int main(void)
 
     int ret;
 
-    HTTP_Server server;
-    ret = http_server_init(&server);
+    CHTTP_Server server;
+    ret = chttp_server_init(&server);
     if (ret < 0) {
-        fprintf(stderr, "Couldn't initialize server (%s)\n", http_strerror(ret));
+        fprintf(stderr, "Couldn't initialize server (%s)\n", chttp_strerror(ret));
         return -1;
     }
 
-    http_server_set_reuse_addr(&server, true);
-    http_server_set_trace_bytes(&server, true);
+    chttp_server_set_reuse_addr(&server, true);
+    chttp_server_set_trace_bytes(&server, true);
 
-    HTTP_String local_addr = HTTP_STR("127.0.0.1");
+    CHTTP_String local_addr = CHTTP_STR("127.0.0.1");
     uint16_t    local_port = 8080;
-    ret = http_server_listen_tcp(&server, local_addr, local_port);
+    ret = chttp_server_listen_tcp(&server, local_addr, local_port);
     if (ret < 0) {
-        fprintf(stderr, "Couldn't start listening (%s)\n", http_strerror(ret));
+        fprintf(stderr, "Couldn't start listening (%s)\n", chttp_strerror(ret));
         return -1;
     }
 
@@ -48,29 +48,29 @@ int main(void)
 
     for (;;) {
 
-        HTTP_Request *req;
-        HTTP_ResponseBuilder builder;
-        http_server_wait_request(&server, &req, &builder);
+        CHTTP_Request *req;
+        CHTTP_ResponseBuilder builder;
+        chttp_server_wait_request(&server, &req, &builder);
 
-        if (http_match_host(req, HTTP_STR("websiteB.com"), local_port)) {
+        if (chttp_match_host(req, CHTTP_STR("websiteB.com"), local_port)) {
             // Website B
-            http_response_builder_status(builder, 200);
-            http_response_builder_body(builder, HTTP_STR("Hello from websiteB.com!"));
-            http_response_builder_send(builder);
+            chttp_response_builder_status(builder, 200);
+            chttp_response_builder_body(builder, CHTTP_STR("Hello from websiteB.com!"));
+            chttp_response_builder_send(builder);
 
-        } else if (http_match_host(req, HTTP_STR("websiteC.com"), local_port)) {
+        } else if (chttp_match_host(req, CHTTP_STR("websiteC.com"), local_port)) {
             // Website C
-            http_response_builder_status(builder, 200);
-            http_response_builder_body(builder, HTTP_STR("Hello from websiteC.com!"));
-            http_response_builder_send(builder);
+            chttp_response_builder_status(builder, 200);
+            chttp_response_builder_body(builder, CHTTP_STR("Hello from websiteC.com!"));
+            chttp_response_builder_send(builder);
         } else {
             // Serve websiteA by default
-            http_response_builder_status(builder, 200);
-            http_response_builder_body(builder, HTTP_STR("Hello from websiteA.com!"));
-            http_response_builder_send(builder);
+            chttp_response_builder_status(builder, 200);
+            chttp_response_builder_body(builder, CHTTP_STR("Hello from websiteA.com!"));
+            chttp_response_builder_send(builder);
         }
     }
 
-    http_server_free(&server);
+    chttp_server_free(&server);
     return 0;
 }

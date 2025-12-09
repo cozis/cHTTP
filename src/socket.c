@@ -39,7 +39,7 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b, bool *global_c
         WSADATA wsaData;
         WORD wVersionRequested = MAKEWORD(2, 2);
         if (WSAStartup(wVersionRequested, &wsaData))
-            return HTTP_ERROR_UNSPECIFIED;
+            return CHTTP_ERROR_UNSPECIFIED;
 
         sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (sock == INVALID_SOCKET && *global_cleanup)
@@ -49,7 +49,7 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b, bool *global_c
     if (sock == INVALID_SOCKET) {
         if (*global_cleanup)
             WSACleanup();
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
     }
 
     // Bind to loopback address with port 0 (dynamic port assignment)
@@ -64,21 +64,21 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b, bool *global_c
         closesocket(sock);
         if (*global_cleanup)
             WSACleanup();
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
     }
 
     if (getsockname(sock, (struct sockaddr*)&addr, &addr_len) == SOCKET_ERROR) {
         closesocket(sock);
         if (*global_cleanup)
             WSACleanup();
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
     }
 
     if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closesocket(sock);
         if (*global_cleanup)
             WSACleanup();
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
     }
 
     // Optional: Set socket to non-blocking mode
@@ -88,20 +88,20 @@ static int create_socket_pair(NATIVE_SOCKET *a, NATIVE_SOCKET *b, bool *global_c
         closesocket(sock);
         if (*global_cleanup)
             WSACleanup();
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
     }
 
     *a = sock;
     *b = sock;
-    return HTTP_OK;
+    return CHTTP_OK;
 #else
     *global_cleanup = false;
     int fds[2];
     if (pipe(fds) < 0)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
     *a = fds[0];
     *b = fds[1];
-    return HTTP_OK;
+    return CHTTP_OK;
 #endif
 }
 
@@ -110,23 +110,23 @@ static int set_socket_blocking(NATIVE_SOCKET sock, bool value)
 #ifdef _WIN32
     u_long mode = !value;
     if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR)
-        return HTTP_ERROR_UNSPECIFIED;
-    return HTTP_OK;
+        return CHTTP_ERROR_UNSPECIFIED;
+    return CHTTP_OK;
 #endif
 
 #ifdef __linux__
     int flags = fcntl(sock, F_GETFL, 0);
     if (flags < 0)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
     if (value) flags &= ~O_NONBLOCK;
     else       flags |= O_NONBLOCK;
     if (fcntl(sock, F_SETFL, flags) < 0)
-        return HTTP_ERROR_UNSPECIFIED;
-    return HTTP_OK;
+        return CHTTP_ERROR_UNSPECIFIED;
+    return CHTTP_OK;
 #endif
 }
 
-static NATIVE_SOCKET create_listen_socket(HTTP_String addr,
+static NATIVE_SOCKET create_listen_socket(CHTTP_String addr,
     Port port, bool reuse_addr, int backlog)
 {
     NATIVE_SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -212,7 +212,7 @@ int socket_manager_init(SocketManager *sm, Socket *socks,
         socks[i].state = SOCKET_STATE_FREE;
         socks[i].gen = 1;
     }
-    return HTTP_OK;
+    return CHTTP_OK;
 }
 
 void socket_manager_free(SocketManager *sm)
@@ -238,57 +238,57 @@ void socket_manager_free(SocketManager *sm)
 }
 
 int socket_manager_listen_tcp(SocketManager *sm,
-    HTTP_String addr, Port port, int backlog,
+    CHTTP_String addr, Port port, int backlog,
     bool reuse_addr)
 {
     if (sm->plain_sock != NATIVE_SOCKET_INVALID)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
 
     sm->plain_sock = create_listen_socket(addr, port, reuse_addr, backlog);
     if (sm->plain_sock == NATIVE_SOCKET_INVALID)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
 
-    return HTTP_OK;
+    return CHTTP_OK;
 }
 
 int socket_manager_listen_tls(SocketManager *sm,
-    HTTP_String addr, Port port, int backlog,
-    bool reuse_addr, HTTP_String cert_file,
-    HTTP_String key_file)
+    CHTTP_String addr, Port port, int backlog,
+    bool reuse_addr, CHTTP_String cert_file,
+    CHTTP_String key_file)
 {
 #ifndef HTTPS_ENABLED
-    return HTTP_ERROR_NOTLS;
+    return CHTTP_ERROR_NOTLS;
 #endif
 
     if (sm->secure_sock != NATIVE_SOCKET_INVALID)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
 
     sm->secure_sock = create_listen_socket(addr, port, reuse_addr, backlog);
     if (sm->secure_sock == NATIVE_SOCKET_INVALID)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
 
     if (server_secure_context_init(&sm->server_secure_context,
         cert_file, key_file) < 0) {
         CLOSE_NATIVE_SOCKET(sm->secure_sock);
         sm->secure_sock = NATIVE_SOCKET_INVALID;
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
     }
 
-    return HTTP_OK;
+    return CHTTP_OK;
 }
 
 int socket_manager_add_certificate(SocketManager *sm,
-    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file)
+    CHTTP_String domain, CHTTP_String cert_file, CHTTP_String key_file)
 {
     if (sm->secure_sock == NATIVE_SOCKET_INVALID)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
 
     int ret = server_secure_context_add_certificate(
         &sm->server_secure_context, domain, cert_file, key_file);
     if (ret < 0)
         return ret;
 
-    return HTTP_OK;
+    return CHTTP_OK;
 }
 
 static bool is_secure(Socket *s)
@@ -428,13 +428,13 @@ static void socket_update(Socket *s)
                     struct sockaddr_in buf;
                     buf.sin_family = AF_INET;
                     buf.sin_port = htons(addr.port);
-                    memcpy(&buf.sin_addr, &addr.ipv4, sizeof(HTTP_IPv4));
+                    memcpy(&buf.sin_addr, &addr.ipv4, sizeof(CHTTP_IPv4));
                     ret = connect(sock, (struct sockaddr*) &buf, sizeof(buf));
                 } else {
                     struct sockaddr_in6 buf;
                     buf.sin6_family = AF_INET6;
                     buf.sin6_port = htons(addr.port);
-                    memcpy(&buf.sin6_addr, &addr.ipv6, sizeof(HTTP_IPv6));
+                    memcpy(&buf.sin6_addr, &addr.ipv6, sizeof(CHTTP_IPv6));
                     ret = connect(sock, (struct sockaddr*) &buf, sizeof(buf));
                 }
 
@@ -693,12 +693,12 @@ int socket_manager_wakeup(SocketManager *sm)
     char byte = 1;
 #ifdef _WIN32
     if (send(sm->signal_sock, &byte, 1, 0) < 0)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
 #else
     if (write(sm->signal_sock, &byte, 1) < 0)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
 #endif
-    return HTTP_OK;
+    return CHTTP_OK;
 }
 
 void socket_manager_register_events(
@@ -929,7 +929,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
                 RegisteredName *name = malloc(sizeof(RegisteredName) + targets[i].name.len + 1);
                 if (name == NULL) {
                     free_addr_list(resolved, num_resolved);
-                    return HTTP_ERROR_OOM;
+                    return CHTTP_ERROR_OOM;
                 }
                 name->refs = 0;
                 memcpy(name->data, targets[i].name.ptr, targets[i].name.len);
@@ -939,7 +939,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
                 // 512 bytes is more than enough for a DNS hostname (max 253 chars)
                 char hostname[1<<9];
                 if (targets[i].name.len >= (int) sizeof(hostname))
-                    return HTTP_ERROR_OOM;
+                    return CHTTP_ERROR_OOM;
                 memcpy(hostname, targets[i].name.ptr, targets[i].name.len);
                 hostname[targets[i].name.len] = '\0';
 #endif
@@ -951,12 +951,12 @@ static int resolve_connect_targets(ConnectTarget *targets,
                     free(name);
 #endif
                     free_addr_list(resolved, num_resolved);
-                    return HTTP_ERROR_UNSPECIFIED;
+                    return CHTTP_ERROR_UNSPECIFIED;
                 }
 
                 for (struct addrinfo *rp = res; rp; rp = rp->ai_next) {
                     if (rp->ai_family == AF_INET) {
-                        HTTP_IPv4 ipv4 = *(HTTP_IPv4*) &((struct sockaddr_in*)rp->ai_addr)->sin_addr;
+                        CHTTP_IPv4 ipv4 = *(CHTTP_IPv4*) &((struct sockaddr_in*)rp->ai_addr)->sin_addr;
                         if (num_resolved < max_resolved) {
                             resolved[num_resolved].is_ipv4 = true;
                             resolved[num_resolved].ipv4 = ipv4;
@@ -968,7 +968,7 @@ static int resolve_connect_targets(ConnectTarget *targets,
                             num_resolved++;
                         }
                     } else if (rp->ai_family == AF_INET6) {
-                        HTTP_IPv6 ipv6 = *(HTTP_IPv6*) &((struct sockaddr_in6*)rp->ai_addr)->sin6_addr;
+                        CHTTP_IPv6 ipv6 = *(CHTTP_IPv6*) &((struct sockaddr_in6*)rp->ai_addr)->sin6_addr;
                         if (num_resolved < max_resolved) {
                             resolved[num_resolved].is_ipv4 = false;
                             resolved[num_resolved].ipv6 = ipv6;
@@ -1024,17 +1024,17 @@ int socket_connect(SocketManager *sm, int num_targets,
     void *user)
 {
     if (sm->num_used == sm->max_used)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
 
 #ifdef HTTPS_ENABLED
     if (!sm->at_least_one_secure_connect) {
         if (client_secure_context_init(&sm->client_secure_context) < 0)
-            return HTTP_ERROR_UNSPECIFIED;
+            return CHTTP_ERROR_UNSPECIFIED;
         sm->at_least_one_secure_connect = true;
     }
 #else
     if (secure)
-        return HTTP_ERROR_NOTLS;
+        return CHTTP_ERROR_NOTLS;
 #endif
 
     AddressAndPort resolved[MAX_CONNECT_TARGETS];
@@ -1042,7 +1042,7 @@ int socket_connect(SocketManager *sm, int num_targets,
         targets, num_targets, resolved, MAX_CONNECT_TARGETS);
 
     if (num_resolved <= 0)
-        return HTTP_ERROR_UNSPECIFIED;
+        return CHTTP_ERROR_UNSPECIFIED;
 
     Socket *s = sm->sockets;
     while (s->state != SOCKET_STATE_FREE) {
@@ -1059,7 +1059,7 @@ int socket_connect(SocketManager *sm, int num_targets,
         s->next_addr = 0;
         s->addrs = malloc(num_resolved * sizeof(AddressAndPort));
         if (s->addrs == NULL)
-            return HTTP_ERROR_OOM;
+            return CHTTP_ERROR_OOM;
         for (int i = 0; i < num_resolved; i++)
             s->addrs[i] = resolved[i];
     }
@@ -1083,7 +1083,7 @@ int socket_connect(SocketManager *sm, int num_targets,
     sm->num_used++;
 
     socket_update(s);
-    return HTTP_OK;
+    return CHTTP_OK;
 }
 
 static bool would_block(void)

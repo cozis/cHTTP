@@ -34,7 +34,7 @@ typedef struct {
 } ServerSecureContext;
 
 int server_secure_context_init(ServerSecureContext *ctx,
-    HTTP_String cert_file, HTTP_String key_file);
+    CHTTP_String cert_file, CHTTP_String key_file);
 void server_secure_context_free(ServerSecureContext *ctx);
 int  server_secure_context_add_certificate(ServerSecureContext *ctx,
-    HTTP_String domain, HTTP_String cert_file, HTTP_String key_file);
+    CHTTP_String domain, CHTTP_String cert_file, CHTTP_String key_file);

@@ -38,47 +38,47 @@ int main(void)
     if (ret < 0)
         return -1;
 
-    HTTP_Server server;
-    ret = http_server_init(&server);
+    CHTTP_Server server;
+    ret = chttp_server_init(&server);
     if (ret < 0) {
-        fprintf(stderr, "Couldn't initialize server (%s)\n", http_strerror(ret));
+        fprintf(stderr, "Couldn't initialize server (%s)\n", chttp_strerror(ret));
         return -1;
     }
 
-    http_server_set_reuse_addr(&server, true);
-    http_server_set_trace_bytes(&server, true);
+    chttp_server_set_reuse_addr(&server, true);
+    chttp_server_set_trace_bytes(&server, true);
 
 
     // First, set up an HTTPS server instance with one
     // of the certificate. This will act as default certificate
     // when ecrypted connections don't target a specific domain.
 
-    HTTP_String local_addr = HTTP_STR("127.0.0.1");
+    CHTTP_String local_addr = CHTTP_STR("127.0.0.1");
     uint16_t    local_port = 8443;
 
-    HTTP_String cert_file  = HTTP_STR("websiteA_cert.pem");
-    HTTP_String key_file   = HTTP_STR("websiteA_key.pem");
+    CHTTP_String cert_file  = CHTTP_STR("websiteA_cert.pem");
+    CHTTP_String key_file   = CHTTP_STR("websiteA_key.pem");
 
-    ret = http_server_listen_tls(&server, local_addr, local_port, cert_file, key_file);
+    ret = chttp_server_listen_tls(&server, local_addr, local_port, cert_file, key_file);
     if (ret < 0) {
-        fprintf(stderr, "Couldn't start listening (%s)\n", http_strerror(ret));
+        fprintf(stderr, "Couldn't start listening (%s)\n", chttp_strerror(ret));
         return -1;
     }
 
     // Then we can add an arbitrary number of additional
     // certificates using the add_website function
 
-    ret = http_server_add_certificate(&server,
-        HTTP_STR("websiteB.com"),
-        HTTP_STR("websiteB_cert.pem"),
-        HTTP_STR("websiteB_key.pem"));
+    ret = chttp_server_add_certificate(&server,
+        CHTTP_STR("websiteB.com"),
+        CHTTP_STR("websiteB_cert.pem"),
+        CHTTP_STR("websiteB_key.pem"));
     if (ret < 0)
         return -1;
 
-    ret = http_server_add_certificate(&server,
-        HTTP_STR("websiteC.com"),
-        HTTP_STR("websiteC_cert.pem"),
-        HTTP_STR("websiteC_key.pem"));
+    ret = chttp_server_add_certificate(&server,
+        CHTTP_STR("websiteC.com"),
+        CHTTP_STR("websiteC_cert.pem"),
+        CHTTP_STR("websiteC_key.pem"));
     if (ret < 0)
         return -1;
 
@@ -109,67 +109,67 @@ int main(void)
 
     for (;;) {
 
-        HTTP_Request *req;
-        HTTP_ResponseBuilder builder;
-        http_server_wait_request(&server, &req, &builder);
+        CHTTP_Request *req;
+        CHTTP_ResponseBuilder builder;
+        chttp_server_wait_request(&server, &req, &builder);
 
-        if (http_match_host(req, HTTP_STR("websiteB.com"), 8080) ||
-            http_match_host(req, HTTP_STR("websiteB.com"), 8443)) {
+        if (chttp_match_host(req, CHTTP_STR("websiteB.com"), 8080) ||
+            chttp_match_host(req, CHTTP_STR("websiteB.com"), 8443)) {
 
-            http_response_builder_status(builder, 200);
-            http_response_builder_body(builder, HTTP_STR("Hello from websiteB.com!"));
-            http_response_builder_send(builder);
+            chttp_response_builder_status(builder, 200);
+            chttp_response_builder_body(builder, CHTTP_STR("Hello from websiteB.com!"));
+            chttp_response_builder_send(builder);
 
-        } else if (http_match_host(req, HTTP_STR("websiteC.com"), 8080) ||
-                   http_match_host(req, HTTP_STR("websiteC.com"), 8443)) {
+        } else if (chttp_match_host(req, CHTTP_STR("websiteC.com"), 8080) ||
+                   chttp_match_host(req, CHTTP_STR("websiteC.com"), 8443)) {
 
-            http_response_builder_status(builder, 200);
-            http_response_builder_body(builder, HTTP_STR("Hello from websiteC.com!"));
-            http_response_builder_send(builder);
+            chttp_response_builder_status(builder, 200);
+            chttp_response_builder_body(builder, CHTTP_STR("Hello from websiteC.com!"));
+            chttp_response_builder_send(builder);
 
         } else {
 
             // Serve websiteA.com by default to be consistent
             // with the certificate setup
 
-            http_response_builder_status(builder, 200);
-            http_response_builder_body(builder, HTTP_STR("Hello from websiteA.com!"));
-            http_response_builder_send(builder);
+            chttp_response_builder_status(builder, 200);
+            chttp_response_builder_body(builder, CHTTP_STR("Hello from websiteA.com!"));
+            chttp_response_builder_send(builder);
         }
     }
 
-    http_server_free(&server);
+    chttp_server_free(&server);
     return 0;
 }
 
 int setup_test_certificates(void)
 {
-    int ret = http_create_test_certificate(
-        HTTP_STR("IT"),
-        HTTP_STR("Organization A"),
-        HTTP_STR("websiteA.com"),
-        HTTP_STR("websiteA_cert.pem"),
-        HTTP_STR("websiteA_key.pem")
+    int ret = chttp_create_test_certificate(
+        CHTTP_STR("IT"),
+        CHTTP_STR("Organization A"),
+        CHTTP_STR("websiteA.com"),
+        CHTTP_STR("websiteA_cert.pem"),
+        CHTTP_STR("websiteA_key.pem")
     );
     if (ret < 0)
         return -1;
 
-    ret = http_create_test_certificate(
-        HTTP_STR("IT"),
-        HTTP_STR("Organization B"),
-        HTTP_STR("websiteB.com"),
-        HTTP_STR("websiteB_cert.pem"),
-        HTTP_STR("websiteB_key.pem")
+    ret = chttp_create_test_certificate(
+        CHTTP_STR("IT"),
+        CHTTP_STR("Organization B"),
+        CHTTP_STR("websiteB.com"),
+        CHTTP_STR("websiteB_cert.pem"),
+        CHTTP_STR("websiteB_key.pem")
     );
     if (ret < 0)
         return -1;
 
-    ret = http_create_test_certificate(
-        HTTP_STR("IT"),
-        HTTP_STR("Organization C"),
-        HTTP_STR("websiteC.com"),
-        HTTP_STR("websiteC_cert.pem"),
-        HTTP_STR("websiteC_key.pem")
+    ret = chttp_create_test_certificate(
+        CHTTP_STR("IT"),
+        CHTTP_STR("Organization C"),
+        CHTTP_STR("websiteC.com"),
+        CHTTP_STR("websiteC_cert.pem"),
+        CHTTP_STR("websiteC_key.pem")
     );
     if (ret < 0)
         return -1;

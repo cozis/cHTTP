@@ -1,11 +1,11 @@
 
-static void http_client_conn_free(HTTP_ClientConn *conn)
+static void chttp_client_conn_free(CHTTP_ClientConn *conn)
 {
     byte_queue_free(&conn->output);
     byte_queue_free(&conn->input);
 }
 
-int http_client_init(HTTP_Client *client)
+int chttp_client_init(CHTTP_Client *client)
 {
     client->input_buffer_limit = 1<<20;
     client->output_buffer_limit = 1<<20;
@@ -13,8 +13,8 @@ int http_client_init(HTTP_Client *client)
     client->cookie_jar.count = 0;
 
     client->num_conns = 0;
-    for (int i = 0; i < HTTP_CLIENT_CAPACITY; i++) {
-        client->conns[i].state = HTTP_CLIENT_CONN_FREE;
+    for (int i = 0; i < CHTTP_CLIENT_CAPACITY; i++) {
+        client->conns[i].state = CHTTP_CLIENT_CONN_FREE;
         client->conns[i].gen = 0;
     }
 
@@ -22,10 +22,10 @@ int http_client_init(HTTP_Client *client)
     client->ready_head = 0;
 
     return socket_manager_init(&client->sockets,
-        client->socket_pool, HTTP_CLIENT_CAPACITY);
+        client->socket_pool, CHTTP_CLIENT_CAPACITY);
 }
 
-void http_client_free(HTTP_Client *client)
+void chttp_client_free(CHTTP_Client *client)
 {
     socket_manager_free(&client->sockets);
 
@@ -33,63 +33,63 @@ void http_client_free(HTTP_Client *client)
         free(client->cookie_jar.items[i].name.ptr);
 
     for (int i = 0, j = 0; j < client->num_conns; i++) {
-        HTTP_ClientConn *conn = &client->conns[i];
-        if (conn->state == HTTP_CLIENT_CONN_FREE)
+        CHTTP_ClientConn *conn = &client->conns[i];
+        if (conn->state == CHTTP_CLIENT_CONN_FREE)
             continue;
         j++;
 
-        http_client_conn_free(conn);
+        chttp_client_conn_free(conn);
     }
 }
 
-void http_client_set_input_limit(HTTP_Client *client, uint32_t limit)
+void chttp_client_set_input_limit(CHTTP_Client *client, uint32_t limit)
 {
     client->input_buffer_limit = limit;
 }
 
-void http_client_set_output_limit(HTTP_Client *client, uint32_t limit)
+void chttp_client_set_output_limit(CHTTP_Client *client, uint32_t limit)
 {
     client->output_buffer_limit = limit;
 }
 
-int http_client_wakeup(HTTP_Client *client)
+int chttp_client_wakeup(CHTTP_Client *client)
 {
     return socket_manager_wakeup(&client->sockets);
 }
 
 // Get a connection pointer from a request builder.
 // If the builder is invalid, returns NULL.
-static HTTP_ClientConn*
-request_builder_to_conn(HTTP_RequestBuilder builder)
+static CHTTP_ClientConn*
+request_builder_to_conn(CHTTP_RequestBuilder builder)
 {
-    HTTP_Client *client = builder.client;
+    CHTTP_Client *client = builder.client;
     if (client == NULL)
         return NULL;
 
-    if (builder.index >= HTTP_CLIENT_CAPACITY)
+    if (builder.index >= CHTTP_CLIENT_CAPACITY)
         return NULL;
 
-    HTTP_ClientConn *conn = &client->conns[builder.index];
+    CHTTP_ClientConn *conn = &client->conns[builder.index];
     if (builder.gen != conn->gen)
         return NULL;
 
     return conn;
 }
 
-HTTP_RequestBuilder http_client_get_builder(HTTP_Client *client)
+CHTTP_RequestBuilder chttp_client_get_builder(CHTTP_Client *client)
 {
     // Find a free connection slot
-    if (client->num_conns == HTTP_CLIENT_CAPACITY)
-        return (HTTP_RequestBuilder) { NULL, -1, -1 };
+    if (client->num_conns == CHTTP_CLIENT_CAPACITY)
+        return (CHTTP_RequestBuilder) { NULL, -1, -1 };
 
     int i = 0;
-    while (client->conns[i].state != HTTP_CLIENT_CONN_FREE) {
+    while (client->conns[i].state != CHTTP_CLIENT_CONN_FREE) {
         i++;
-        assert(i < HTTP_CLIENT_CAPACITY);
+        assert(i < CHTTP_CLIENT_CAPACITY);
     }
     client->num_conns++;
 
-    client->conns[i].state = HTTP_CLIENT_CONN_WAIT_METHOD;
+    client->conns[i].state = CHTTP_CLIENT_CONN_WAIT_METHOD;
     client->conns[i].handle = SOCKET_HANDLE_INVALID;
     client->conns[i].client = client;
     client->conns[i].user = NULL;
@@ -97,30 +97,30 @@ HTTP_RequestBuilder http_client_get_builder(HTTP_Client *client)
     byte_queue_init(&client->conns[i].input,  client->input_buffer_limit);
     byte_queue_init(&client->conns[i].output, client->output_buffer_limit);
 
-    return (HTTP_RequestBuilder) { client, i, client->conns[i].gen };
+    return (CHTTP_RequestBuilder) { client, i, client->conns[i].gen };
 }
 
 // TODO: test this function
-static bool is_subdomain(HTTP_String domain, HTTP_String subdomain)
+static bool is_subdomain(CHTTP_String domain, CHTTP_String subdomain)
 {
-    if (http_streq(domain, subdomain))
+    if (chttp_streq(domain, subdomain))
         return true; // Exact match
 
     if (domain.len > subdomain.len)
         return false;
 
-    HTTP_String subdomain_suffix = {
+    CHTTP_String subdomain_suffix = {
         subdomain.ptr + subdomain.len - domain.len,
         domain.len
     };
-    if (subdomain_suffix.ptr[-1] != '.' || !http_streq(domain, subdomain_suffix))
+    if (subdomain_suffix.ptr[-1] != '.' || !chttp_streq(domain, subdomain_suffix))
         return false;
 
     return true;
 }
 
 // TODO: test this function
-static bool is_subpath(HTTP_String path, HTTP_String subpath)
+static bool is_subpath(CHTTP_String path, CHTTP_String subpath)
 {
     if (path.len > subpath.len)
         return false;
@@ -129,16 +129,16 @@ static bool is_subpath(HTTP_String path, HTTP_String subpath)
         return false;
 
     subpath.len = path.len;
-    return http_streq(path, subpath);
+    return chttp_streq(path, subpath);
 }
 
-static bool should_send_cookie(HTTP_CookieJarEntry entry, HTTP_URL url)
+static bool should_send_cookie(CHTTP_CookieJarEntry entry, CHTTP_URL url)
 {
     // TODO: If the cookie is expired, ignore it regardless
 
     if (entry.exact_domain) {
         // Cookie domain and URL domain must match exactly
-        if (!http_streq(entry.domain, url.authority.host.text))
+        if (!chttp_streq(entry.domain, url.authority.host.text))
             return false;
     } else {
         // The URL's domain must match or be a subdomain of the cookie's domain
@@ -148,7 +148,7 @@ static bool should_send_cookie(HTTP_CookieJarEntry entry, HTTP_URL url)
 
     if (entry.exact_path) {
         // Cookie path and URL path must match exactly
-        if (!http_streq(entry.path, url.path))
+        if (!chttp_streq(entry.path, url.path))
             return false;
     } else {
         if (!is_subpath(entry.path, url.path))
@@ -156,41 +156,41 @@ static bool should_send_cookie(HTTP_CookieJarEntry entry, HTTP_URL url)
     }
 
     if (entry.secure) {
-        if (!http_streq(url.scheme, HTTP_STR("https")))
+        if (!chttp_streq(url.scheme, CHTTP_STR("https")))
             return false; // Cookie was marked as secure but the target URL is not HTTPS
     }
 
     return true;
 }
 
-static HTTP_String get_method_string(HTTP_Method method)
+static CHTTP_String get_method_string(CHTTP_Method method)
 {
     switch (method) {
-        case HTTP_METHOD_GET    : return HTTP_STR("GET");
-        case HTTP_METHOD_HEAD   : return HTTP_STR("HEAD");
-        case HTTP_METHOD_POST   : return HTTP_STR("POST");
-        case HTTP_METHOD_PUT    : return HTTP_STR("PUT");
-        case HTTP_METHOD_DELETE : return HTTP_STR("DELETE");
-        case HTTP_METHOD_CONNECT: return HTTP_STR("CONNECT");
-        case HTTP_METHOD_OPTIONS: return HTTP_STR("OPTIONS");
-        case HTTP_METHOD_TRACE  : return HTTP_STR("TRACE");
-        case HTTP_METHOD_PATCH  : return HTTP_STR("PATCH");
+        case CHTTP_METHOD_GET    : return CHTTP_STR("GET");
+        case CHTTP_METHOD_HEAD   : return CHTTP_STR("HEAD");
+        case CHTTP_METHOD_POST   : return CHTTP_STR("POST");
+        case CHTTP_METHOD_PUT    : return CHTTP_STR("PUT");
+        case CHTTP_METHOD_DELETE : return CHTTP_STR("DELETE");
+        case CHTTP_METHOD_CONNECT: return CHTTP_STR("CONNECT");
+        case CHTTP_METHOD_OPTIONS: return CHTTP_STR("OPTIONS");
+        case CHTTP_METHOD_TRACE  : return CHTTP_STR("TRACE");
+        case CHTTP_METHOD_PATCH  : return CHTTP_STR("PATCH");
     }
-    return HTTP_STR("???");
+    return CHTTP_STR("???");
 }
 
-void http_request_builder_set_user(HTTP_RequestBuilder builder, void *user)
+void chttp_request_builder_set_user(CHTTP_RequestBuilder builder, void *user)
 {
-    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    CHTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
         return; // Invalid builder
 
     conn->user = user;
 }
 
-void http_request_builder_trace(HTTP_RequestBuilder builder, bool trace_bytes)
+void chttp_request_builder_trace(CHTTP_RequestBuilder builder, bool trace_bytes)
 {
-    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    CHTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
         return; // Invalid builder
 
@@ -198,47 +198,47 @@ void http_request_builder_trace(HTTP_RequestBuilder builder, bool trace_bytes)
 }
 
 // TODO: comment
-void http_request_builder_insecure(HTTP_RequestBuilder builder,
+void chttp_request_builder_insecure(CHTTP_RequestBuilder builder,
     bool insecure)
 {
-    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    CHTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
         return; // Invalid builder
 
     conn->dont_verify_cert = insecure;
 }
 
-void http_request_builder_method(HTTP_RequestBuilder builder,
-    HTTP_Method method)
+void chttp_request_builder_method(CHTTP_RequestBuilder builder,
+    CHTTP_Method method)
 {
-    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    CHTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
         return; // Invalid builder
 
-    if (conn->state != HTTP_CLIENT_CONN_WAIT_METHOD)
+    if (conn->state != CHTTP_CLIENT_CONN_WAIT_METHOD)
         return; // Request line already written
 
     // Write method
-    HTTP_String method_str = get_method_string(method);
+    CHTTP_String method_str = get_method_string(method);
     byte_queue_write(&conn->output, method_str.ptr, method_str.len);
     byte_queue_write(&conn->output, " ", 1);
 
-    conn->state = HTTP_CLIENT_CONN_WAIT_URL;
+    conn->state = CHTTP_CLIENT_CONN_WAIT_URL;
 }
 
-void http_request_builder_target(HTTP_RequestBuilder builder,
-    HTTP_String url)
+void chttp_request_builder_target(CHTTP_RequestBuilder builder,
+    CHTTP_String url)
 {
-    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    CHTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
         return; // Invalid builder
 
-    if (conn->state != HTTP_CLIENT_CONN_WAIT_URL)
+    if (conn->state != CHTTP_CLIENT_CONN_WAIT_URL)
         return; // Request line already written
 
     if (url.len == 0) {
-        conn->state = HTTP_CLIENT_CONN_COMPLETE;
-        conn->result = HTTP_ERROR_BADURL;
+        conn->state = CHTTP_CLIENT_CONN_COMPLETE;
+        conn->result = CHTTP_ERROR_BADURL;
         return;
     }
 
@@ -246,8 +246,8 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
     // URL pointers remain valid
     char *url_copy = malloc(url.len);
     if (url_copy == NULL) {
-        conn->state = HTTP_CLIENT_CONN_COMPLETE;
-        conn->result = HTTP_ERROR_OOM;
+        conn->state = CHTTP_CLIENT_CONN_COMPLETE;
+        conn->result = CHTTP_ERROR_OOM;
         return;
     }
     memcpy(url_copy, url.ptr, url.len);
@@ -256,16 +256,16 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
     conn->url_buffer.len = url.len;
 
     // Parse the copied URL (all url.* pointers will reference url_buffer)
-    if (http_parse_url(conn->url_buffer.ptr, conn->url_buffer.len, &conn->url) < 0) {
-        conn->state = HTTP_CLIENT_CONN_COMPLETE;
-        conn->result = HTTP_ERROR_BADURL;
+    if (chttp_parse_url(conn->url_buffer.ptr, conn->url_buffer.len, &conn->url) < 0) {
+        conn->state = CHTTP_CLIENT_CONN_COMPLETE;
+        conn->result = CHTTP_ERROR_BADURL;
         return;
     }
 
-    if (!http_streq(conn->url.scheme, HTTP_STR("http")) &&
-        !http_streq(conn->url.scheme, HTTP_STR("https"))) {
-        conn->state = HTTP_CLIENT_CONN_COMPLETE;
-        conn->result = HTTP_ERROR_BADURL;
+    if (!chttp_streq(conn->url.scheme, CHTTP_STR("http")) &&
+        !chttp_streq(conn->url.scheme, CHTTP_STR("https"))) {
+        conn->state = CHTTP_CLIENT_CONN_COMPLETE;
+        conn->result = CHTTP_ERROR_BADURL;
         return;
     }
 
@@ -278,13 +278,13 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
             conn->url.path.len);
 
     // Write query string
-    HTTP_String query = conn->url.query;
+    CHTTP_String query = conn->url.query;
     if (query.len > 0) {
         byte_queue_write(&conn->output, "?", 1);
         byte_queue_write(&conn->output, query.ptr, query.len);
     }
 
-    HTTP_String version = HTTP_STR(" HTTP/1.1");
+    CHTTP_String version = CHTTP_STR(" HTTP/1.1");
     byte_queue_write(&conn->output, version.ptr, version.len);
 
     byte_queue_write(&conn->output, "\r\n", 2);
@@ -300,10 +300,10 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
 
     // Find all entries from the cookie jar that should
     // be sent to this server and append headers for them
-    HTTP_Client *client = builder.client;
-    HTTP_CookieJar *cookie_jar = &client->cookie_jar;
+    CHTTP_Client *client = builder.client;
+    CHTTP_CookieJar *cookie_jar = &client->cookie_jar;
     for (int i = 0; i < cookie_jar->count; i++) {
-        HTTP_CookieJarEntry entry = cookie_jar->items[i];
+        CHTTP_CookieJarEntry entry = cookie_jar->items[i];
         if (should_send_cookie(entry, conn->url)) {
             // TODO: Adding one header per cookie may cause the number of
             //       headers to increase significantly. Should probably group
@@ -316,12 +316,12 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
         }
     }
 
-    HTTP_String s;
+    CHTTP_String s;
 
-    s = HTTP_STR("Connection: Close\r\n");
+    s = CHTTP_STR("Connection: Close\r\n");
     byte_queue_write(&conn->output, s.ptr, s.len);
 
-    s = HTTP_STR("Content-Length: ");
+    s = CHTTP_STR("Content-Length: ");
     byte_queue_write(&conn->output, s.ptr, s.len);
 
     conn->content_length_value_offset = byte_queue_offset(&conn->output);
@@ -329,20 +329,20 @@ void http_request_builder_target(HTTP_RequestBuilder builder,
     #define TEN_SPACES "          "
     _Static_assert(sizeof(TEN_SPACES) == 10+1);
 
-    s = HTTP_STR(TEN_SPACES "\r\n");
+    s = CHTTP_STR(TEN_SPACES "\r\n");
     byte_queue_write(&conn->output, s.ptr, s.len);
 
-    conn->state = HTTP_CLIENT_CONN_WAIT_HEADER;
+    conn->state = CHTTP_CLIENT_CONN_WAIT_HEADER;
 }
 
-void http_request_builder_header(HTTP_RequestBuilder builder,
-    HTTP_String str)
+void chttp_request_builder_header(CHTTP_RequestBuilder builder,
+    CHTTP_String str)
 {
-    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    CHTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
         return;
 
-    if (conn->state != HTTP_CLIENT_CONN_WAIT_HEADER)
+    if (conn->state != CHTTP_CLIENT_CONN_WAIT_HEADER)
         return;
 
     // Validate header: must contain a colon and no control characters
@@ -362,33 +362,33 @@ void http_request_builder_header(HTTP_RequestBuilder builder,
     byte_queue_write(&conn->output, "\r\n", 2);
 }
 
-void http_request_builder_body(HTTP_RequestBuilder builder,
-    HTTP_String str)
+void chttp_request_builder_body(CHTTP_RequestBuilder builder,
+    CHTTP_String str)
 {
-    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    CHTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
         return;
 
     // Transition from WAIT_HEADER to WAIT_BODY if needed
-    if (conn->state == HTTP_CLIENT_CONN_WAIT_HEADER) {
+    if (conn->state == CHTTP_CLIENT_CONN_WAIT_HEADER) {
         byte_queue_write(&conn->output, "\r\n", 2);
         conn->content_length_offset = byte_queue_offset(&conn->output);
-        conn->state = HTTP_CLIENT_CONN_WAIT_BODY;
+        conn->state = CHTTP_CLIENT_CONN_WAIT_BODY;
     }
 
-    if (conn->state != HTTP_CLIENT_CONN_WAIT_BODY)
+    if (conn->state != CHTTP_CLIENT_CONN_WAIT_BODY)
         return;
 
     byte_queue_write(&conn->output, str.ptr, str.len);
 }
 
-static ConnectTarget url_to_connect_target(HTTP_URL url)
+static ConnectTarget url_to_connect_target(CHTTP_URL url)
 {
-    HTTP_Authority authority = url.authority;
+    CHTTP_Authority authority = url.authority;
 
     ConnectTarget target;
     if (authority.port < 1) {
-        if (http_streq(url.scheme, HTTP_STR("https")))
+        if (chttp_streq(url.scheme, CHTTP_STR("https")))
             target.port = 443;
         else
             target.port = 80;
@@ -396,42 +396,42 @@ static ConnectTarget url_to_connect_target(HTTP_URL url)
         target.port = authority.port;
     }
 
-    if (authority.host.mode == HTTP_HOST_MODE_NAME) {
+    if (authority.host.mode == CHTTP_HOST_MODE_NAME) {
         target.type = CONNECT_TARGET_NAME;
         target.name = authority.host.name;
-    } else if (authority.host.mode == HTTP_HOST_MODE_IPV4) {
+    } else if (authority.host.mode == CHTTP_HOST_MODE_IPV4) {
         target.type = CONNECT_TARGET_IPV4;
         target.ipv4 = authority.host.ipv4;
-    } else if (authority.host.mode == HTTP_HOST_MODE_IPV6) {
+    } else if (authority.host.mode == CHTTP_HOST_MODE_IPV6) {
         target.type = CONNECT_TARGET_IPV6;
         target.ipv6 = authority.host.ipv6;
     } else {
-        HTTP_UNREACHABLE;
+        CHTTP_UNREACHABLE;
     }
 
     return target;
 }
 
-int http_request_builder_send(HTTP_RequestBuilder builder)
+int chttp_request_builder_send(CHTTP_RequestBuilder builder)
 {
-    HTTP_Client *client = builder.client;
+    CHTTP_Client *client = builder.client;
     if (client == NULL)
-        return HTTP_ERROR_REQLIMIT;
+        return CHTTP_ERROR_REQLIMIT;
 
-    HTTP_ClientConn *conn = request_builder_to_conn(builder);
+    CHTTP_ClientConn *conn = request_builder_to_conn(builder);
     if (conn == NULL)
-        return HTTP_ERROR_BADHANDLE;
+        return CHTTP_ERROR_BADHANDLE;
 
-    if (conn->state == HTTP_CLIENT_CONN_COMPLETE)
+    if (conn->state == CHTTP_CLIENT_CONN_COMPLETE)
         goto error; // Early completion due to an error
 
-    if (conn->state == HTTP_CLIENT_CONN_WAIT_HEADER) {
+    if (conn->state == CHTTP_CLIENT_CONN_WAIT_HEADER) {
         byte_queue_write(&conn->output, "\r\n", 2);
         conn->content_length_offset = byte_queue_offset(&conn->output);
-        conn->state = HTTP_CLIENT_CONN_WAIT_BODY;
+        conn->state = CHTTP_CLIENT_CONN_WAIT_BODY;
     }
 
-    if (conn->state != HTTP_CLIENT_CONN_WAIT_BODY)
+    if (conn->state != CHTTP_CLIENT_CONN_WAIT_BODY)
         goto error;
 
     if (byte_queue_error(&conn->output))
@@ -446,16 +446,16 @@ int http_request_builder_send(HTTP_RequestBuilder builder)
     byte_queue_patch(&conn->output, conn->content_length_value_offset, tmp, len);
 
     ConnectTarget target = url_to_connect_target(conn->url);
-    bool secure = http_streq(conn->url.scheme, HTTP_STR("https"));
+    bool secure = chttp_streq(conn->url.scheme, CHTTP_STR("https"));
     if (socket_connect(&client->sockets, 1, &target, secure, conn->dont_verify_cert, conn) < 0)
         goto error;
 
-    conn->state = HTTP_CLIENT_CONN_FLUSHING;
+    conn->state = CHTTP_CLIENT_CONN_FLUSHING;
     conn->gen++;
-    return HTTP_OK;
+    return CHTTP_OK;
 
 error:
-    conn->state = HTTP_CLIENT_CONN_FREE;
+    conn->state = CHTTP_CLIENT_CONN_FREE;
     free(conn->url_buffer.ptr);
     byte_queue_free(&conn->input);
     byte_queue_free(&conn->output);
@@ -463,17 +463,17 @@ error:
     return conn->result;
 }
 
-static void save_one_cookie(HTTP_CookieJar *cookie_jar,
-    HTTP_Header set_cookie, HTTP_String domain, HTTP_String path)
+static void save_one_cookie(CHTTP_CookieJar *cookie_jar,
+    CHTTP_Header set_cookie, CHTTP_String domain, CHTTP_String path)
 {
-    if (cookie_jar->count == HTTP_COOKIE_JAR_CAPACITY)
+    if (cookie_jar->count == CHTTP_COOKIE_JAR_CAPACITY)
         return; // Cookie jar capacity reached
 
-    HTTP_SetCookie parsed;
-    if (http_parse_set_cookie(set_cookie.value, &parsed) < 0)
+    CHTTP_SetCookie parsed;
+    if (chttp_parse_set_cookie(set_cookie.value, &parsed) < 0)
         return; // Ignore invalid Set-Cookie headers
 
-    HTTP_CookieJarEntry entry;
+    CHTTP_CookieJarEntry entry;
 
     entry.name = parsed.name;
     entry.value = parsed.value;
@@ -522,32 +522,32 @@ static void save_one_cookie(HTTP_CookieJar *cookie_jar,
     cookie_jar->items[cookie_jar->count++] = entry;
 }
 
-static void save_cookies(HTTP_CookieJar *cookie_jar,
-    HTTP_Header *headers, int num_headers,
-    HTTP_String domain, HTTP_String path)
+static void save_cookies(CHTTP_CookieJar *cookie_jar,
+    CHTTP_Header *headers, int num_headers,
+    CHTTP_String domain, CHTTP_String path)
 {
     // TODO: remove expired cookies
 
     for (int i = 0; i < num_headers; i++)
-        if (http_streqcase(headers[i].name, HTTP_STR("Set-Cookie"))) // TODO: headers are case-insensitive, right?
+        if (chttp_streqcase(headers[i].name, CHTTP_STR("Set-Cookie"))) // TODO: headers are case-insensitive, right?
             save_one_cookie(cookie_jar, headers[i], domain, path);
 }
 
-void http_client_register_events(HTTP_Client *client,
+void chttp_client_register_events(CHTTP_Client *client,
     EventRegister *reg)
 {
     socket_manager_register_events(&client->sockets, reg);
 }
 
-void http_client_process_events(HTTP_Client *client,
+void chttp_client_process_events(CHTTP_Client *client,
     EventRegister reg)
 {
-    SocketEvent events[HTTP_CLIENT_CAPACITY];
+    SocketEvent events[CHTTP_CLIENT_CAPACITY];
     int num_events = socket_manager_translate_events(&client->sockets, events, reg);
 
     for (int i = 0; i < num_events; i++) {
 
-        HTTP_ClientConn *conn = events[i].user;
+        CHTTP_ClientConn *conn = events[i].user;
         if (conn == NULL)
             continue; // If a socket is not couple to a connection,
                       // it means the response was already returned
@@ -555,7 +555,7 @@ void http_client_process_events(HTTP_Client *client,
 
         if (events[i].type == SOCKET_EVENT_DISCONNECT) {
 
-            conn->state = HTTP_CLIENT_CONN_COMPLETE;
+            conn->state = CHTTP_CLIENT_CONN_COMPLETE;
             conn->result = -1;
 
         } else if (events[i].type == SOCKET_EVENT_READY) {
@@ -566,7 +566,7 @@ void http_client_process_events(HTTP_Client *client,
 
             while (socket_ready(&client->sockets, conn->handle)) {
 
-                if (conn->state == HTTP_CLIENT_CONN_FLUSHING) {
+                if (conn->state == CHTTP_CLIENT_CONN_FLUSHING) {
 
                     ByteView src = byte_queue_read_buf(&conn->output);
 
@@ -575,7 +575,7 @@ void http_client_process_events(HTTP_Client *client,
                         num = socket_send(&client->sockets, conn->handle, src.ptr, src.len);
 
                     if (conn->trace_bytes)
-                        print_bytes(HTTP_STR("<< "), (HTTP_String){src.ptr, num});
+                        print_bytes(CHTTP_STR("<< "), (CHTTP_String){src.ptr, num});
 
                     byte_queue_read_ack(&conn->output, num);
 
@@ -586,10 +586,10 @@ void http_client_process_events(HTTP_Client *client,
 
                     // Request fully sent, now wait for response
                     if (byte_queue_empty(&conn->output))
-                        conn->state = HTTP_CLIENT_CONN_BUFFERING;
+                        conn->state = CHTTP_CLIENT_CONN_BUFFERING;
                 }
 
-                if (conn->state == HTTP_CLIENT_CONN_BUFFERING) {
+                if (conn->state == CHTTP_CLIENT_CONN_BUFFERING) {
 
                     // Receive response data
                     int min_recv = 1<<10;
@@ -602,7 +602,7 @@ void http_client_process_events(HTTP_Client *client,
                         num = socket_recv(&client->sockets, conn->handle, dst.ptr, dst.len);
 
                     if (conn->trace_bytes)
-                        print_bytes(HTTP_STR(">> "), (HTTP_String){dst.ptr, num});
+                        print_bytes(CHTTP_STR(">> "), (CHTTP_String){dst.ptr, num});
 
                     byte_queue_write_ack(&conn->input, num);
 
@@ -612,7 +612,7 @@ void http_client_process_events(HTTP_Client *client,
                     }
 
                     ByteView src = byte_queue_read_buf(&conn->input);
-                    int ret = http_parse_response(src.ptr, src.len, &conn->response);
+                    int ret = chttp_parse_response(src.ptr, src.len, &conn->response);
 
                     if (ret == 0) {
                         // Still waiting
@@ -635,7 +635,7 @@ void http_client_process_events(HTTP_Client *client,
                     // Ready
                     assert(ret > 0);
 
-                    conn->state = HTTP_CLIENT_CONN_COMPLETE;
+                    conn->state = CHTTP_CLIENT_CONN_COMPLETE;
                     conn->result = 0;
 
                     conn->response.context = client;
@@ -653,36 +653,36 @@ void http_client_process_events(HTTP_Client *client,
             }
         }
 
-        if (conn->state == HTTP_CLIENT_CONN_COMPLETE) {
+        if (conn->state == CHTTP_CLIENT_CONN_COMPLETE) {
 
             // Decouple from the socket
             socket_set_user(&client->sockets, events[i].handle, NULL);
             socket_close(&client->sockets, events[i].handle);
 
             // Push to the ready queue
-            assert(client->num_ready < HTTP_CLIENT_CAPACITY);
-            int tail = (client->ready_head + client->num_ready) % HTTP_CLIENT_CAPACITY;
+            assert(client->num_ready < CHTTP_CLIENT_CAPACITY);
+            int tail = (client->ready_head + client->num_ready) % CHTTP_CLIENT_CAPACITY;
             client->ready[tail] = conn - client->conns;
             client->num_ready++;
         }
     }
 }
 
-bool http_client_next_response(HTTP_Client *client,
-    int *result, void **user, HTTP_Response **response)
+bool chttp_client_next_response(CHTTP_Client *client,
+    int *result, void **user, CHTTP_Response **response)
 {
     if (client->num_ready == 0)
         return false;
 
-    HTTP_ClientConn *conn = &client->conns[client->ready[client->ready_head]];
-    client->ready_head = (client->ready_head + 1) % HTTP_CLIENT_CAPACITY;
+    CHTTP_ClientConn *conn = &client->conns[client->ready[client->ready_head]];
+    client->ready_head = (client->ready_head + 1) % CHTTP_CLIENT_CAPACITY;
     client->num_ready--;
 
-    assert(conn->state == HTTP_CLIENT_CONN_COMPLETE);
+    assert(conn->state == CHTTP_CLIENT_CONN_COMPLETE);
 
     *result = conn->result;
     *user   = conn->user;
-    if (conn->result == HTTP_OK) {
+    if (conn->result == CHTTP_OK) {
         *response = &conn->response;
     } else {
         *response = NULL;
@@ -691,17 +691,17 @@ bool http_client_next_response(HTTP_Client *client,
     return true;
 }
 
-void http_free_response(HTTP_Response *response)
+void chttp_free_response(CHTTP_Response *response)
 {
     if (response == NULL || response->context == NULL)
         return;
-    HTTP_Client *client = response->context;
+    CHTTP_Client *client = response->context;
     response->context = NULL;
 
     // TODO: I'm positive there is a better way to do this.
     //       It should just be a bouds check + subtraction.
-    HTTP_ClientConn *conn = NULL;
-    for (int i = 0; i < HTTP_CLIENT_CAPACITY; i++)
+    CHTTP_ClientConn *conn = NULL;
+    for (int i = 0; i < CHTTP_CLIENT_CAPACITY; i++)
         if (&client->conns[i].response == response) {
             conn = &client->conns[i];
             break;
@@ -709,7 +709,7 @@ void http_free_response(HTTP_Response *response)
     if (conn == NULL)
         return;
 
-    conn->state = HTTP_CLIENT_CONN_FREE;
+    conn->state = CHTTP_CLIENT_CONN_FREE;
     free(conn->url_buffer.ptr);
     byte_queue_free(&conn->input);
     byte_queue_free(&conn->output);
@@ -722,86 +722,86 @@ void http_free_response(HTTP_Response *response)
 #define POLL poll
 #endif
 
-void http_client_wait_response(HTTP_Client *client,
-    int *result, void **user, HTTP_Response **response)
+void chttp_client_wait_response(CHTTP_Client *client,
+    int *result, void **user, CHTTP_Response **response)
 {
     for (;;) {
 
-        void *ptrs[HTTP_CLIENT_POLL_CAPACITY];
-        struct pollfd polled[HTTP_CLIENT_POLL_CAPACITY];
+        void *ptrs[CHTTP_CLIENT_POLL_CAPACITY];
+        struct pollfd polled[CHTTP_CLIENT_POLL_CAPACITY];
 
         EventRegister reg = { ptrs, polled, 0 };
-        http_client_register_events(client, &reg);
+        chttp_client_register_events(client, &reg);
 
         if (reg.num_polled > 0)
             POLL(reg.polled, reg.num_polled, -1);
 
-        http_client_process_events(client, reg);
+        chttp_client_process_events(client, reg);
 
-        if (http_client_next_response(client, result, user, response))
+        if (chttp_client_next_response(client, result, user, response))
             break;
     }
 }
 
-static _Thread_local HTTP_Client *implicit_client;
+static _Thread_local CHTTP_Client *implicit_client;
 
-static int perform_request(HTTP_Method method,
-    HTTP_String url, HTTP_String *headers,
-    int num_headers, HTTP_String body,
-    HTTP_Response **response)
+static int perform_request(CHTTP_Method method,
+    CHTTP_String url, CHTTP_String *headers,
+    int num_headers, CHTTP_String body,
+    CHTTP_Response **response)
 {
     if (implicit_client == NULL) {
 
-        implicit_client = malloc(sizeof(HTTP_Client));
+        implicit_client = malloc(sizeof(CHTTP_Client));
         if (implicit_client == NULL)
-            return HTTP_ERROR_OOM;
+            return CHTTP_ERROR_OOM;
 
-        int ret = http_client_init(implicit_client);
+        int ret = chttp_client_init(implicit_client);
         if (ret < 0) {
             free(implicit_client);
             implicit_client = NULL;
             return ret;
         }
     }
-    HTTP_Client *client = implicit_client;
+    CHTTP_Client *client = implicit_client;
 
-    HTTP_RequestBuilder builder = http_client_get_builder(client);
-    http_request_builder_method(builder, method);
-    http_request_builder_target(builder, url);
+    CHTTP_RequestBuilder builder = chttp_client_get_builder(client);
+    chttp_request_builder_method(builder, method);
+    chttp_request_builder_target(builder, url);
     for (int i = 0; i < num_headers; i++)
-        http_request_builder_header(builder, headers[i]);
-    http_request_builder_body(builder, body);
-    int ret = http_request_builder_send(builder);
+        chttp_request_builder_header(builder, headers[i]);
+    chttp_request_builder_body(builder, body);
+    int ret = chttp_request_builder_send(builder);
     if (ret < 0) return ret;
 
     int result;
     void *user;
-    http_client_wait_response(client, &result, &user, response);
+    chttp_client_wait_response(client, &result, &user, response);
     return result;
 }
 
-int http_get(HTTP_String url, HTTP_String *headers,
-    int num_headers, HTTP_Response **response)
+int chttp_get(CHTTP_String url, CHTTP_String *headers,
+    int num_headers, CHTTP_Response **response)
 {
-    return perform_request(HTTP_METHOD_GET, url, headers, num_headers, HTTP_STR(""), response);
+    return perform_request(CHTTP_METHOD_GET, url, headers, num_headers, CHTTP_STR(""), response);
 }
 
-int http_post(HTTP_String url, HTTP_String *headers,
-    int num_headers, HTTP_String body,
-    HTTP_Response **response)
+int chttp_post(CHTTP_String url, CHTTP_String *headers,
+    int num_headers, CHTTP_String body,
+    CHTTP_Response **response)
 {
-    return perform_request(HTTP_METHOD_POST, url, headers, num_headers, body, response);
+    return perform_request(CHTTP_METHOD_POST, url, headers, num_headers, body, response);
 }
 
-int http_put(HTTP_String url, HTTP_String *headers,
-    int num_headers, HTTP_String body,
-    HTTP_Response **response)
+int chttp_put(CHTTP_String url, CHTTP_String *headers,
+    int num_headers, CHTTP_String body,
+    CHTTP_Response **response)
 {
-    return perform_request(HTTP_METHOD_PUT, url, headers, num_headers, body, response);
+    return perform_request(CHTTP_METHOD_PUT, url, headers, num_headers, body, response);
 }
 
-int http_delete(HTTP_String url, HTTP_String *headers,
-    int num_headers, HTTP_Response **response)
+int chttp_delete(CHTTP_String url, CHTTP_String *headers,
+    int num_headers, CHTTP_Response **response)
 {
-    return perform_request(HTTP_METHOD_DELETE, url, headers, num_headers, HTTP_STR(""), response);
+    return perform_request(CHTTP_METHOD_DELETE, url, headers, num_headers, CHTTP_STR(""), response);
 }

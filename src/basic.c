@@ -1,5 +1,5 @@
 
-bool http_streq(HTTP_String s1, HTTP_String s2)
+bool chttp_streq(CHTTP_String s1, CHTTP_String s2)
 {
 	if (s1.len != s2.len)
 		return false;
@@ -18,7 +18,7 @@ static char to_lower(char c)
 	return c;
 }
 
-bool http_streqcase(HTTP_String s1, HTTP_String s2)
+bool chttp_streqcase(CHTTP_String s1, CHTTP_String s2)
 {
 	if (s1.len != s2.len)
 		return false;
@@ -30,7 +30,7 @@ bool http_streqcase(HTTP_String s1, HTTP_String s2)
 	return true;
 }
 
-HTTP_String http_trim(HTTP_String s)
+CHTTP_String chttp_trim(CHTTP_String s)
 {
 	int i = 0;
 	while (i < s.len && (s.ptr[i] == ' ' || s.ptr[i] == '\t'))
@@ -54,7 +54,7 @@ static bool is_printable(char c)
     return c >= ' ' && c <= '~';
 }
 
-void print_bytes(HTTP_String prefix, HTTP_String src)
+void print_bytes(CHTTP_String prefix, CHTTP_String src)
 {
     if (src.len == 0)
         return;
@@ -95,16 +95,16 @@ void print_bytes(HTTP_String prefix, HTTP_String src)
     putc('\n', stream);
 }
 
-char *http_strerror(int code)
+char *chttp_strerror(int code)
 {
     switch (code) {
-        case HTTP_OK: return "No error";
-        case HTTP_ERROR_UNSPECIFIED: return "Unspecified error";
-        case HTTP_ERROR_OOM: return "Out of memory";
-        case HTTP_ERROR_BADURL: return "Invalid URL";
-        case HTTP_ERROR_REQLIMIT: return "Parallel request limit reached";
-        case HTTP_ERROR_BADHANDLE: return "Invalid handle";
-        case HTTP_ERROR_NOTLS: return "TLS support not built-in";
+        case CHTTP_OK: return "No error";
+        case CHTTP_ERROR_UNSPECIFIED: return "Unspecified error";
+        case CHTTP_ERROR_OOM: return "Out of memory";
+        case CHTTP_ERROR_BADURL: return "Invalid URL";
+        case CHTTP_ERROR_REQLIMIT: return "Parallel request limit reached";
+        case CHTTP_ERROR_BADHANDLE: return "Invalid handle";
+        case CHTTP_ERROR_NOTLS: return "TLS support not built-in";
     }
     return "???";
 }
