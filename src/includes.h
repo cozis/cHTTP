@@ -26,4 +26,5 @@
 
 #ifdef HTTPS_ENABLED
 #include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 #endif
