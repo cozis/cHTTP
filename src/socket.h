@@ -65,6 +65,8 @@ typedef uint16_t Port;
 
 typedef enum {
     SOCKET_EVENT_READY,
+    SOCKET_EVENT_CREATION_TIMEOUT,
+    SOCKET_EVENT_RECV_TIMEOUT,
     SOCKET_EVENT_DISCONNECT,
 } SocketEventType;
 
@@ -162,6 +164,12 @@ typedef struct {
     // User-provided context pointer
     void *user;
 
+    Time creation_time;
+    Time last_recv_time;
+
+    Time recv_timeout;
+    Time creation_timeout;
+
     // A single connect operation may involve
     // trying to establish a connection towards
     // one of a set of addresses.
@@ -185,6 +193,10 @@ typedef struct {
 // is private to the .c file associated to this
 // header.
 typedef struct {
+
+    // TODO: comment
+    Time recv_timeout;
+    Time creation_timeout;
 
     // TCP listener sockets. The first is intended
     // for plaintext, while the second is for TLS.
@@ -234,6 +246,9 @@ int socket_manager_init(SocketManager *sm, Socket *socks,
 // Deinitialize a socket manager
 void socket_manager_free(SocketManager *sm);
 
+void socket_manager_set_creation_timeout(SocketManager *sm, int timeout);
+void socket_manager_set_recv_timeout(SocketManager *sm, int timeout);
+
 // Configure the socket manager to listen on
 // the specified interface for TCP connections.
 // Incoming connections will be automatically
@@ -275,6 +290,7 @@ typedef struct {
     void **ptrs;
     struct pollfd *polled;
     int num_polled;
+    int timeout;
 } EventRegister;
 
 // Resets the event register with the list of descriptors

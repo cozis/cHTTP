@@ -9,6 +9,13 @@
 
 #include "../chttp.h"
 
+static int pick_timeout(int t1, int t2)
+{
+    if (t1 < 0) return t2;
+    if (t2 < 0) return t1;
+    return (t1 < t2) ? t1 : t2;
+}
+
 int main()
 {
     int ret;
@@ -55,23 +62,25 @@ int main()
         EventRegister server_reg = {
             ptrs,
             polled,
-            0
+            0,
+            -1
         };
         chttp_server_register_events(&server, &server_reg);
 
         EventRegister client_reg = {
             ptrs   + server_reg.num_polled,
             polled + server_reg.num_polled,
-            0
+            0,
+            -1
         };
         chttp_client_register_events(&client, &client_reg);
 
-        if (server_reg.num_polled > 0 ||
-            client_reg.num_polled > 0) {
-            int num_polled = server_reg.num_polled
-                           + client_reg.num_polled;
-            POLL(polled, num_polled, -1);
-        }
+        int num_polled = server_reg.num_polled
+                       + client_reg.num_polled;
+
+        int timeout = pick_timeout(server_reg.timeout, client_reg.timeout);
+
+        POLL(polled, num_polled, timeout);
 
         int result;
         void *user;

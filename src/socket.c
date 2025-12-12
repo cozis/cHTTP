@@ -193,6 +193,9 @@ static void close_socket_pair(NATIVE_SOCKET a, NATIVE_SOCKET b)
 int socket_manager_init(SocketManager *sm, Socket *socks,
     int num_socks)
 {
+    sm->creation_timeout = 60000;
+    sm->recv_timeout = 3000;
+
     sm->plain_sock  = NATIVE_SOCKET_INVALID;
     sm->secure_sock = NATIVE_SOCKET_INVALID;
 
@@ -235,6 +238,16 @@ void socket_manager_free(SocketManager *sm)
     if (sm->global_cleanup)
         WSACleanup();
 #endif
+}
+
+void socket_manager_set_creation_timeout(SocketManager *sm, int timeout)
+{
+    sm->creation_timeout = (timeout < 0) ? INVALID_TIME : (Time) timeout;
+}
+
+void socket_manager_set_recv_timeout(SocketManager *sm, int timeout)
+{
+    sm->recv_timeout = (timeout < 0) ? INVALID_TIME : (Time) timeout;
 }
 
 int socket_manager_listen_tcp(SocketManager *sm,
@@ -738,6 +751,8 @@ void socket_manager_register_events(
     // is ready to be processed exists, return an empty
     // event registration list so that those entries can
     // be processed immediately.
+    // TODO: comment about deadline
+    Time deadline = INVALID_TIME;
     for (int i = 0, j = 0; j < sm->num_used; i++) {
         Socket *s = &sm->sockets[i];
         if (s->state == SOCKET_STATE_FREE)
@@ -747,11 +762,23 @@ void socket_manager_register_events(
         if (s->silent)
             continue;
 
+        if (s->creation_timeout != INVALID_TIME) {
+            Time creation_deadline = s->creation_time + s->creation_timeout;
+            if (deadline == INVALID_TIME || creation_deadline < deadline)
+                deadline = creation_deadline;
+        }
+
+        if (s->recv_timeout != INVALID_TIME) {
+            Time recv_deadline = s->last_recv_time + s->recv_timeout;
+            if (deadline == INVALID_TIME || recv_deadline < deadline)
+                deadline = recv_deadline;
+        }
+
         // If at least one socket can be processed, return an
         // empty list.
-        if (s->state == SOCKET_STATE_DIED || s->state == SOCKET_STATE_ESTABLISHED_READY) {
-            reg->num_polled = 0;
-            return;
+        if (s->state == SOCKET_STATE_DIED ||
+            s->state == SOCKET_STATE_ESTABLISHED_READY) {
+            deadline = 0;
         }
 
         if (s->events) {
@@ -760,6 +787,20 @@ void socket_manager_register_events(
             reg->polled[reg->num_polled].revents = 0;
             reg->ptrs[reg->num_polled] = s;
             reg->num_polled++;
+        }
+    }
+
+    if (deadline == INVALID_TIME) {
+        reg->timeout = -1;
+    } else {
+
+        Time current_time = get_current_time();
+        if (current_time == INVALID_TIME) {
+            reg->timeout = 1000;
+        } else if (deadline < current_time) {
+            reg->timeout = 0;
+        } else {
+            reg->timeout = deadline - current_time;
         }
     }
 }
@@ -785,6 +826,8 @@ int socket_manager_translate_events(
     SocketManager *sm, SocketEvent *events,
     EventRegister reg)
 {
+    Time current_time = get_current_time();
+
     int num_events = 0;
     for (int i = 0; i < reg.num_polled; i++) {
 
@@ -826,6 +869,10 @@ int socket_manager_translate_events(
             s->events = 0;
             s->user   = NULL;
             s->silent = false;
+            s->creation_time = current_time;
+            s->last_recv_time = current_time;
+            s->creation_timeout = sm->creation_timeout;
+            s->recv_timeout = sm->recv_timeout;
 #ifdef HTTPS_ENABLED
             // Determine whether the event came from
             // the encrypted listener or not.
@@ -878,7 +925,31 @@ int socket_manager_translate_events(
         if (s->silent)
             continue;
 
-        if (s->state == SOCKET_STATE_DIED) {
+        if (s->creation_timeout != INVALID_TIME
+            && current_time != INVALID_TIME
+            && current_time > s->creation_time + s->creation_timeout) {
+
+            s->creation_time = INVALID_TIME;
+
+            events[num_events++] = (SocketEvent) {
+                SOCKET_EVENT_CREATION_TIMEOUT,
+                socket_to_handle(sm, s),
+                s->user
+            };
+
+        } else if (s->recv_timeout != INVALID_TIME
+            && current_time != INVALID_TIME
+            && current_time > s->last_recv_time + s->recv_timeout) {
+
+            s->recv_timeout = INVALID_TIME;
+
+            events[num_events++] = (SocketEvent) {
+                SOCKET_EVENT_RECV_TIMEOUT,
+                socket_to_handle(sm, s),
+                s->user
+            };
+
+        } else if (s->state == SOCKET_STATE_DIED) {
 
             events[num_events++] = (SocketEvent) {
                 SOCKET_EVENT_DISCONNECT,
@@ -898,6 +969,7 @@ int socket_manager_translate_events(
             sm->num_used--;
 
         } else if (s->state == SOCKET_STATE_ESTABLISHED_READY) {
+
             events[num_events++] = (SocketEvent) {
                 SOCKET_EVENT_READY,
                 socket_to_handle(sm, s),
@@ -1023,6 +1095,10 @@ int socket_connect(SocketManager *sm, int num_targets,
     ConnectTarget *targets, bool secure, bool dont_verify_cert,
     void *user)
 {
+    Time current_time = get_current_time();
+    if (current_time == INVALID_TIME)
+        return CHTTP_ERROR_UNSPECIFIED;
+
     if (sm->num_used == sm->max_used)
         return CHTTP_ERROR_UNSPECIFIED;
 
@@ -1068,6 +1144,10 @@ int socket_connect(SocketManager *sm, int num_targets,
     s->sock = NATIVE_SOCKET_INVALID;
     s->user = user;
     s->silent = false;
+    s->creation_time = current_time;
+    s->last_recv_time = current_time;
+    s->creation_timeout = sm->creation_timeout;
+    s->recv_timeout = sm->recv_timeout;
 #ifdef HTTPS_ENABLED
     s->server_secure_context = NULL;
     s->client_secure_context = NULL;
@@ -1118,8 +1198,9 @@ int socket_recv(SocketManager *sm, SocketHandle handle,
         return 0;
     }
 
+    int ret;
     if (!is_secure(s)) {
-        int ret = recv(s->sock, dst, max, 0);
+        ret = recv(s->sock, dst, max, 0);
         if (ret == 0) {
             UPDATE_STATE(s->state, SOCKET_STATE_DIED);
             s->events = 0;
@@ -1133,10 +1214,9 @@ int socket_recv(SocketManager *sm, SocketHandle handle,
             }
             ret = 0;
         }
-        return ret;
     } else {
 #ifdef HTTPS_ENABLED
-        int ret = SSL_read(s->ssl, dst, max);
+        ret = SSL_read(s->ssl, dst, max);
         if (ret <= 0) {
             int err = SSL_get_error(s->ssl, ret);
             if (err == SSL_ERROR_WANT_READ) {
@@ -1151,12 +1231,18 @@ int socket_recv(SocketManager *sm, SocketHandle handle,
             }
             ret = 0;
         }
-        return ret;
 #else
         // Unreachable
-        return 0;
+        ret = 0;
 #endif
     }
+
+    if (ret > 0 && s->recv_timeout != INVALID_TIME) {
+        Time current_time = get_current_time();
+        if (current_time != INVALID_TIME)
+            s->last_recv_time = current_time;
+    }
+    return ret;
 }
 
 int socket_send(SocketManager *sm, SocketHandle handle,

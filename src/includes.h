@@ -12,6 +12,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
+#include <time.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <unistd.h>

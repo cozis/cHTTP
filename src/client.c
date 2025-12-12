@@ -558,6 +558,16 @@ void chttp_client_process_events(CHTTP_Client *client,
             conn->state = CHTTP_CLIENT_CONN_COMPLETE;
             conn->result = -1;
 
+        } else if (events[i].type == SOCKET_EVENT_CREATION_TIMEOUT) {
+
+            // TODO: This is too abrupt
+            socket_close(&client->sockets, events[i].handle);
+
+        } else if (events[i].type == SOCKET_EVENT_RECV_TIMEOUT) {
+
+            // TODO: This is too abrupt
+            socket_close(&client->sockets, events[i].handle);
+
         } else if (events[i].type == SOCKET_EVENT_READY) {
 
             // Store the handle if this is a new connection
@@ -730,11 +740,10 @@ void chttp_client_wait_response(CHTTP_Client *client,
         void *ptrs[CHTTP_CLIENT_POLL_CAPACITY];
         struct pollfd polled[CHTTP_CLIENT_POLL_CAPACITY];
 
-        EventRegister reg = { ptrs, polled, 0 };
+        EventRegister reg = { ptrs, polled, 0, -1 };
         chttp_client_register_events(client, &reg);
 
-        if (reg.num_polled > 0)
-            POLL(reg.polled, reg.num_polled, -1);
+        POLL(reg.polled, reg.num_polled, reg.timeout);
 
         chttp_client_process_events(client, reg);
 

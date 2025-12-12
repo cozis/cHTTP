@@ -235,6 +235,16 @@ void chttp_server_process_events(CHTTP_Server *server,
             chttp_server_conn_free(conn); // TODO: what if this was in the ready queue?
             server->num_conns--;
 
+        } else if (events[i].type == SOCKET_EVENT_CREATION_TIMEOUT) {
+
+            // TODO: This is too abrupt
+            socket_close(&server->sockets, events[i].handle);
+
+        } else if (events[i].type == SOCKET_EVENT_RECV_TIMEOUT) {
+
+            // TODO: This is too abrupt
+            socket_close(&server->sockets, events[i].handle);
+
         } else if (events[i].type == SOCKET_EVENT_READY) {
 
             if (events[i].user == NULL) {
@@ -290,11 +300,10 @@ void chttp_server_wait_request(CHTTP_Server *server,
         void *ptrs[CHTTP_SERVER_POLL_CAPACITY];
         struct pollfd polled[CHTTP_SERVER_POLL_CAPACITY];
 
-        EventRegister reg = { ptrs, polled, 0 };
+        EventRegister reg = { ptrs, polled, 0, -1 };
         chttp_server_register_events(server, &reg);
 
-        if (reg.num_polled > 0)
-            POLL(reg.polled, reg.num_polled, -1);
+        POLL(reg.polled, reg.num_polled, reg.timeout);
 
         chttp_server_process_events(server, reg);
 
