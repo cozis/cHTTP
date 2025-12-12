@@ -467,7 +467,7 @@ static void append_special_headers(CHTTP_ServerConn *conn)
     conn->content_length_value_offset = byte_queue_offset(&conn->output);
 
     #define TEN_SPACES "          "
-    _Static_assert(sizeof(TEN_SPACES) == 10+1);
+    _Static_assert(sizeof(TEN_SPACES) == 10+1, "");
 
     s = CHTTP_STR(TEN_SPACES "\r\n");
     byte_queue_write(&conn->output, s.ptr, s.len);
