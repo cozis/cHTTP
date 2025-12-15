@@ -257,7 +257,7 @@ void chttp_server_process_events(CHTTP_Server *server,
                 int j = 0;
                 while (server->conns[j].state != CHTTP_SERVER_CONN_FREE) {
                     j++;
-                    assert(i < CHTTP_SERVER_CAPACITY);
+                    assert(j < CHTTP_SERVER_CAPACITY);
                 }
 
                 conn = &server->conns[j];
