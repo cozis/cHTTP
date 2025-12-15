@@ -2943,6 +2943,10 @@ int socket_manager_translate_events(
                 if (s->num_addr > 1)
                     free(s->addrs);
             }
+#ifdef HTTPS_ENABLED
+            if (s->ssl)
+                SSL_free(s->ssl);
+#endif // HTTPS_ENABLED
             sm->num_used--;
 
         } else if (s->state == SOCKET_STATE_ESTABLISHED_READY) {
