@@ -4622,6 +4622,7 @@ static void chttp_server_conn_free(CHTTP_ServerConn *conn)
 {
     byte_queue_free(&conn->output);
     byte_queue_free(&conn->input);
+    conn->state = CHTTP_SERVER_CONN_FREE;
 }
 
 int chttp_server_init(CHTTP_Server *server)
@@ -4840,8 +4841,10 @@ void chttp_server_process_events(CHTTP_Server *server,
 
         if (events[i].type == SOCKET_EVENT_DISCONNECT) {
 
-            chttp_server_conn_free(conn); // TODO: what if this was in the ready queue?
-            server->num_conns--;
+            if (conn) {
+                chttp_server_conn_free(conn); // TODO: what if this was in the ready queue?
+                server->num_conns--;
+            }
 
         } else if (events[i].type == SOCKET_EVENT_CREATION_TIMEOUT) {
 

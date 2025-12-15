@@ -14,6 +14,7 @@ static void chttp_server_conn_free(CHTTP_ServerConn *conn)
 {
     byte_queue_free(&conn->output);
     byte_queue_free(&conn->input);
+    conn->state = CHTTP_SERVER_CONN_FREE;
 }
 
 int chttp_server_init(CHTTP_Server *server)
