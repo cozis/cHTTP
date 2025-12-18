@@ -1308,7 +1308,8 @@ int chttp_get_param_i(CHTTP_String body, CHTTP_String str)
 bool chttp_match_host(CHTTP_Request *req, CHTTP_String domain, int port)
 {
     int idx = chttp_find_header(req->headers, req->num_headers, CHTTP_STR("Host"));
-    assert(idx != -1); // Requests without the host header are always rejected
+    if (idx < 0)
+        return false;
 
     char tmp[1<<8];
     if (port > -1 && port != 80) {
