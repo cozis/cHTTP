@@ -8,7 +8,7 @@ static void chttp_client_conn_free(CHTTP_ClientConn *conn)
 int chttp_client_init(CHTTP_Client *client)
 {
     client->input_buffer_limit = 1<<20;
-    client->output_buffer_limit = 1<<20;
+    client->output_buffer_limit = 1<<24;
 
     client->cookie_jar.count = 0;
 
